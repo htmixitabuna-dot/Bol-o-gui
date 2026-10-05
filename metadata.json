@@ -1,0 +1,6 @@
+{
+  "name": "Bolão da Elite",
+  "description": "Plataforma de bolões esportivos com palpites, ranking em tempo real e premiações via PIX.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
