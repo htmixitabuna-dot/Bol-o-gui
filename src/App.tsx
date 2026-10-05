@@ -1,5 +1,21 @@
 import React, { useState, useEffect } from 'react';
 import logoOficial from './assets/images/bolao_elite_logo_1791164462566.jpg';
+import {
+  db,
+  collection,
+  doc,
+  onSnapshot,
+  OperationType,
+  handleFirestoreError,
+  upsertJogadorInDb,
+  deleteJogadorFromDb,
+  upsertJogoInDb,
+  deleteJogoFromDb,
+  upsertPalpiteInDb,
+  deletePalpiteFromDb,
+  saveConfigInDb,
+  compressImageToDataUrl,
+} from './firebase';
 
 // ============================================================================
 // TIMES SÉRIE A PADRÃO (COM CDN ESPN)
@@ -107,7 +123,7 @@ export default function App() {
   const [jogadores, setJogadores] = useState<any[]>([]);
   const [palpites, setPalpites] = useState<Palpite[]>([]);
   const [user, setUser] = useState<any>(null);
-  const [config, setConfig] = useState({ valor: 20, chavePix: "01780181558", nomePix: "INHO BAHIA", cidadePix: "ITABUNA", pixAdm: "01780181558" });
+  const [config, setConfig] = useState<{ valor: number | string; chavePix: string; nomePix: string; cidadePix: string; pixAdm: string }>({ valor: 20, chavePix: "01780181558", nomePix: "INHO BAHIA", cidadePix: "ITABUNA", pixAdm: "01780181558" });
   const [copiadoPix, setCopiadoPix] = useState(false);
   const [copiadaChave, setCopiadaChave] = useState(false);
   const [pixSalvoAviso, setPixSalvoAviso] = useState(false);
@@ -137,6 +153,11 @@ export default function App() {
 
   // Filtro de apostas na área ADM
   const [filtroApostasAdm, setFiltroApostasAdm] = useState<"todos" | "pagos" | "pendentes">("todos");
+  const [abaLoginJogador, setAbaLoginJogador] = useState<"cadastro" | "entrar">("cadastro");
+  const [buscaLoginInput, setBuscaLoginInput] = useState("");
+  const [erroLoginJogador, setErroLoginJogador] = useState("");
+  const [buscaApostadorAdm, setBuscaApostadorAdm] = useState("");
+  const [dbConectado, setDbConectado] = useState(false);
 
   useEffect(() => {
     try {
@@ -156,7 +177,6 @@ export default function App() {
         const parsedJd = JSON.parse(jd);
         let alterouJd = false;
         const limposJd = parsedJd.map((jg: any) => {
-          // Se tiver comprovante guardado há mais de 3 dias, remove da pasta
           if (jg.timestampComprovante && agora - jg.timestampComprovante > TRES_DIAS_MS) {
             alterouJd = true;
             return {
@@ -172,9 +192,18 @@ export default function App() {
         if (alterouJd) {
           localStorage.setItem("elite_jogadores_v11", JSON.stringify(limposJd));
         }
+        limposJd.forEach((jg: any) => {
+          upsertJogadorInDb(jg).catch(() => {});
+        });
       }
 
-      if (p) setPalpites(JSON.parse(p));
+      if (p) {
+        const parsedP = JSON.parse(p);
+        setPalpites(parsedP);
+        parsedP.forEach((palp: any) => {
+          upsertPalpiteInDb(palp).catch(() => {});
+        });
+      }
       if (cfg) {
         const parsed = JSON.parse(cfg);
         setConfig((prev) => ({
@@ -197,11 +226,121 @@ export default function App() {
           localStorage.setItem("elite_user_v11", JSON.stringify(parsedU));
         }
         setUser(parsedU);
+        upsertJogadorInDb(parsedU).catch(() => {});
       }
       if (l) setLogoBolao(l);
     } catch {
       localStorage.clear();
     }
+
+    const agoraMs = Date.now();
+    const TRES_DIAS_MS = 3 * 24 * 60 * 60 * 1000;
+
+    const unsubJogadores = onSnapshot(
+      collection(db, "jogadores"),
+      (snapshot) => {
+        setDbConectado(true);
+        const listaDb: any[] = [];
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          if (data.timestampComprovante && agoraMs - data.timestampComprovante > TRES_DIAS_MS) {
+            const limpo = {
+              ...data,
+              comprovante: undefined,
+              timestampComprovante: undefined,
+              dataEnvioComprovante: undefined,
+            };
+            listaDb.push(limpo);
+            upsertJogadorInDb(limpo).catch(() => {});
+          } else {
+            listaDb.push(data);
+          }
+        });
+        setJogadores(listaDb);
+        localStorage.setItem("elite_jogadores_v11", JSON.stringify(listaDb));
+
+        setUser((prevUser: any) => {
+          if (!prevUser?.email) return prevUser;
+          const atualizado = listaDb.find(
+            (x) => (x.email || "").toLowerCase() === prevUser.email.toLowerCase()
+          );
+          if (atualizado) {
+            localStorage.setItem("elite_user_v11", JSON.stringify(atualizado));
+            return atualizado;
+          }
+          return prevUser;
+        });
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.LIST, "jogadores");
+      }
+    );
+
+    const unsubJogos = onSnapshot(
+      collection(db, "jogos"),
+      (snapshot) => {
+        setDbConectado(true);
+        const listaJogos: Jogo[] = [];
+        snapshot.forEach((docSnap) => {
+          listaJogos.push(docSnap.data() as Jogo);
+        });
+        listaJogos.sort((a, b) => a.id.localeCompare(b.id));
+        setJogos(listaJogos);
+        localStorage.setItem("elite_jogos_v11", JSON.stringify(listaJogos));
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.LIST, "jogos");
+      }
+    );
+
+    const unsubPalpites = onSnapshot(
+      collection(db, "palpites"),
+      (snapshot) => {
+        setDbConectado(true);
+        const listaPalpites: Palpite[] = [];
+        snapshot.forEach((docSnap) => {
+          listaPalpites.push(docSnap.data() as Palpite);
+        });
+        setPalpites(listaPalpites);
+        localStorage.setItem("elite_palpites_v11", JSON.stringify(listaPalpites));
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.LIST, "palpites");
+      }
+    );
+
+    const unsubConfig = onSnapshot(
+      doc(db, "config", "bolao_config"),
+      (docSnap) => {
+        setDbConectado(true);
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          setConfig((prev) => {
+            const next = {
+              ...prev,
+              ...data,
+              valor: data.valor !== undefined ? data.valor : prev.valor,
+              chavePix: data.chavePix || data.pixAdm || prev.chavePix,
+              pixAdm: data.chavePix || data.pixAdm || prev.pixAdm,
+              nomePix: data.nomePix || prev.nomePix,
+              cidadePix: data.cidadePix || prev.cidadePix,
+            };
+            localStorage.setItem("elite_config_v11", JSON.stringify(next));
+            return next;
+          });
+        }
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.GET, "config/bolao_config");
+      }
+    );
+
+    return () => {
+      unsubJogadores();
+      unsubJogos();
+      unsubPalpites();
+      unsubConfig();
+    };
   }, []);
 
   // Inicializa escolhas temporárias do usuário ao carregar jogos/palpites
@@ -217,18 +356,31 @@ export default function App() {
   }, [user, palpites]);
 
   const saveJogos = (j: Jogo[]) => {
+    const idsNovos = new Set(j.map((x) => x.id));
+    jogos.forEach((antigo) => {
+      if (!idsNovos.has(antigo.id)) {
+        deleteJogoFromDb(antigo.id).catch(() => {});
+      }
+    });
     setJogos(j);
     localStorage.setItem("elite_jogos_v11", JSON.stringify(j));
+    j.forEach((jogoItem) => {
+      upsertJogoInDb(jogoItem).catch(() => {});
+    });
   };
 
   const saveJogadores = (jd: any[]) => {
     setJogadores(jd);
     localStorage.setItem("elite_jogadores_v11", JSON.stringify(jd));
+    jd.forEach((jg) => {
+      upsertJogadorInDb(jg).catch(() => {});
+    });
   };
 
   const saveConfig = (cfg: any) => {
     setConfig(cfg);
     localStorage.setItem("elite_config_v11", JSON.stringify(cfg));
+    saveConfigInDb(cfg).catch(() => {});
   };
 
   const saveLogo = (logoBase64: string) => {
@@ -236,14 +388,19 @@ export default function App() {
     localStorage.setItem("elite_logo_v11", logoBase64 || logoOficial);
   };
 
-  const handleFile = (file: File | undefined, setEscudo: (data: string) => void) => {
+  const handleFile = async (file: File | undefined, setEscudo: (data: string) => void) => {
     if (!file) return;
-    if (file.size > 2 * 1024 * 1024) return alert("Imagem muito grande, use arquivo até 2MB!");
-    const reader = new FileReader();
-    reader.onload = (e: any) => {
-      setEscudo(e.target.result);
-    };
-    reader.readAsDataURL(file);
+    if (file.size > 5 * 1024 * 1024) return alert("Imagem muito grande, use arquivo até 5MB!");
+    try {
+      const compressed = await compressImageToDataUrl(file, 900, 0.72);
+      setEscudo(compressed);
+    } catch {
+      const reader = new FileReader();
+      reader.onload = (e: any) => {
+        setEscudo(e.target.result);
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   const Escudo = ({ src, nome, size = 36 }: { src?: string; nome: string; size?: number }) => {
@@ -314,7 +471,9 @@ export default function App() {
   const toggleStatusPago = (email: string) => {
     const atualizados = palpites.map((p: any) => {
       if (p.jogadorEmail === email) {
-        return { ...p, pago: !p.pago };
+        const nextP = { ...p, pago: !p.pago };
+        upsertPalpiteInDb(nextP).catch(() => {});
+        return nextP;
       }
       return p;
     });
@@ -326,7 +485,9 @@ export default function App() {
     // 1. Marca todos os palpites do jogador como pagos
     const palpitesAtualizados = palpites.map((p: any) => {
       if (p.jogadorEmail === email) {
-        return { ...p, pago: true };
+        const nextP = { ...p, pago: true };
+        upsertPalpiteInDb(nextP).catch(() => {});
+        return nextP;
       }
       return p;
     });
@@ -334,13 +495,16 @@ export default function App() {
     localStorage.setItem("elite_palpites_v11", JSON.stringify(palpitesAtualizados));
 
     // 2. Atualiza o status do jogador para APROVADO
+    const horaAprovacao = new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
     const jogadoresAtualizados = jogadores.map((jg: any) => {
       if (jg.email === email) {
-        return {
+        const nextJg = {
           ...jg,
           statusPagamento: "APROVADO",
-          dataAprovacao: new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
+          dataAprovacao: horaAprovacao,
         };
+        upsertJogadorInDb(nextJg).catch(() => {});
+        return nextJg;
       }
       return jg;
     });
@@ -352,7 +516,7 @@ export default function App() {
       const userAtualizado = {
         ...user,
         statusPagamento: "APROVADO",
-        dataAprovacao: new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
+        dataAprovacao: horaAprovacao,
       };
       setUser(userAtualizado);
       localStorage.setItem("elite_user_v11", JSON.stringify(userAtualizado));
@@ -367,7 +531,9 @@ export default function App() {
   const recusarPagamento = (email: string) => {
     const palpitesAtualizados = palpites.map((p: any) => {
       if (p.jogadorEmail === email) {
-        return { ...p, pago: false };
+        const nextP = { ...p, pago: false };
+        upsertPalpiteInDb(nextP).catch(() => {});
+        return nextP;
       }
       return p;
     });
@@ -376,7 +542,9 @@ export default function App() {
 
     const jogadoresAtualizados = jogadores.map((jg: any) => {
       if (jg.email === email) {
-        return { ...jg, statusPagamento: "RECUSADO" };
+        const nextJg = { ...jg, statusPagamento: "RECUSADO" };
+        upsertJogadorInDb(nextJg).catch(() => {});
+        return nextJg;
       }
       return jg;
     });
@@ -400,13 +568,15 @@ export default function App() {
 
     const jogadoresAtualizados = jogadores.map((jg: any) => {
       if (jg.email === email) {
-        return {
+        const nextJg = {
           ...jg,
           comprovante: comprovanteBase64,
           timestampComprovante: agora,
           statusPagamento: "EM_ANALISE",
           dataEnvioComprovante: dataHoraFormatada,
         };
+        upsertJogadorInDb(nextJg).catch(() => {});
+        return nextJg;
       }
       return jg;
     });
@@ -423,6 +593,7 @@ export default function App() {
       };
       setUser(userAtualizado);
       localStorage.setItem("elite_user_v11", JSON.stringify(userAtualizado));
+      upsertJogadorInDb(userAtualizado).catch(() => {});
     }
   };
 
@@ -431,12 +602,14 @@ export default function App() {
 
     const jogadoresAtualizados = jogadores.map((jg: any) => {
       if (jg.email === email) {
-        return {
+        const nextJg = {
           ...jg,
           comprovante: undefined,
           timestampComprovante: undefined,
           dataEnvioComprovante: undefined,
         };
+        upsertJogadorInDb(nextJg).catch(() => {});
+        return nextJg;
       }
       return jg;
     });
@@ -459,6 +632,22 @@ export default function App() {
     }
 
     alert("Comprovante excluído com sucesso pelo ADM!");
+  };
+
+  const excluirApostadorAdm = (email: string, nome: string) => {
+    if (!confirm(`Deseja realmente remover o apostador "${nome}" (${email}) e suas apostas do banco de dados?`)) return;
+    const novaLista = jogadores.filter((jg) => jg.email !== email);
+    setJogadores(novaLista);
+    localStorage.setItem("elite_jogadores_v11", JSON.stringify(novaLista));
+    deleteJogadorFromDb(email).catch(() => {});
+
+    const palpitesDoJogador = palpites.filter((p) => p.jogadorEmail === email);
+    palpitesDoJogador.forEach((p) => {
+      deletePalpiteFromDb(email, p.jogoId).catch(() => {});
+    });
+    const novosPalpites = palpites.filter((p) => p.jogadorEmail !== email);
+    setPalpites(novosPalpites);
+    localStorage.setItem("elite_palpites_v11", JSON.stringify(novosPalpites));
   };
 
   const calcularDiasRestantes = (timestamp?: number) => {
@@ -582,12 +771,61 @@ export default function App() {
             Palpites simplificados: escolha quem vence ou se empata! Triagem automática de ganhadores e premiação via PIX.
           </p>
 
-          <button
-            onClick={() => setPage(user ? "palpites" : "loginJogador")}
-            className="w-full mt-6 bg-[#FF6B00] hover:bg-[#ff7b1a] text-black font-black py-4 rounded-xl cursor-pointer hover:scale-105 active:scale-95 transition shadow-lg shadow-[#FF6B00]/20 text-sm uppercase tracking-wider"
-          >
-            ENTRAR NO JOGO
-          </button>
+          {user ? (
+            <div className="w-full mt-6 space-y-2.5">
+              <button
+                onClick={() => setPage("palpites")}
+                className="w-full bg-[#FF6B00] hover:bg-[#ff7b1a] text-black font-black py-4 rounded-xl cursor-pointer hover:scale-105 active:scale-95 transition shadow-lg shadow-[#FF6B00]/20 text-sm uppercase tracking-wider"
+              >
+                CONTINUAR COMO {user.nome?.split(" ")[0]?.toUpperCase()}
+              </button>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => {
+                    setErroLoginJogador("");
+                    setAbaLoginJogador("entrar");
+                    setPage("loginJogador");
+                  }}
+                  className="w-full bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-white font-bold py-3 rounded-xl cursor-pointer transition text-xs uppercase tracking-wider"
+                >
+                  🔑 Entrar c/ outra conta
+                </button>
+                <button
+                  onClick={() => {
+                    setErroLoginJogador("");
+                    setAbaLoginJogador("cadastro");
+                    setPage("loginJogador");
+                  }}
+                  className="w-full bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 font-bold py-3 rounded-xl cursor-pointer transition text-xs uppercase tracking-wider"
+                >
+                  📝 Novo Cadastro
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="w-full mt-6 space-y-3">
+              <button
+                onClick={() => {
+                  setErroLoginJogador("");
+                  setAbaLoginJogador("cadastro");
+                  setPage("loginJogador");
+                }}
+                className="w-full bg-[#FF6B00] hover:bg-[#ff7b1a] text-black font-black py-4 rounded-xl cursor-pointer hover:scale-105 active:scale-95 transition shadow-lg shadow-[#FF6B00]/20 text-sm uppercase tracking-wider"
+              >
+                CRIAR CADASTRO E JOGAR
+              </button>
+              <button
+                onClick={() => {
+                  setErroLoginJogador("");
+                  setAbaLoginJogador("entrar");
+                  setPage("loginJogador");
+                }}
+                className="w-full bg-zinc-900 hover:bg-zinc-800 border-2 border-[#FF6B00]/60 text-[#FF6B00] hover:text-white font-black py-3.5 rounded-xl cursor-pointer hover:scale-[1.02] active:scale-95 transition text-xs sm:text-sm uppercase tracking-wider flex items-center justify-center gap-2"
+              >
+                <span>🔑</span> JÁ TENHO LOGIN • ENTRAR
+              </button>
+            </div>
+          )}
 
           <div className="grid grid-cols-3 mt-8 border-t border-zinc-900 pt-5 text-center w-full">
             <div>
@@ -631,91 +869,235 @@ export default function App() {
           <img src={logoBolao} alt="" className="w-10 h-10 object-contain rounded-lg" />
           <h2 className="text-3xl font-black">Área do Jogador</h2>
         </div>
-        <p className="text-xs text-zinc-400">Preencha seus dados para apostar e receber o prêmio via PIX.</p>
+        <p className="text-xs text-zinc-400">
+          {abaLoginJogador === "entrar"
+            ? "Digite seu E-mail ou Chave PIX cadastrada para acessar sua conta."
+            : "Preencha seus dados para se cadastrar, apostar e receber o prêmio via PIX."}
+        </p>
 
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (!aceitouTermos) {
-              alert("Você deve aceitar os Termos e Políticas do bolão!");
-              return;
-            }
-            const fd = new FormData(e.currentTarget);
-            const nome = (fd.get("nome") as string).trim();
-            const email = (fd.get("email") as string).trim().toLowerCase();
-            const pix = (fd.get("pix") as string).trim();
-
-            if (!nome || !email || !pix) return alert("Preencha todos os campos!");
-
-            const novo = { nome, email, pix, pontos: 0 };
-            const lista = [...jogadores.filter((x: any) => x.email !== email), novo];
-            saveJogadores(lista);
-            setUser(novo);
-            localStorage.setItem("elite_user_v11", JSON.stringify(novo));
-            setPage("palpites");
-          }}
-          className="mt-6 space-y-4"
-        >
-          <div>
-            <label className="block text-[11px] text-zinc-400 uppercase font-bold mb-1">Seu Nome</label>
-            <input
-              name="nome"
-              placeholder="Ex: Carlos Silva"
-              required
-              className="w-full bg-zinc-900 border border-zinc-800 p-3.5 rounded-xl outline-none focus:border-[#FF6B00] text-sm text-white"
-            />
-          </div>
-
-          <div>
-            <label className="block text-[11px] text-zinc-400 uppercase font-bold mb-1">Seu E-mail</label>
-            <input
-              name="email"
-              type="email"
-              placeholder="carlos@gmail.com"
-              required
-              className="w-full bg-zinc-900 border border-zinc-800 p-3.5 rounded-xl outline-none focus:border-[#FF6B00] text-sm text-white"
-            />
-          </div>
-
-          <div>
-            <label className="block text-[11px] text-zinc-400 uppercase font-bold mb-1">Chave PIX (Para receber)</label>
-            <input
-              name="pix"
-              placeholder="CPF, Telefone ou E-mail"
-              required
-              className="w-full bg-zinc-900 border border-zinc-800 p-3.5 rounded-xl outline-none focus:border-[#FF6B00] text-sm text-white font-mono"
-            />
-          </div>
-
-          <div className="bg-zinc-950 p-4 rounded-xl border border-zinc-800 space-y-2">
-            <label className="flex items-start gap-2.5 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={aceitouTermos}
-                onChange={(e) => setAceitouTermos(e.target.checked)}
-                className="mt-1 w-4 h-4 rounded accent-[#FF6B00] cursor-pointer"
-              />
-              <span className="text-xs text-zinc-300 leading-snug">
-                Li e concordo com os Termos de Uso e Política de Privacidade do Bolão.
-              </span>
-            </label>
-            <button
-              type="button"
-              onClick={() => setShowTermosModal(true)}
-              className="text-[11px] text-[#FF6B00] hover:underline font-bold block ml-6 cursor-pointer"
-            >
-              📄 Ler Termos e Regras
-            </button>
-          </div>
-
+        {/* Seletor de Abas: Entrar (Já tenho login) vs Novo Cadastro */}
+        <div className="grid grid-cols-2 gap-2 bg-zinc-900 p-1.5 rounded-xl border border-zinc-800 mt-5">
           <button
-            type="submit"
-            disabled={!aceitouTermos}
-            className="w-full bg-[#FF6B00] disabled:bg-zinc-800 disabled:text-zinc-500 disabled:cursor-not-allowed text-black font-black py-4 rounded-xl cursor-pointer hover:scale-[1.01] transition shadow-lg shadow-[#FF6B00]/20 text-sm uppercase tracking-wider"
+            type="button"
+            onClick={() => {
+              setErroLoginJogador("");
+              setAbaLoginJogador("entrar");
+            }}
+            className={`py-2.5 px-3 rounded-lg text-xs font-black uppercase tracking-wider transition cursor-pointer flex items-center justify-center gap-1.5 ${
+              abaLoginJogador === "entrar"
+                ? "bg-[#FF6B00] text-black shadow-md"
+                : "text-zinc-400 hover:text-white"
+            }`}
           >
-            ENTRAR E FAZER APOSTAS
+            <span>🔑</span> Já tenho Login
           </button>
-        </form>
+          <button
+            type="button"
+            onClick={() => {
+              setErroLoginJogador("");
+              setAbaLoginJogador("cadastro");
+            }}
+            className={`py-2.5 px-3 rounded-lg text-xs font-black uppercase tracking-wider transition cursor-pointer flex items-center justify-center gap-1.5 ${
+              abaLoginJogador === "cadastro"
+                ? "bg-[#FF6B00] text-black shadow-md"
+                : "text-zinc-400 hover:text-white"
+            }`}
+          >
+            <span>📝</span> Novo Cadastro
+          </button>
+        </div>
+
+        {abaLoginJogador === "entrar" ? (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              setErroLoginJogador("");
+              const termo = buscaLoginInput.trim().toLowerCase();
+              if (!termo) {
+                setErroLoginJogador("Digite seu E-mail ou Chave PIX para entrar.");
+                return;
+              }
+              const encontrado = jogadores.find(
+                (jg: any) =>
+                  (jg.email || "").trim().toLowerCase() === termo ||
+                  (jg.pix || "").trim().toLowerCase() === termo
+              );
+              if (!encontrado) {
+                setErroLoginJogador(
+                  "Não encontramos um cadastro com esse E-mail ou Chave PIX. Verifique os dados ou clique em 'Novo Cadastro'."
+                );
+                return;
+              }
+              setUser(encontrado);
+              localStorage.setItem("elite_user_v11", JSON.stringify(encontrado));
+              setPage("palpites");
+            }}
+            className="mt-6 space-y-4 bg-zinc-900/60 border border-zinc-800 p-5 rounded-2xl"
+          >
+            <div>
+              <label className="block text-[11px] text-zinc-400 uppercase font-bold mb-1">
+                Seu E-mail ou Chave PIX Cadastrada
+              </label>
+              <input
+                value={buscaLoginInput}
+                onChange={(e) => {
+                  setBuscaLoginInput(e.target.value);
+                  if (erroLoginJogador) setErroLoginJogador("");
+                }}
+                placeholder="Digite seu e-mail ou chave PIX..."
+                required
+                className="w-full bg-zinc-900 border border-zinc-800 p-3.5 rounded-xl outline-none focus:border-[#FF6B00] text-sm text-white"
+              />
+            </div>
+
+            {erroLoginJogador && (
+              <div className="bg-red-950/80 border border-red-700 text-red-200 p-3 rounded-xl text-xs space-y-2">
+                <div>⚠️ {erroLoginJogador}</div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setErroLoginJogador("");
+                    setAbaLoginJogador("cadastro");
+                  }}
+                  className="bg-[#FF6B00] text-black font-black px-3 py-1.5 rounded-lg text-[11px] cursor-pointer uppercase"
+                >
+                  Criar Meu Cadastro Agora
+                </button>
+              </div>
+            )}
+
+            <button
+              type="submit"
+              className="w-full bg-[#FF6B00] hover:bg-[#ff7b1a] text-black font-black py-4 rounded-xl cursor-pointer hover:scale-[1.01] transition shadow-lg shadow-[#FF6B00]/20 text-sm uppercase tracking-wider"
+            >
+              ENTRAR NA MINHA CONTA
+            </button>
+
+            <div className="text-center pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setErroLoginJogador("");
+                  setAbaLoginJogador("cadastro");
+                }}
+                className="text-xs text-zinc-400 hover:text-[#FF6B00] underline cursor-pointer"
+              >
+                Ainda não tem conta? Clique aqui para se cadastrar
+              </button>
+            </div>
+          </form>
+        ) : (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!aceitouTermos) {
+                alert("Você deve aceitar os Termos e Políticas do bolão!");
+                return;
+              }
+              const fd = new FormData(e.currentTarget);
+              const nome = (fd.get("nome") as string).trim();
+              const email = (fd.get("email") as string).trim().toLowerCase();
+              const pix = (fd.get("pix") as string).trim();
+
+              if (!nome || !email || !pix) return alert("Preencha todos os campos!");
+
+              const existente = jogadores.find((x: any) => (x.email || "").toLowerCase() === email);
+              const agora = Date.now();
+              const dataHoraCadastro = `${new Date().toLocaleDateString("pt-BR")} às ${new Date().toLocaleTimeString("pt-BR", {
+                hour: "2-digit",
+                minute: "2-digit",
+              })}`;
+
+              const novo = existente
+                ? {
+                    ...existente,
+                    nome,
+                    email,
+                    pix,
+                    dataCadastro: existente.dataCadastro || dataHoraCadastro,
+                    timestampCadastro: existente.timestampCadastro || agora,
+                  }
+                : {
+                    nome,
+                    email,
+                    pix,
+                    pontos: 0,
+                    statusPagamento: "PENDENTE",
+                    dataCadastro: dataHoraCadastro,
+                    timestampCadastro: agora,
+                  };
+
+              const lista = [...jogadores.filter((x: any) => (x.email || "").toLowerCase() !== email), novo];
+              saveJogadores(lista);
+              upsertJogadorInDb(novo).catch(() => {});
+              setUser(novo);
+              localStorage.setItem("elite_user_v11", JSON.stringify(novo));
+              setPage("palpites");
+            }}
+            className="mt-6 space-y-4"
+          >
+            <div>
+              <label className="block text-[11px] text-zinc-400 uppercase font-bold mb-1">Seu Nome</label>
+              <input
+                name="nome"
+                placeholder="Ex: Carlos Silva"
+                required
+                className="w-full bg-zinc-900 border border-zinc-800 p-3.5 rounded-xl outline-none focus:border-[#FF6B00] text-sm text-white"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[11px] text-zinc-400 uppercase font-bold mb-1">Seu E-mail</label>
+              <input
+                name="email"
+                type="email"
+                defaultValue={buscaLoginInput.includes("@") ? buscaLoginInput : ""}
+                placeholder="carlos@gmail.com"
+                required
+                className="w-full bg-zinc-900 border border-zinc-800 p-3.5 rounded-xl outline-none focus:border-[#FF6B00] text-sm text-white"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[11px] text-zinc-400 uppercase font-bold mb-1">Chave PIX (Para receber)</label>
+              <input
+                name="pix"
+                placeholder="CPF, Telefone ou E-mail"
+                required
+                className="w-full bg-zinc-900 border border-zinc-800 p-3.5 rounded-xl outline-none focus:border-[#FF6B00] text-sm text-white font-mono"
+              />
+            </div>
+
+            <div className="bg-zinc-950 p-4 rounded-xl border border-zinc-800 space-y-2">
+              <label className="flex items-start gap-2.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={aceitouTermos}
+                  onChange={(e) => setAceitouTermos(e.target.checked)}
+                  className="mt-1 w-4 h-4 rounded accent-[#FF6B00] cursor-pointer"
+                />
+                <span className="text-xs text-zinc-300 leading-snug">
+                  Li e concordo com os Termos de Uso e Política de Privacidade do Bolão.
+                </span>
+              </label>
+              <button
+                type="button"
+                onClick={() => setShowTermosModal(true)}
+                className="text-[11px] text-[#FF6B00] hover:underline font-bold block ml-6 cursor-pointer"
+              >
+                📄 Ler Termos e Regras
+              </button>
+            </div>
+
+            <button
+              type="submit"
+              disabled={!aceitouTermos}
+              className="w-full bg-[#FF6B00] disabled:bg-zinc-800 disabled:text-zinc-500 disabled:cursor-not-allowed text-black font-black py-4 rounded-xl cursor-pointer hover:scale-[1.01] transition shadow-lg shadow-[#FF6B00]/20 text-sm uppercase tracking-wider"
+            >
+              CADASTRAR E FAZER APOSTAS
+            </button>
+          </form>
+        )}
 
         {showTermosModal && (
           <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
@@ -773,7 +1155,9 @@ export default function App() {
             onSubmit={(e) => {
               e.preventDefault();
               const fd = new FormData(e.currentTarget);
-              if (fd.get("email") === "inhobahia@gmail.com.br" && fd.get("senha") === "040608") {
+              const emailInput = String(fd.get("email") || "").trim().toLowerCase();
+              const senhaInput = String(fd.get("senha") || "").trim();
+              if (emailInput === "inhobahia29@gmail.com" && senhaInput === "040608") {
                 setPage("admin");
               } else {
                 alert("Acesso negado");
@@ -785,7 +1169,7 @@ export default function App() {
               <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1">E-mail</label>
               <input
                 name="email"
-                defaultValue="inhobahia@gmail.com.br"
+                defaultValue="InhoBahia29@gmail.com"
                 className="w-full bg-black border border-zinc-800 p-3.5 rounded-xl outline-none focus:border-[#FF6B00] text-sm text-white"
               />
             </div>
@@ -822,8 +1206,14 @@ export default function App() {
           <div className="flex items-center gap-3">
             <img src={logoBolao} alt="" className="w-10 h-10 object-contain rounded-lg" />
             <div>
-              <h2 className="font-black text-[#FF6B00] text-xl">ADM - BOLÕES ELITE</h2>
-              <div className="text-[11px] text-zinc-400">inhobahia@gmail.com.br</div>
+              <div className="flex items-center gap-2">
+                <h2 className="font-black text-[#FF6B00] text-xl">ADM - BOLÕES ELITE</h2>
+                <span className="text-[10px] bg-green-950 text-green-400 border border-green-700 px-2 py-0.5 rounded-full font-bold flex items-center gap-1">
+                  <span className="h-1.5 w-1.5 rounded-full bg-green-400 animate-pulse"></span>
+                  {dbConectado ? "Banco Online" : "Sincronizando..."}
+                </span>
+              </div>
+              <div className="text-[11px] text-zinc-400">InhoBahia29@gmail.com</div>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -845,6 +1235,7 @@ export default function App() {
         {/* Resumo Financeiro */}
         <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-xl text-xs space-y-2">
           <div className="font-bold flex flex-wrap gap-2 justify-between border-b border-zinc-800 pb-2">
+            <span>CADASTRADOS: {jogadores.length}</span>
             <span>PAGOS: {pagos} de {jogadores.length}</span>
             <span>TOTAL: R$ {total.toFixed(2)}</span>
             <span>BANCA 20%: R$ {banca20.toFixed(2)}</span>
@@ -855,6 +1246,113 @@ export default function App() {
             <span>🥈 2º (30%): R$ {premio2.toFixed(2)}</span>
             <span>🥉 3º (20%): R$ {premio3.toFixed(2)}</span>
           </div>
+        </div>
+
+        {/* ================================================================= */}
+        {/* BANCO DE DADOS DE TODOS OS APOSTADORES CADASTRADOS */}
+        {/* ================================================================= */}
+        <div className="bg-zinc-900 p-4 rounded-xl border border-zinc-800 space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-800 pb-2">
+            <div>
+              <h3 className="font-black text-sm text-white flex items-center gap-2">
+                <span className="text-[#FF6B00] text-base">🗄️</span> BANCO DE DADOS: APOSTADORES CADASTRADOS ({jogadores.length})
+              </h3>
+              <p className="text-[11px] text-zinc-400">
+                Todos os apostadores que se cadastram pelo link ficam salvos automaticamente aqui no banco de dados.
+              </p>
+            </div>
+            <input
+              value={buscaApostadorAdm}
+              onChange={(e) => setBuscaApostadorAdm(e.target.value)}
+              placeholder="🔍 Buscar por nome, e-mail ou PIX..."
+              className="bg-black border border-zinc-800 px-3 py-1.5 rounded-lg text-xs text-white outline-none focus:border-[#FF6B00] sm:w-64"
+            />
+          </div>
+
+          {jogadores.length === 0 ? (
+            <p className="text-zinc-500 text-xs py-4 text-center border border-dashed border-zinc-800 rounded-lg">
+              Nenhum apostador cadastrado ainda. Assim que alguém se cadastrar, aparecerá aqui em tempo real.
+            </p>
+          ) : (
+            <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
+              {jogadores
+                .filter((jg) => {
+                  const q = buscaApostadorAdm.trim().toLowerCase();
+                  if (!q) return true;
+                  return (
+                    (jg.nome || "").toLowerCase().includes(q) ||
+                    (jg.email || "").toLowerCase().includes(q) ||
+                    (jg.pix || "").toLowerCase().includes(q)
+                  );
+                })
+                .map((jg, idx) => {
+                  const palpitesJg = palpites.filter((p) => p.jogadorEmail === jg.email);
+                  const isPagoJg = jg.statusPagamento === "APROVADO" || palpitesJg.some((p) => p.pago);
+                  return (
+                    <div
+                      key={jg.email || idx}
+                      className="bg-black/70 border border-zinc-800 p-3 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs"
+                    >
+                      <div className="space-y-0.5">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-[10px] font-mono text-zinc-500">#{idx + 1}</span>
+                          <span className="font-black text-white text-sm">{jg.nome}</span>
+                          <span
+                            className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${
+                              isPagoJg
+                                ? "bg-green-950 text-green-400 border-green-700"
+                                : jg.statusPagamento === "EM_ANALISE"
+                                ? "bg-amber-950 text-amber-300 border-amber-700"
+                                : "bg-zinc-900 text-zinc-400 border-zinc-700"
+                            }`}
+                          >
+                            {isPagoJg
+                              ? "PAGO"
+                              : jg.statusPagamento === "EM_ANALISE"
+                              ? "COMPROVANTE ENVIADO"
+                              : "CADASTRADO"}
+                          </span>
+                          <span className="text-[10px] bg-zinc-900 border border-zinc-800 text-[#FF6B00] px-2 py-0.5 rounded font-bold">
+                            {palpitesJg.length} palpite(s)
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-zinc-400 flex flex-wrap gap-x-3 gap-y-0.5">
+                          <span>
+                            E-mail: <strong className="text-zinc-200 font-mono select-all">{jg.email}</strong>
+                          </span>
+                          <span>
+                            Chave PIX: <strong className="text-[#FF6B00] font-mono select-all">{jg.pix}</strong>
+                          </span>
+                          {jg.dataCadastro && (
+                            <span className="text-zinc-500">Cadastro: {jg.dataCadastro}</span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {!isPagoJg && (
+                          <button
+                            type="button"
+                            onClick={() => aprovarPagamento(jg.email)}
+                            className="text-[10px] bg-green-600 hover:bg-green-500 text-black font-black px-2.5 py-1.5 rounded-lg cursor-pointer transition"
+                          >
+                            ✓ Aprovar
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => excluirApostadorAdm(jg.email, jg.nome)}
+                          className="text-[10px] bg-red-950/60 hover:bg-red-900 text-red-300 border border-red-800/80 px-2.5 py-1.5 rounded-lg cursor-pointer transition"
+                          title="Excluir apostador do banco de dados"
+                        >
+                          🗑️ Excluir
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+            </div>
+          )}
         </div>
 
         {/* ================================================================= */}
@@ -1901,6 +2399,9 @@ export default function App() {
                 const todos = [...outros, ...novosPalpites];
                 setPalpites(todos);
                 localStorage.setItem("elite_palpites_v11", JSON.stringify(todos));
+                novosPalpites.forEach((np) => {
+                  upsertPalpiteInDb(np).catch(() => {});
+                });
 
                 // Reseta o status de pagamento para PENDENTE e limpa comprovante anterior para a nova aposta
                 const userAtualizado = {
@@ -1912,6 +2413,7 @@ export default function App() {
                 };
                 setUser(userAtualizado);
                 localStorage.setItem("elite_user_v11", JSON.stringify(userAtualizado));
+                upsertJogadorInDb(userAtualizado).catch(() => {});
 
                 const jgsAtualizados = jogadores.map((jg: any) => {
                   if (jg.email === user!.email) {

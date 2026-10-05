@@ -1,0 +1,204 @@
+{
+  "entities": {
+    "Jogador": {
+      "title": "Jogador",
+      "description": "Apostador cadastrado no Bolão da Elite.",
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "E-mail único do apostador.",
+          "minLength": 3,
+          "maxLength": 120
+        },
+        "nome": {
+          "type": "string",
+          "description": "Nome completo do apostador.",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "pix": {
+          "type": "string",
+          "description": "Chave PIX do apostador para recebimento de prêmios.",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "pontos": {
+          "type": "number",
+          "description": "Pontuação acumulada na rodada."
+        },
+        "statusPagamento": {
+          "type": "string",
+          "description": "Status de validação do pagamento PIX pelo ADM.",
+          "enum": ["PENDENTE", "EM_ANALISE", "APROVADO", "RECUSADO"]
+        },
+        "comprovante": {
+          "type": "string",
+          "description": "Imagem em Base64 do comprovante PIX enviado.",
+          "maxLength": 900000
+        },
+        "timestampComprovante": {
+          "type": "number",
+          "description": "Timestamp em milissegundos do envio do comprovante."
+        },
+        "dataEnvioComprovante": {
+          "type": "string",
+          "description": "Data e hora formatada do envio do comprovante.",
+          "maxLength": 60
+        },
+        "dataAprovacao": {
+          "type": "string",
+          "description": "Horário da aprovação do pagamento pelo ADM.",
+          "maxLength": 60
+        },
+        "dataCadastro": {
+          "type": "string",
+          "description": "Data e hora formatada do cadastro do apostador.",
+          "maxLength": 60
+        },
+        "timestampCadastro": {
+          "type": "number",
+          "description": "Timestamp em milissegundos do cadastro do apostador."
+        }
+      },
+      "required": ["email", "nome", "pix", "pontos"]
+    },
+    "Jogo": {
+      "title": "Jogo",
+      "description": "Confronto esportivo cadastrado pelo ADM para a rodada.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Identificador único do confronto.",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "casa": {
+          "type": "string",
+          "description": "Nome do time mandante.",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "fora": {
+          "type": "string",
+          "description": "Nome do time visitante.",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "escudoCasa": {
+          "type": "string",
+          "description": "URL ou Base64 do escudo do time mandante.",
+          "maxLength": 500000
+        },
+        "escudoFora": {
+          "type": "string",
+          "description": "URL ou Base64 do escudo do time visitante.",
+          "maxLength": 500000
+        },
+        "data": {
+          "type": "string",
+          "description": "Data ou horário do confronto.",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "estadio": {
+          "type": "string",
+          "description": "Nome do estádio do confronto.",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "resultadoOficial": {
+          "type": "string",
+          "description": "Resultado oficial confirmado pelo ADM.",
+          "enum": ["CASA", "EMPATE", "FORA"]
+        }
+      },
+      "required": ["id", "casa", "fora", "escudoCasa", "escudoFora", "data", "estadio"]
+    },
+    "Palpite": {
+      "title": "Palpite",
+      "description": "Palpite de um apostador para um confronto específico.",
+      "type": "object",
+      "properties": {
+        "jogadorEmail": {
+          "type": "string",
+          "description": "E-mail do apostador autor do palpite.",
+          "minLength": 3,
+          "maxLength": 120
+        },
+        "jogoId": {
+          "type": "string",
+          "description": "ID do jogo correspondente.",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "escolha": {
+          "type": "string",
+          "description": "Escolha do vencedor ou empate.",
+          "enum": ["CASA", "EMPATE", "FORA"]
+        },
+        "pago": {
+          "type": "boolean",
+          "description": "Indica se o palpite teve o pagamento aprovado pelo ADM."
+        }
+      },
+      "required": ["jogadorEmail", "jogoId", "escolha", "pago"]
+    },
+    "Config": {
+      "title": "Config",
+      "description": "Configurações gerais e chave PIX do Bolão da Elite.",
+      "type": "object",
+      "properties": {
+        "valor": {
+          "type": "number",
+          "description": "Valor da cota do bolão em reais."
+        },
+        "chavePix": {
+          "type": "string",
+          "description": "Chave PIX oficial do organizador.",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "nomePix": {
+          "type": "string",
+          "description": "Nome do recebedor PIX.",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "cidadePix": {
+          "type": "string",
+          "description": "Cidade do recebedor PIX.",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "pixAdm": {
+          "type": "string",
+          "description": "Chave PIX exibida aos jogadores.",
+          "minLength": 1,
+          "maxLength": 120
+        }
+      },
+      "required": ["valor", "chavePix", "nomePix", "cidadePix", "pixAdm"]
+    }
+  },
+  "firestore": {
+    "/jogadores/{jogadorId}": {
+      "schema": "Jogador",
+      "description": "Coleção de apostadores cadastrados no Bolão da Elite."
+    },
+    "/jogos/{jogoId}": {
+      "schema": "Jogo",
+      "description": "Coleção de confrontos da rodada ativa."
+    },
+    "/palpites/{palpiteId}": {
+      "schema": "Palpite",
+      "description": "Coleção de palpites registrados pelos apostadores."
+    },
+    "/config/{configId}": {
+      "schema": "Config",
+      "description": "Documento de configuração financeira e PIX do bolão."
+    }
+  }
+}
