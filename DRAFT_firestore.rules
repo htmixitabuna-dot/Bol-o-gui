@@ -84,7 +84,7 @@ service cloud.firestore {
 
     match /jogadores/{jogadorId} {
       allow get: if isValidId(jogadorId);
-      allow list: if existing().email is string && existing().email.size() <= 120;
+      allow list: if request.time != null;
       allow create: if isValidId(jogadorId) && isValidJogador(incoming());
       allow update: if isValidId(jogadorId) && isValidJogador(incoming()) &&
         incoming().email == existing().email &&
@@ -105,7 +105,7 @@ service cloud.firestore {
 
     match /jogos/{jogoId} {
       allow get: if isValidId(jogoId);
-      allow list: if existing().id is string && existing().id.size() <= 64;
+      allow list: if request.time != null;
       allow create: if isValidId(jogoId) && isValidJogo(incoming());
       allow update: if isValidId(jogoId) && isValidJogo(incoming()) &&
         incoming().id == existing().id &&
@@ -123,7 +123,7 @@ service cloud.firestore {
 
     match /palpites/{palpiteId} {
       allow get: if isValidId(palpiteId);
-      allow list: if existing().jogadorEmail is string && existing().jogadorEmail.size() <= 120;
+      allow list: if request.time != null;
       allow create: if isValidId(palpiteId) && isValidPalpite(incoming());
       allow update: if isValidId(palpiteId) && isValidPalpite(incoming()) &&
         incoming().jogadorEmail == existing().jogadorEmail &&
@@ -134,7 +134,7 @@ service cloud.firestore {
 
     match /config/{configId} {
       allow get: if isValidId(configId);
-      allow list: if existing().chavePix is string && existing().chavePix.size() <= 120;
+      allow list: if request.time != null;
       allow create: if isValidId(configId) && isValidConfig(incoming());
       allow update: if isValidId(configId) && isValidConfig(incoming()) &&
         incoming().diff(existing()).affectedKeys().hasOnly(['valor', 'chavePix', 'nomePix', 'cidadePix', 'pixAdm']);
