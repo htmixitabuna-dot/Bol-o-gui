@@ -158,6 +158,13 @@ export default function App() {
   const [erroLoginJogador, setErroLoginJogador] = useState("");
   const [buscaApostadorAdm, setBuscaApostadorAdm] = useState("");
   const [dbConectado, setDbConectado] = useState(false);
+  const [cotaSalvaAviso, setCotaSalvaAviso] = useState(false);
+  const [avisoAdm, setAvisoAdm] = useState("");
+
+  const mostrarAvisoAdm = (msg: string) => {
+    setAvisoAdm(msg);
+    setTimeout(() => setAvisoAdm(""), 4000);
+  };
 
   useEffect(() => {
     try {
@@ -598,10 +605,9 @@ export default function App() {
   };
 
   const excluirComprovante = (email: string) => {
-    if (!confirm("Deseja realmente excluir este comprovante da pasta do jogador?")) return;
-
+    const emailNorm = (email || "").trim().toLowerCase();
     const jogadoresAtualizados = jogadores.map((jg: any) => {
-      if (jg.email === email) {
+      if ((jg.email || "").trim().toLowerCase() === emailNorm) {
         const nextJg = {
           ...jg,
           comprovante: undefined,
@@ -616,7 +622,7 @@ export default function App() {
     setJogadores(jogadoresAtualizados);
     localStorage.setItem("elite_jogadores_v11", JSON.stringify(jogadoresAtualizados));
 
-    if (user && user.email === email) {
+    if (user && (user.email || "").trim().toLowerCase() === emailNorm) {
       const userAtualizado = {
         ...user,
         comprovante: undefined,
@@ -627,27 +633,79 @@ export default function App() {
       localStorage.setItem("elite_user_v11", JSON.stringify(userAtualizado));
     }
 
-    if (modalComprovante && modalComprovante.email === email) {
+    if (modalComprovante && (modalComprovante.email || "").trim().toLowerCase() === emailNorm) {
       setModalComprovante(null);
     }
 
-    alert("Comprovante excluído com sucesso pelo ADM!");
+    mostrarAvisoAdm("🗑️ Comprovante de pagamento excluído com sucesso!");
+  };
+
+  const excluirTodosComprovantes = () => {
+    const jogadoresAtualizados = jogadores.map((jg: any) => {
+      if (jg.comprovante) {
+        const nextJg = {
+          ...jg,
+          comprovante: undefined,
+          timestampComprovante: undefined,
+          dataEnvioComprovante: undefined,
+        };
+        upsertJogadorInDb(nextJg).catch(() => {});
+        return nextJg;
+      }
+      return jg;
+    });
+    setJogadores(jogadoresAtualizados);
+    localStorage.setItem("elite_jogadores_v11", JSON.stringify(jogadoresAtualizados));
+
+    if (user?.comprovante) {
+      const userAtualizado = {
+        ...user,
+        comprovante: undefined,
+        timestampComprovante: undefined,
+        dataEnvioComprovante: undefined,
+      };
+      setUser(userAtualizado);
+      localStorage.setItem("elite_user_v11", JSON.stringify(userAtualizado));
+    }
+
+    if (modalComprovante) setModalComprovante(null);
+    mostrarAvisoAdm("🗑️ Todos os comprovantes de pagamento foram excluídos!");
   };
 
   const excluirApostadorAdm = (email: string, nome: string) => {
-    if (!confirm(`Deseja realmente remover o apostador "${nome}" (${email}) e suas apostas do banco de dados?`)) return;
-    const novaLista = jogadores.filter((jg) => jg.email !== email);
+    const emailNorm = (email || "").trim().toLowerCase();
+    const novaLista = jogadores.filter((jg) => (jg.email || "").trim().toLowerCase() !== emailNorm);
     setJogadores(novaLista);
     localStorage.setItem("elite_jogadores_v11", JSON.stringify(novaLista));
-    deleteJogadorFromDb(email).catch(() => {});
+    deleteJogadorFromDb(emailNorm).catch(() => {});
 
-    const palpitesDoJogador = palpites.filter((p) => p.jogadorEmail === email);
+    const palpitesDoJogador = palpites.filter((p) => (p.jogadorEmail || "").trim().toLowerCase() === emailNorm);
     palpitesDoJogador.forEach((p) => {
-      deletePalpiteFromDb(email, p.jogoId).catch(() => {});
+      deletePalpiteFromDb(emailNorm, p.jogoId).catch(() => {});
     });
-    const novosPalpites = palpites.filter((p) => p.jogadorEmail !== email);
+    const novosPalpites = palpites.filter((p) => (p.jogadorEmail || "").trim().toLowerCase() !== emailNorm);
     setPalpites(novosPalpites);
     localStorage.setItem("elite_palpites_v11", JSON.stringify(novosPalpites));
+
+    if (user && (user.email || "").trim().toLowerCase() === emailNorm) {
+      setUser(null);
+      localStorage.removeItem("elite_user_v11");
+    }
+
+    mostrarAvisoAdm(`🗑️ Jogador "${nome}" e suas apostas foram excluídos do banco de dados!`);
+  };
+
+  const salvarValorCota = () => {
+    const numVal = parseFloat(String(config.valor).replace(",", "."));
+    if (isNaN(numVal) || numVal <= 0) {
+      mostrarAvisoAdm("⚠️ Digite um valor válido para a cota!");
+      return;
+    }
+    const chaveAtual = (config.chavePix || config.pixAdm || "01780181558").trim();
+    saveConfig({ ...config, valor: numVal, chavePix: chaveAtual, pixAdm: chaveAtual });
+    setCotaSalvaAviso(true);
+    setTimeout(() => setCotaSalvaAviso(false), 4000);
+    mostrarAvisoAdm(`💾 Valor da cota (R$ ${numVal}) salvo com sucesso!`);
   };
 
   const calcularDiasRestantes = (timestamp?: number) => {
@@ -1232,11 +1290,26 @@ export default function App() {
           </div>
         </div>
 
+        {/* Aviso Flutuante de Ações do ADM */}
+        {avisoAdm && (
+          <div className="bg-green-950/90 border border-green-600 text-green-200 px-4 py-3 rounded-xl text-xs font-bold flex items-center justify-between shadow-lg">
+            <span>{avisoAdm}</span>
+            <button
+              type="button"
+              onClick={() => setAvisoAdm("")}
+              className="text-green-400 hover:text-white ml-3 font-black cursor-pointer"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
         {/* Resumo Financeiro */}
         <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-xl text-xs space-y-2">
           <div className="font-bold flex flex-wrap gap-2 justify-between border-b border-zinc-800 pb-2">
             <span>CADASTRADOS: {jogadores.length}</span>
             <span>PAGOS: {pagos} de {jogadores.length}</span>
+            <span>VALOR DA COTA: R$ {config.valor}</span>
             <span>TOTAL: R$ {total.toFixed(2)}</span>
             <span>BANCA 20%: R$ {banca20.toFixed(2)}</span>
             <span className="text-[#FF6B00]">PRÊMIO 80%: R$ {premio80.toFixed(2)}</span>
@@ -1261,12 +1334,23 @@ export default function App() {
                 Todos os apostadores que se cadastram pelo link ficam salvos automaticamente aqui no banco de dados.
               </p>
             </div>
-            <input
-              value={buscaApostadorAdm}
-              onChange={(e) => setBuscaApostadorAdm(e.target.value)}
-              placeholder="🔍 Buscar por nome, e-mail ou PIX..."
-              className="bg-black border border-zinc-800 px-3 py-1.5 rounded-lg text-xs text-white outline-none focus:border-[#FF6B00] sm:w-64"
-            />
+            <div className="flex flex-wrap items-center gap-2">
+              {jogadores.some((jg) => jg.comprovante) && (
+                <button
+                  type="button"
+                  onClick={excluirTodosComprovantes}
+                  className="text-[10px] bg-red-950/80 hover:bg-red-900 text-red-300 border border-red-800 px-3 py-1.5 rounded-lg cursor-pointer font-bold transition flex items-center gap-1"
+                >
+                  <span>🗑️</span> Excluir Todos Comprovantes
+                </button>
+              )}
+              <input
+                value={buscaApostadorAdm}
+                onChange={(e) => setBuscaApostadorAdm(e.target.value)}
+                placeholder="🔍 Buscar por nome, e-mail ou PIX..."
+                className="bg-black border border-zinc-800 px-3 py-1.5 rounded-lg text-xs text-white outline-none focus:border-[#FF6B00] sm:w-60"
+              />
+            </div>
           </div>
 
           {jogadores.length === 0 ? (
@@ -1329,7 +1413,7 @@ export default function App() {
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-1.5 shrink-0">
+                      <div className="flex flex-wrap items-center gap-1.5 shrink-0">
                         {!isPagoJg && (
                           <button
                             type="button"
@@ -1339,13 +1423,23 @@ export default function App() {
                             ✓ Aprovar
                           </button>
                         )}
+                        {jg.comprovante && (
+                          <button
+                            type="button"
+                            onClick={() => excluirComprovante(jg.email)}
+                            className="text-[10px] bg-amber-950/70 hover:bg-amber-900 text-amber-300 border border-amber-800/80 px-2.5 py-1.5 rounded-lg cursor-pointer font-bold transition"
+                            title="Excluir comprovante de pagamento deste jogador"
+                          >
+                            🗑️ Excluir Comprovante
+                          </button>
+                        )}
                         <button
                           type="button"
                           onClick={() => excluirApostadorAdm(jg.email, jg.nome)}
-                          className="text-[10px] bg-red-950/60 hover:bg-red-900 text-red-300 border border-red-800/80 px-2.5 py-1.5 rounded-lg cursor-pointer transition"
-                          title="Excluir apostador do banco de dados"
+                          className="text-[10px] bg-red-950/70 hover:bg-red-900 text-red-300 border border-red-800/80 px-2.5 py-1.5 rounded-lg cursor-pointer font-bold transition"
+                          title="Excluir jogador do banco de dados"
                         >
-                          🗑️ Excluir
+                          🗑️ Excluir Jogador
                         </button>
                       </div>
                     </div>
@@ -1544,7 +1638,7 @@ export default function App() {
                       </div>
 
                       {/* Pontos & Prêmio */}
-                      <div className="flex items-center gap-4 text-right">
+                      <div className="flex items-center gap-3 text-right">
                         <div>
                           <div className="text-xl font-black text-[#FF6B00]">
                             {jg.pontos}{" "}
@@ -1565,6 +1659,15 @@ export default function App() {
                             </div>
                           </div>
                         )}
+
+                        <button
+                          type="button"
+                          onClick={() => excluirApostadorAdm(jg.email, jg.nome)}
+                          className="text-[10px] bg-red-950/70 hover:bg-red-900 text-red-300 border border-red-800/80 px-2.5 py-1.5 rounded-lg cursor-pointer font-bold transition"
+                          title="Excluir jogador"
+                        >
+                          🗑️ Excluir Jogador
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -1584,35 +1687,47 @@ export default function App() {
                 <span className="text-[#FF6B00] text-base">📋</span> APOSTAS RECEBIDAS (CAMPO DE CONTROLE)
               </h3>
               <p className="text-[11px] text-zinc-400">
-                Visualize os palpites individuais de vitória/empate de cada jogador e valide o pagamento.
+                Visualize os palpites individuais de vitória/empate de cada jogador, gerencie comprovantes e exclua jogadores.
               </p>
             </div>
 
-            <div className="flex items-center gap-1 bg-black p-1 rounded-lg border border-zinc-800">
-              <button
-                onClick={() => setFiltroApostasAdm("todos")}
-                className={`text-[10px] px-2.5 py-1 rounded font-bold cursor-pointer transition ${
-                  filtroApostasAdm === "todos" ? "bg-[#FF6B00] text-black" : "text-zinc-400 hover:text-white"
-                }`}
-              >
-                Todos ({rankingGanhadores.length})
-              </button>
-              <button
-                onClick={() => setFiltroApostasAdm("pagos")}
-                className={`text-[10px] px-2.5 py-1 rounded font-bold cursor-pointer transition ${
-                  filtroApostasAdm === "pagos" ? "bg-green-600 text-black" : "text-zinc-400 hover:text-white"
-                }`}
-              >
-                Pagos ({rankingGanhadores.filter((x) => x.isPago).length})
-              </button>
-              <button
-                onClick={() => setFiltroApostasAdm("pendentes")}
-                className={`text-[10px] px-2.5 py-1 rounded font-bold cursor-pointer transition ${
-                  filtroApostasAdm === "pendentes" ? "bg-red-600 text-white" : "text-zinc-400 hover:text-white"
-                }`}
-              >
-                Pendentes ({rankingGanhadores.filter((x) => !x.isPago).length})
-              </button>
+            <div className="flex flex-wrap items-center gap-2">
+              {jogadores.some((jg) => jg.comprovante) && (
+                <button
+                  type="button"
+                  onClick={excluirTodosComprovantes}
+                  className="text-[10px] bg-red-950/80 hover:bg-red-900 text-red-300 border border-red-800 px-2.5 py-1.5 rounded-lg cursor-pointer font-bold transition flex items-center gap-1"
+                >
+                  <span>🗑️</span> Excluir Todos Comprovantes
+                </button>
+              )}
+
+              <div className="flex items-center gap-1 bg-black p-1 rounded-lg border border-zinc-800">
+                <button
+                  onClick={() => setFiltroApostasAdm("todos")}
+                  className={`text-[10px] px-2.5 py-1 rounded font-bold cursor-pointer transition ${
+                    filtroApostasAdm === "todos" ? "bg-[#FF6B00] text-black" : "text-zinc-400 hover:text-white"
+                  }`}
+                >
+                  Todos ({rankingGanhadores.length})
+                </button>
+                <button
+                  onClick={() => setFiltroApostasAdm("pagos")}
+                  className={`text-[10px] px-2.5 py-1 rounded font-bold cursor-pointer transition ${
+                    filtroApostasAdm === "pagos" ? "bg-green-600 text-black" : "text-zinc-400 hover:text-white"
+                  }`}
+                >
+                  Pagos ({rankingGanhadores.filter((x) => x.isPago).length})
+                </button>
+                <button
+                  onClick={() => setFiltroApostasAdm("pendentes")}
+                  className={`text-[10px] px-2.5 py-1 rounded font-bold cursor-pointer transition ${
+                    filtroApostasAdm === "pendentes" ? "bg-red-600 text-white" : "text-zinc-400 hover:text-white"
+                  }`}
+                >
+                  Pendentes ({rankingGanhadores.filter((x) => !x.isPago).length})
+                </button>
+              </div>
             </div>
           </div>
 
@@ -1646,7 +1761,7 @@ export default function App() {
                         </div>
                       </div>
 
-                      <div className="flex flex-wrap items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-1.5">
                         {/* Botões de Ação de Pagamento */}
                         {jg.isPago || jg.statusPagamento === "APROVADO" ? (
                           <div className="flex items-center gap-1.5">
@@ -1680,6 +1795,26 @@ export default function App() {
                             </button>
                           </div>
                         )}
+
+                        {jg.comprovante && (
+                          <button
+                            type="button"
+                            onClick={() => excluirComprovante(jg.email)}
+                            className="text-xs bg-amber-950/70 hover:bg-amber-900 text-amber-300 border border-amber-800 px-2.5 py-1.5 rounded-lg cursor-pointer font-bold transition flex items-center gap-1"
+                            title="Excluir comprovante de pagamento"
+                          >
+                            <span>🗑️</span> Excluir Comprovante
+                          </button>
+                        )}
+
+                        <button
+                          type="button"
+                          onClick={() => excluirApostadorAdm(jg.email, jg.nome)}
+                          className="text-xs bg-red-950/70 hover:bg-red-900 text-red-300 border border-red-800 px-2.5 py-1.5 rounded-lg cursor-pointer font-bold transition flex items-center gap-1"
+                          title="Excluir jogador e suas apostas"
+                        >
+                          <span>🗑️</span> Excluir Jogador
+                        </button>
                       </div>
                     </div>
 
@@ -1801,69 +1936,85 @@ export default function App() {
         </div>
 
         {/* Configurações & Chave PIX */}
-        <div className="bg-zinc-900 p-4 rounded-xl border border-zinc-800 space-y-3">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
-            <h3 className="font-bold text-sm text-zinc-300">Configurações & Chave PIX</h3>
-            <span className="text-[10px] text-zinc-500">Chave usada para os apostadores pagarem a entrada</span>
+        <div className="bg-zinc-900 p-4 rounded-xl border border-zinc-800 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 border-b border-zinc-800 pb-2">
+            <h3 className="font-black text-sm text-white flex items-center gap-2">
+              <span className="text-[#FF6B00] text-base">💰</span> VALOR DA COTA & CHAVE PIX DO ADM
+            </h3>
+            <span className="text-[10px] text-zinc-400">Defina e salve o valor da cota e a chave PIX para recebimento</span>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-            <div>
-              <label className="block text-[10px] text-zinc-400 uppercase font-bold mb-1">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+            {/* Bloco Valor da Cota */}
+            <div className="bg-black/60 border border-zinc-800 p-3.5 rounded-xl space-y-2.5">
+              <label className="block text-[10px] text-zinc-400 uppercase font-bold">
                 Valor da Entrada por Cota (R$)
               </label>
-              <input
-                value={config.valor}
-                onChange={(e) => setConfig({ ...config, valor: e.target.value })}
-                placeholder="Valor R$"
-                className="w-full bg-black border border-zinc-800 p-2.5 rounded-lg text-white outline-none focus:border-[#FF6B00] text-sm"
-              />
+              <div className="flex items-center gap-2">
+                <input
+                  value={config.valor}
+                  onChange={(e) => setConfig({ ...config, valor: e.target.value })}
+                  placeholder="Ex: 20"
+                  className="flex-1 bg-zinc-900 border border-zinc-800 p-2.5 rounded-lg text-white font-bold outline-none focus:border-[#FF6B00] text-sm"
+                />
+                <button
+                  type="button"
+                  onClick={salvarValorCota}
+                  className="bg-[#FF6B00] hover:bg-[#ff7b1a] text-black font-black px-4 py-2.5 rounded-lg cursor-pointer transition uppercase text-xs tracking-wider shadow-md shadow-[#FF6B00]/20 flex items-center gap-1.5 shrink-0"
+                >
+                  <span>💾</span> SALVAR VALOR DA COTA
+                </button>
+              </div>
+              <div className="text-[11px] text-zinc-500">
+                Valor atual salvo: <strong className="text-[#FF6B00] font-black">R$ {config.valor}</strong>
+              </div>
+              {cotaSalvaAviso && (
+                <div className="bg-green-950/80 border border-green-700 text-green-300 px-3 py-2 rounded-lg text-[11px] font-bold flex items-center gap-1.5">
+                  <span>✅</span> Valor da cota salvo no banco de dados!
+                </div>
+              )}
             </div>
-            <div>
-              <label className="block text-[10px] text-zinc-400 uppercase font-bold mb-1">
+
+            {/* Bloco Chave PIX */}
+            <div className="bg-black/60 border border-zinc-800 p-3.5 rounded-xl space-y-2.5">
+              <label className="block text-[10px] text-zinc-400 uppercase font-bold">
                 Chave PIX do ADM (Para Receber)
               </label>
-              <input
-                value={config.chavePix || config.pixAdm || ""}
-                onChange={(e) => setConfig({ ...config, chavePix: e.target.value, pixAdm: e.target.value })}
-                placeholder="CPF, CNPJ, Telefone, E-mail ou Aleatória"
-                className="w-full bg-black border border-zinc-800 p-2.5 rounded-lg text-white outline-none focus:border-[#FF6B00] text-sm font-mono"
-              />
-            </div>
-          </div>
-
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-2">
-            <button
-              onClick={() => {
-                const chaveSalvar = (config.chavePix || config.pixAdm || "").trim();
-                if (!chaveSalvar) {
-                  alert("Por favor, digite a chave PIX do ADM!");
-                  return;
-                }
-                saveConfig({ ...config, chavePix: chaveSalvar, pixAdm: chaveSalvar });
-                setPixSalvoAviso(true);
-                setTimeout(() => setPixSalvoAviso(false), 4000);
-              }}
-              className="bg-[#FF6B00] hover:bg-[#ff7b1a] text-black font-black px-5 py-2.5 rounded-xl cursor-pointer transition uppercase text-xs tracking-wider shadow-md shadow-[#FF6B00]/20 flex items-center justify-center gap-1.5"
-            >
-              <span>💾</span> SALVAR CHAVE PIX
-            </button>
-            <span className="text-[11px] text-zinc-500">
-              Chave ativa salva: <strong className="text-zinc-300 font-mono">{config.chavePix || config.pixAdm}</strong>
-            </span>
-          </div>
-
-          {pixSalvoAviso && (
-            <div className="bg-green-950/80 border border-green-700 text-green-300 px-3.5 py-2.5 rounded-xl text-xs flex items-center gap-2 animate-fade-in">
-              <span className="text-base">✅</span>
-              <div>
-                <strong>Chave PIX salva com sucesso!</strong>
-                <div className="text-[10px] text-green-400">
-                  Os apostadores já verão essa chave automaticamente na tela de pagamento.
-                </div>
+              <div className="flex items-center gap-2">
+                <input
+                  value={config.chavePix || config.pixAdm || ""}
+                  onChange={(e) => setConfig({ ...config, chavePix: e.target.value, pixAdm: e.target.value })}
+                  placeholder="CPF, CNPJ, Telefone, E-mail ou Aleatória"
+                  className="flex-1 bg-zinc-900 border border-zinc-800 p-2.5 rounded-lg text-white outline-none focus:border-[#FF6B00] text-sm font-mono"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const chaveSalvar = (config.chavePix || config.pixAdm || "").trim();
+                    if (!chaveSalvar) {
+                      alert("Por favor, digite a chave PIX do ADM!");
+                      return;
+                    }
+                    saveConfig({ ...config, chavePix: chaveSalvar, pixAdm: chaveSalvar });
+                    setPixSalvoAviso(true);
+                    setTimeout(() => setPixSalvoAviso(false), 4000);
+                    mostrarAvisoAdm("💾 Chave PIX salva com sucesso!");
+                  }}
+                  className="bg-[#FF6B00] hover:bg-[#ff7b1a] text-black font-black px-4 py-2.5 rounded-lg cursor-pointer transition uppercase text-xs tracking-wider shadow-md shadow-[#FF6B00]/20 flex items-center gap-1.5 shrink-0"
+                >
+                  <span>💾</span> SALVAR CHAVE PIX
+                </button>
               </div>
+              <div className="text-[11px] text-zinc-500">
+                Chave ativa salva: <strong className="text-zinc-300 font-mono">{config.chavePix || config.pixAdm}</strong>
+              </div>
+              {pixSalvoAviso && (
+                <div className="bg-green-950/80 border border-green-700 text-green-300 px-3 py-2 rounded-lg text-[11px] font-bold flex items-center gap-1.5">
+                  <span>✅</span> Chave PIX salva com sucesso!
+                </div>
+              )}
             </div>
-          )}
+          </div>
         </div>
 
         {/* Gerenciar Confrontos */}
