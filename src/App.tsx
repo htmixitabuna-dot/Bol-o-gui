@@ -111,6 +111,9 @@ export interface Jogo {
   data: string;
   estadio: string;
   resultadoOficial?: EscolhaResultado;
+  publicado?: boolean;
+  bolaoId?: string;
+  tituloBolao?: string;
 }
 
 export interface Palpite {
@@ -229,13 +232,16 @@ export default function App() {
   // Logo Oficial do Bolões Elite
   const [logoBolao, setLogoBolao] = useState<string>(logoOficial);
 
-  // Confronto Form
+  // Confronto Form & Novo Bolão Salvo (Pré-Pronto)
   const [nomeTime1, setNomeTime1] = useState("Palmeiras");
   const [nomeTime2, setNomeTime2] = useState("Grêmio");
   const [escudoTime1, setEscudoTime1] = useState(() => getEscudoPadrao("Palmeiras"));
   const [escudoTime2, setEscudoTime2] = useState(() => getEscudoPadrao("Grêmio"));
   const [dataJ, setDataJ] = useState("16:00");
   const [estadio, setEstadio] = useState("Maracanã");
+  const [tituloNovoBolao, setTituloNovoBolao] = useState("Novo Bolão da Rodada");
+  const [bolaoEmPreparoId, setBolaoEmPreparoId] = useState("bolao_salvo_1");
+  const [bolaoSalvoAviso, setBolaoSalvoAviso] = useState(false);
 
   // Escolhas temporárias do jogador para a rodada atual
   const [escolhasTemp, setEscolhasTemp] = useState<Record<string, EscolhaResultado>>({});
@@ -995,10 +1001,33 @@ export default function App() {
     );
   };
 
-  const addJogo = () => {
-    if (jogos.length >= 10) return alert("Máximo de 10 jogos no bolão!");
-    if (nomeTime1.trim() === nomeTime2.trim()) return alert("Selecione dois times diferentes!");
+  const jogosPublicados = jogos.filter((j) => j.publicado !== false);
+  const jogosSalvosNaoPublicados = jogos.filter((j) => j.publicado === false);
 
+  // Agrupa os bolões salvos (não publicados) por bolaoId
+  const boloesSalvosMap = new Map<string, { bolaoId: string; titulo: string; jogos: Jogo[] }>();
+  jogosSalvosNaoPublicados.forEach((jgItem) => {
+    const bId = jgItem.bolaoId || "bolao_salvo_1";
+    const bTitulo = jgItem.tituloBolao || "Novo Bolão da Rodada";
+    const atual = boloesSalvosMap.get(bId) || { bolaoId: bId, titulo: bTitulo, jogos: [] };
+    atual.jogos.push(jgItem);
+    boloesSalvosMap.set(bId, atual);
+  });
+  const listaBoloesSalvos = Array.from(boloesSalvosMap.values());
+  const jogosDoBolaoEmPreparo = jogosSalvosNaoPublicados.filter(
+    (j) => (j.bolaoId || "bolao_salvo_1") === bolaoEmPreparoId
+  );
+
+  // Salva o confronto no Novo Bolão em preparo (publicado: false) — NÃO libera para os jogadores ainda
+  const addJogo = () => {
+    if (jogosDoBolaoEmPreparo.length >= 10) {
+      return alert("Máximo de 10 jogos neste bolão salvo! Crie outro bolão ou publique este.");
+    }
+    if (nomeTime1.trim() === nomeTime2.trim()) {
+      return alert("Selecione dois times diferentes!");
+    }
+
+    const tituloLimpo = (tituloNovoBolao || "Novo Bolão da Rodada").trim();
     const novo: Jogo = {
       id: Date.now().toString(),
       casa: nomeTime1.trim(),
@@ -1007,24 +1036,100 @@ export default function App() {
       escudoFora: escudoTime2 || getEscudoPadrao(nomeTime2),
       data: dataJ || "A definir",
       estadio: estadio || "Estádio Principal",
+      publicado: false,
+      bolaoId: bolaoEmPreparoId,
+      tituloBolao: tituloLimpo,
     };
 
     const novaLista = [...jogos, novo];
     saveJogos(novaLista);
+    setBolaoSalvoAviso(true);
+    setTimeout(() => setBolaoSalvoAviso(false), 5000);
+    mostrarAvisoAdm(
+      `🔒 Jogo "${novo.casa} x ${novo.fora}" salvo no "${tituloLimpo}"! Ele está pronto e oculto até você clicar em PUBLICAR P/ OS JOGADORES.`
+    );
+  };
+
+  // Publica um bolão salvo específico (ou todos os jogos em preparo) para os jogadores
+  const publicarBolaoSalvo = (targetBolaoId?: string, substituirAtivos = false) => {
+    const candidatos = targetBolaoId
+      ? jogosSalvosNaoPublicados.filter((j) => (j.bolaoId || "bolao_salvo_1") === targetBolaoId)
+      : jogosSalvosNaoPublicados;
+
+    if (candidatos.length === 0 && jogosPublicados.length === 0) {
+      alert("Adicione pelo menos 1 jogo no bolão antes de publicar para os jogadores!");
+      return;
+    }
+
+    let novaLista: Jogo[];
+    if (candidatos.length > 0) {
+      if (substituirAtivos) {
+        // Remove os jogos publicados da rodada anterior e publica apenas o novo bolão salvo
+        const mantendoRascunhosOutros = jogos.filter(
+          (j) => j.publicado === false && (targetBolaoId ? (j.bolaoId || "bolao_salvo_1") !== targetBolaoId : false)
+        );
+        const publicadosAgora = candidatos.slice(0, 10).map((j) => ({
+          ...j,
+          publicado: true,
+        }));
+        novaLista = [...mantendoRascunhosOutros, ...publicadosAgora];
+      } else {
+        const vagasRestantes = Math.max(0, 10 - jogosPublicados.length);
+        if (vagasRestantes === 0) {
+          const confirmarSubstituicao = confirm(
+            "Já existem 10 jogos publicados na rodada atual. Deseja substituir a rodada anterior por este Novo Bolão?"
+          );
+          if (!confirmarSubstituicao) return;
+          const mantendoRascunhosOutros = jogos.filter(
+            (j) => j.publicado === false && (targetBolaoId ? (j.bolaoId || "bolao_salvo_1") !== targetBolaoId : false)
+          );
+          const publicadosAgora = candidatos.slice(0, 10).map((j) => ({
+            ...j,
+            publicado: true,
+          }));
+          novaLista = [...mantendoRascunhosOutros, ...publicadosAgora];
+        } else {
+          const idsParaPublicar = new Set(candidatos.slice(0, vagasRestantes).map((c) => c.id));
+          novaLista = jogos.map((j) => (idsParaPublicar.has(j.id) ? { ...j, publicado: true } : j));
+        }
+      }
+    } else {
+      novaLista = jogos.map((j) => ({ ...j, publicado: true }));
+    }
+
+    saveJogos(novaLista);
     setRodadaPublicadaAviso(true);
     setTimeout(() => setRodadaPublicadaAviso(false), 5000);
-    alert(`Jogo "${novo.casa} x ${novo.fora}" salvo e liberado na área de apostas dos jogadores!`);
+    const totalPub = novaLista.filter((j) => j.publicado !== false).length;
+    mostrarAvisoAdm(`🚀 Bolão publicado com sucesso! ${totalPub} jogo(s) liberado(s) para os jogadores.`);
+    alert(`🚀 Sucesso! O bolão foi publicado e os ${totalPub} confrontos já estão liberados na área de apostas dos jogadores.`);
+  };
+
+  const ocultarJogoPublicadoParaRascunho = (jogoId: string) => {
+    const novaLista = jogos.map((j) =>
+      j.id === jogoId
+        ? {
+            ...j,
+            publicado: false,
+            bolaoId: j.bolaoId || bolaoEmPreparoId,
+            tituloBolao: j.tituloBolao || tituloNovoBolao || "Bolão Salvo",
+          }
+        : j
+    );
+    saveJogos(novaLista);
+    mostrarAvisoAdm("🔒 Confronto movido para Bolões Salvos (oculto para os jogadores).");
+  };
+
+  const iniciarNovoBolaoRascunho = () => {
+    const proximoNumero = listaBoloesSalvos.length + 1;
+    const novoId = `bolao_salvo_${Date.now()}`;
+    setBolaoEmPreparoId(novoId);
+    setTituloNovoBolao(`Novo Bolão #${proximoNumero}`);
+    mostrarAvisoAdm(`✨ Novo Bolão #${proximoNumero} criado em modo rascunho! Adicione os confrontos abaixo e deixe salvo.`);
   };
 
   const salvarEEnviarConfrontos = () => {
-    if (jogos.length === 0) {
-      alert("Adicione pelo menos 1 jogo antes de enviar para os jogadores!");
-      return;
-    }
-    saveJogos(jogos);
-    setRodadaPublicadaAviso(true);
-    setTimeout(() => setRodadaPublicadaAviso(false), 5000);
-    alert(`Sucesso! Os ${jogos.length} confrontos foram salvos e já estão disponíveis na área de apostas dos jogadores.`);
+    publicarBolaoSalvo(undefined, false);
   };
 
   const toggleStatusPago = (email: string) => {
@@ -1365,7 +1470,7 @@ export default function App() {
   // TRIAGEM AUTOMÁTICA DE APOSTAS & RANKING DE GANHADORES
   // =========================================================================
   const calcularTriagem = () => {
-    const jogosEncerrados = jogos.filter((j) => j.resultadoOficial);
+    const jogosEncerrados = jogosPublicados.filter((j) => j.resultadoOficial);
 
     const ranking = jogadores.map((jg) => {
       const apostasJogador = palpites.filter((p) => p.jogadorEmail === jg.email);
@@ -1379,7 +1484,7 @@ export default function App() {
       let totalApostas = apostasJogador.length;
 
       apostasJogador.forEach((p) => {
-        const jgCorrespondente = jogos.find((j) => j.id === p.jogoId);
+        const jgCorrespondente = jogosPublicados.find((j) => j.id === p.jogoId);
         if (jgCorrespondente && jgCorrespondente.resultadoOficial) {
           if (p.escolha === jgCorrespondente.resultadoOficial) {
             pontos += 1;
@@ -1776,7 +1881,7 @@ export default function App() {
 
   const salvarPalpitesTemporariosSeHouver = async () => {
     if (!user) return;
-    const jogosComPalpite = jogos.filter((j) => escolhasTemp[j.id]);
+    const jogosComPalpite = jogosPublicados.filter((j) => escolhasTemp[j.id]);
     if (jogosComPalpite.length === 0) return;
 
     const jaPago =
@@ -1826,7 +1931,7 @@ export default function App() {
                   setPage("loginJogador");
                   return;
                 }
-                const jogosComPalpite = jogos.filter((j) => escolhasTemp[j.id]);
+                const jogosComPalpite = jogosPublicados.filter((j) => escolhasTemp[j.id]);
                 if (jogosComPalpite.length === 0 && meusPalpitesSalvos.length === 0) {
                   alert("Selecione seus palpites nos jogos da rodada antes de pagar!");
                   return;
@@ -1921,7 +2026,7 @@ export default function App() {
                   setPage("loginJogador");
                   return;
                 }
-                const jogosComPalpite = jogos.filter((j) => escolhasTemp[j.id]);
+                const jogosComPalpite = jogosPublicados.filter((j) => escolhasTemp[j.id]);
                 if (jogosComPalpite.length === 0 && meusPalpitesSalvos.length === 0) {
                   alert("Selecione seus palpites nos jogos da rodada antes de pagar!");
                   return;
@@ -2395,7 +2500,7 @@ export default function App() {
               <div className="text-[9px] text-zinc-500 uppercase font-bold">Jogadores</div>
             </div>
             <div>
-              <div className="text-2xl font-black">{jogos.length}</div>
+              <div className="text-2xl font-black">{jogosPublicados.length}</div>
               <div className="text-[9px] text-zinc-500 uppercase font-bold">Confrontos</div>
             </div>
           </div>
@@ -2968,17 +3073,17 @@ export default function App() {
               </p>
             </div>
             <span className="text-[10px] bg-black border border-zinc-800 text-[#FF6B00] font-bold px-2 py-1 rounded">
-              {totalJogosEncerrados} de {jogos.length} Definidos
+              {totalJogosEncerrados} de {jogosPublicados.length} Definidos
             </span>
           </div>
 
-          {jogos.length === 0 ? (
+          {jogosPublicados.length === 0 ? (
             <p className="text-zinc-500 text-xs py-3 text-center border border-dashed border-zinc-800 rounded-lg">
-              Cadastre os confrontos abaixo para poder definir os vencedores.
+              Nenhum jogo publicado no momento. Publique um bolão salvo abaixo para apurar os vencedores.
             </p>
           ) : (
             <div className="space-y-2 mt-2">
-              {jogos.map((j, idx) => (
+              {jogosPublicados.map((j, idx) => (
                 <div
                   key={j.id}
                   className="bg-black/70 border border-zinc-800 p-3 rounded-xl flex flex-col md:flex-row md:items-center justify-between gap-3"
@@ -3552,11 +3657,71 @@ export default function App() {
           </div>
         </div>
 
-        {/* Gerenciar Confrontos */}
+        {/* Cadastrar Novo Bolão (Deixar Pronto e Salvo) & Gerenciar Confrontos */}
         <div className="bg-zinc-900 p-4 rounded-xl border border-zinc-800 space-y-4">
-          <div className="flex justify-between items-center">
-            <h3 className="font-bold text-sm">Adicionar Confronto ({jogos.length}/10)</h3>
-            <span className="text-[10px] text-zinc-400">Suba imagens próprias ou use os times padrão</span>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-800 pb-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-black uppercase tracking-wider bg-[#FF6B00] text-black px-2 py-0.5 rounded">
+                  PRÉ-CADASTRO & PUBLICAÇÃO
+                </span>
+                <span className="text-[10px] text-amber-400 font-bold">
+                  🔒 Fica salvo e só libera quando você clicar em Publicar
+                </span>
+              </div>
+              <h3 className="font-black text-base text-white mt-1">
+                Cadastrar Novo Bolão (Deixar Pronto e Salvo)
+              </h3>
+              <p className="text-[11px] text-zinc-400">
+                Monte os confrontos do próximo bolão e deixe salvo no banco. Os jogadores só verão quando você publicar!
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={iniciarNovoBolaoRascunho}
+              className="bg-zinc-800 hover:bg-zinc-700 border border-[#FF6B00]/50 text-[#FF6B00] font-black px-3.5 py-2 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition shrink-0 flex items-center gap-1.5"
+            >
+              <span>➕</span> Criar Outro Novo Bolão
+            </button>
+          </div>
+
+          {/* Identificação do Novo Bolão que está sendo preparado */}
+          <div className="bg-black/70 border border-zinc-800 p-3.5 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex-1 space-y-1">
+              <label className="block text-[10px] uppercase font-black text-[#FF6B00]">
+                Nome / Identificação do Novo Bolão em Preparo ({jogosDoBolaoEmPreparo.length}/10 jogos salvos neste bolão)
+              </label>
+              <input
+                value={tituloNovoBolao}
+                onChange={(e) => setTituloNovoBolao(e.target.value)}
+                placeholder="Ex: Bolão Rodada de Domingo / Bolão Especial"
+                className="w-full bg-zinc-900 border border-zinc-700 p-2.5 rounded-lg text-xs sm:text-sm text-white font-bold outline-none focus:border-[#FF6B00]"
+              />
+            </div>
+
+            {listaBoloesSalvos.length > 1 && (
+              <div className="sm:w-64 space-y-1">
+                <label className="block text-[10px] uppercase font-bold text-zinc-400">
+                  Alternar Bolão Salvo:
+                </label>
+                <select
+                  value={bolaoEmPreparoId}
+                  onChange={(e) => {
+                    const idSel = e.target.value;
+                    setBolaoEmPreparoId(idSel);
+                    const encontrado = listaBoloesSalvos.find((b) => b.bolaoId === idSel);
+                    if (encontrado) setTituloNovoBolao(encontrado.titulo);
+                  }}
+                  className="w-full bg-zinc-900 border border-zinc-700 p-2.5 rounded-lg text-xs text-white font-bold outline-none"
+                >
+                  {listaBoloesSalvos.map((b) => (
+                    <option key={b.bolaoId} value={b.bolaoId}>
+                      {b.titulo} ({b.jogos.length} jogos)
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -3744,29 +3909,52 @@ export default function App() {
 
           <div className="flex flex-col sm:flex-row gap-2 pt-1">
             <button
+              type="button"
               onClick={addJogo}
-              className="flex-1 bg-[#FF6B00] hover:bg-[#ff7b1a] text-black font-black py-3 rounded-xl cursor-pointer transition uppercase text-xs shadow-lg shadow-[#FF6B00]/20 flex items-center justify-center gap-1.5"
+              className="flex-1 bg-[#FF6B00] hover:bg-[#ff7b1a] text-black font-black py-3.5 px-4 rounded-xl cursor-pointer transition uppercase text-xs shadow-lg shadow-[#FF6B00]/20 flex items-center justify-center gap-1.5"
             >
-              <span>+</span> ADICIONAR E SALVAR CONFRONTO ({jogos.length}/10)
+              <span>💾</span> SALVAR CONFRONTO NO NOVO BOLÃO ({jogosDoBolaoEmPreparo.length}/10) • NÃO PUBLICAR AINDA
             </button>
-            {jogos.length > 0 && (
+            {jogosSalvosNaoPublicados.length > 0 && (
               <button
-                onClick={salvarEEnviarConfrontos}
-                className="bg-green-600 hover:bg-green-500 text-black font-black py-3 px-4 rounded-xl cursor-pointer transition uppercase text-xs shadow-lg flex items-center justify-center gap-1.5"
+                type="button"
+                onClick={() => publicarBolaoSalvo(bolaoEmPreparoId, false)}
+                className="bg-green-600 hover:bg-green-500 text-black font-black py-3.5 px-5 rounded-xl cursor-pointer transition uppercase text-xs shadow-lg shadow-green-600/20 flex items-center justify-center gap-1.5"
               >
-                <span>🚀</span> PUBLICAR P/ OS JOGADORES
+                <span>🚀</span> PUBLICAR P/ OS JOGADORES AGORA
               </button>
             )}
           </div>
+
+          {bolaoSalvoAviso && (
+            <div className="bg-amber-950/80 border border-amber-600 text-amber-200 p-3.5 rounded-xl text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2 animate-fade-in">
+              <div className="flex items-center gap-2">
+                <span className="text-xl">🔒</span>
+                <div>
+                  <strong>Confronto salvo no bolão em preparo (oculto para jogadores)!</strong>
+                  <div className="text-[10px] text-amber-300">
+                    Continue adicionando os jogos ou clique em &quot;PUBLICAR P/ OS JOGADORES&quot; quando quiser liberar.
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => publicarBolaoSalvo(bolaoEmPreparoId, false)}
+                className="bg-green-500 hover:bg-green-400 text-black font-black px-3 py-1.5 rounded-lg text-[11px] cursor-pointer shrink-0 transition"
+              >
+                🚀 Publicar Agora
+              </button>
+            </div>
+          )}
 
           {rodadaPublicadaAviso && (
             <div className="bg-green-950/80 border border-green-700 text-green-300 p-3.5 rounded-xl text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2 animate-fade-in">
               <div className="flex items-center gap-2">
                 <span className="text-xl">✅</span>
                 <div>
-                  <strong>Confrontos salvos e enviados com sucesso!</strong>
+                  <strong>Bolão publicado e liberado com sucesso!</strong>
                   <div className="text-[10px] text-green-400">
-                    Os {jogos.length} confrontos cadastrados já estão liberados na área de apostas dos jogadores.
+                    Os {jogosPublicados.length} confrontos publicados já estão visíveis na área de apostas dos jogadores.
                   </div>
                 </div>
               </div>
@@ -3779,49 +3967,202 @@ export default function App() {
             </div>
           )}
 
-          {/* Lista de Jogos */}
+          {/* =============================================================== */}
+          {/* CAIXA 1: BOLÕES SALVOS E PRONTOS (AGUARDANDO PUBLICAÇÃO)        */}
+          {/* =============================================================== */}
+          <div className="mt-4 bg-zinc-950 border-2 border-amber-500/60 rounded-2xl p-4 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800 pb-2.5">
+              <div className="flex items-center gap-2">
+                <span className="text-base">📦</span>
+                <div>
+                  <div className="text-xs font-black uppercase text-amber-400">
+                    Bolões Salvos e Prontos • Aguardando Publicação ({jogosSalvosNaoPublicados.length} jogo(s))
+                  </div>
+                  <div className="text-[10px] text-zinc-400">
+                    Estes jogos já estão salvos no banco de dados, mas continuam ocultos até você publicar.
+                  </div>
+                </div>
+              </div>
+              <span className="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/40 px-2.5 py-1 rounded-full font-black uppercase">
+                🔒 Oculto p/ Jogadores
+              </span>
+            </div>
+
+            {listaBoloesSalvos.length === 0 ? (
+              <p className="text-zinc-500 text-xs py-4 text-center border border-dashed border-zinc-800 rounded-xl">
+                Nenhum bolão em rascunho no momento. Escolha os times acima e clique em &quot;SALVAR CONFRONTO NO NOVO BOLÃO&quot; para deixar um novo bolão pronto!
+              </p>
+            ) : (
+              <div className="space-y-4">
+                {listaBoloesSalvos.map((bolaoGrupo) => (
+                  <div
+                    key={bolaoGrupo.bolaoId}
+                    className="bg-zinc-900/90 border border-zinc-800 rounded-xl p-3.5 space-y-3"
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-800 pb-2">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-black text-sm text-white">{bolaoGrupo.titulo}</span>
+                          <span className="text-[10px] bg-amber-950 text-amber-300 border border-amber-700 px-2 py-0.5 rounded font-bold">
+                            {bolaoGrupo.jogos.length}/10 jogos salvos
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-zinc-400">
+                          Status: Pronto no banco de dados • Aguardando sua liberação
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setBolaoEmPreparoId(bolaoGrupo.bolaoId);
+                            setTituloNovoBolao(bolaoGrupo.titulo);
+                            mostrarAvisoAdm(`✏️ Editando "${bolaoGrupo.titulo}". Adicione mais jogos acima!`);
+                          }}
+                          className="text-[11px] bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 px-3 py-1.5 rounded-lg font-bold cursor-pointer transition"
+                        >
+                          ➕ Adicionar + Jogos
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => publicarBolaoSalvo(bolaoGrupo.bolaoId, false)}
+                          className="text-[11px] bg-green-600 hover:bg-green-500 text-black font-black px-3.5 py-1.5 rounded-lg cursor-pointer transition uppercase shadow-md shadow-green-600/20 flex items-center gap-1"
+                        >
+                          <span>🚀</span> PUBLICAR P/ OS JOGADORES
+                        </button>
+
+                        {jogosPublicados.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (
+                                confirm(
+                                  `Deseja substituir os ${jogosPublicados.length} jogos publicados atuais por este novo bolão "${bolaoGrupo.titulo}"?`
+                                )
+                              ) {
+                                publicarBolaoSalvo(bolaoGrupo.bolaoId, true);
+                              }
+                            }}
+                            className="text-[11px] bg-[#FF6B00] hover:bg-[#ff7b1a] text-black font-black px-3 py-1.5 rounded-lg cursor-pointer transition uppercase"
+                            title="Substitui a rodada anterior publicada por este novo bolão"
+                          >
+                            🔄 Publicar Substituindo Anterior
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      {bolaoGrupo.jogos.map((j) => (
+                        <div
+                          key={j.id}
+                          className="flex justify-between items-center bg-black p-2.5 rounded-xl text-xs border border-zinc-800"
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="text-[9px] bg-amber-500/20 text-amber-300 border border-amber-500/40 px-1.5 py-0.5 rounded font-bold shrink-0">
+                              SALVO
+                            </span>
+                            <Escudo src={j.escudoCasa} nome={j.casa} size={28} />
+                            <span className="font-bold text-white truncate">{j.casa}</span>
+                            <span className="text-[#FF6B00] font-black px-1">x</span>
+                            <span className="font-bold text-white truncate">{j.fora}</span>
+                            <Escudo src={j.escudoFora} nome={j.fora} size={28} />
+                            <span className="text-[10px] text-zinc-500 ml-1 hidden sm:inline">
+                              • {j.data} ({j.estadio})
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const nova = jogos.map((x) => (x.id === j.id ? { ...x, publicado: true } : x));
+                                saveJogos(nova);
+                                mostrarAvisoAdm(`🚀 Jogo "${j.casa} x ${j.fora}" publicado para os jogadores!`);
+                              }}
+                              className="text-green-400 hover:text-green-300 font-bold px-2 py-1 bg-green-950/40 rounded border border-green-800/60 cursor-pointer text-[11px]"
+                            >
+                              🚀 Publicar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const nova = jogos.filter((x) => x.id !== j.id);
+                                saveJogos(nova);
+                              }}
+                              className="text-red-400 hover:text-red-300 font-bold px-2 py-1 bg-red-950/40 rounded border border-red-900/60 cursor-pointer text-[11px]"
+                            >
+                              Excluir
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* =============================================================== */}
+          {/* CAIXA 2: CONFRONTOS ATIVOS (JÁ PUBLICADOS P/ OS JOGADORES)      */}
+          {/* =============================================================== */}
           <div className="mt-4 space-y-2">
             <div className="flex justify-between items-center">
-              <div className="text-[11px] uppercase font-bold text-zinc-500">
-                Confrontos Ativos ({jogos.length}/10)
+              <div className="text-[11px] uppercase font-bold text-zinc-400">
+                🟢 Confrontos Publicados na Área dos Jogadores ({jogosPublicados.length}/10)
               </div>
-              {jogos.length > 0 && (
+              {jogosPublicados.length > 0 && (
                 <span className="text-[10px] text-green-400 font-bold flex items-center gap-1">
                   <span className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse"></span>
-                  Disponíveis na Área dos Jogadores
+                  Visíveis Agora p/ os Jogadores
                 </span>
               )}
             </div>
 
-            {jogos.length === 0 ? (
+            {jogosPublicados.length === 0 ? (
               <p className="text-zinc-500 text-xs py-3 text-center border border-dashed border-zinc-800 rounded-lg">
-                Nenhum confronto cadastrado ainda.
+                Nenhum confronto publicado para os jogadores no momento. Clique em &quot;PUBLICAR P/ OS JOGADORES&quot; em um bolão salvo acima para liberar!
               </p>
             ) : (
-              jogos.map((j) => (
+              jogosPublicados.map((j) => (
                 <div
                   key={j.id}
-                  className="flex justify-between items-center bg-black p-2.5 rounded-xl text-xs border border-zinc-800 hover:border-zinc-700 transition"
+                  className="flex justify-between items-center bg-black p-2.5 rounded-xl text-xs border border-green-900/50 hover:border-green-700/60 transition"
                 >
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-[9px] bg-green-500/20 text-green-400 border border-green-500/40 px-1.5 py-0.5 rounded font-bold shrink-0">
+                      PUBLICADO
+                    </span>
                     <Escudo src={j.escudoCasa} nome={j.casa} size={32} />
-                    <span className="font-bold text-white">{j.casa}</span>
+                    <span className="font-bold text-white truncate">{j.casa}</span>
                     <span className="text-[#FF6B00] font-black px-1">x</span>
-                    <span className="font-bold text-white">{j.fora}</span>
+                    <span className="font-bold text-white truncate">{j.fora}</span>
                     <Escudo src={j.escudoFora} nome={j.fora} size={32} />
                     <span className="text-[10px] text-zinc-500 ml-2 hidden sm:inline">
                       • {j.data} ({j.estadio})
                     </span>
                   </div>
-                  <button
-                    onClick={() => {
-                      const nova = jogos.filter((x) => x.id !== j.id);
-                      saveJogos(nova);
-                    }}
-                    className="text-red-400 hover:text-red-300 font-bold px-2 py-1 bg-red-950/40 rounded border border-red-900/60 cursor-pointer text-xs"
-                  >
-                    Excluir
-                  </button>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => ocultarJogoPublicadoParaRascunho(j.id)}
+                      className="text-amber-300 hover:text-amber-200 font-bold px-2 py-1 bg-amber-950/40 rounded border border-amber-800/60 cursor-pointer text-[11px]"
+                      title="Ocultar dos jogadores e voltar para Bolões Salvos"
+                    >
+                      🔒 Voltar p/ Salvo
+                    </button>
+                    <button
+                      onClick={() => {
+                        const nova = jogos.filter((x) => x.id !== j.id);
+                        saveJogos(nova);
+                      }}
+                      className="text-red-400 hover:text-red-300 font-bold px-2 py-1 bg-red-950/40 rounded border border-red-900/60 cursor-pointer text-xs"
+                    >
+                      Excluir
+                    </button>
+                  </div>
                 </div>
               ))
             )}
@@ -4084,10 +4425,10 @@ export default function App() {
           className="mt-4 flex flex-wrap items-center justify-between gap-2 bg-zinc-900/90 border border-zinc-800 px-3.5 py-2.5 rounded-xl"
         >
           <div className="flex items-center gap-2">
-            <span className={`h-2 w-2 rounded-full ${jogos.length > 0 ? "bg-green-500 animate-pulse" : "bg-amber-500"}`}></span>
+            <span className={`h-2 w-2 rounded-full ${jogosPublicados.length > 0 ? "bg-green-500 animate-pulse" : "bg-amber-500"}`}></span>
             <span className="text-xs font-bold text-white">
-              {jogos.length > 0
-                ? `Rodada Aberta: ${jogos.length} Jogo(s) Liberado(s)`
+              {jogosPublicados.length > 0
+                ? `Rodada Aberta: ${jogosPublicados.length} Jogo(s) Liberado(s)`
                 : "Aguardando Publicação pelo ADM"}
             </span>
           </div>
@@ -4100,22 +4441,22 @@ export default function App() {
               <span>➕</span> Fazer Nova Aposta
             </button>
             <span className="text-[10px] bg-black text-[#FF6B00] font-black px-2 py-0.5 rounded border border-zinc-800">
-              {Object.keys(escolhasTemp).length}/{jogos.length} APOSTADOS
+              {Object.keys(escolhasTemp).filter((id) => jogosPublicados.some((jp) => jp.id === id)).length}/{jogosPublicados.length} APOSTADOS
             </span>
           </div>
         </div>
 
-        {jogos.length === 0 ? (
+        {jogosPublicados.length === 0 ? (
           <div className="mt-8 text-center py-12 px-4 bg-zinc-900/60 rounded-2xl border border-dashed border-zinc-800 text-zinc-400 space-y-2">
             <div className="text-3xl">⏳</div>
             <div className="font-bold text-sm text-white">Nenhum confronto disponível no momento</div>
             <p className="text-xs text-zinc-500 max-w-sm mx-auto">
-              O organizador (ADM) está definindo os confrontos da rodada. Assim que ele salvar, eles aparecerão aqui instantaneamente!
+              O organizador (ADM) está preparando os confrontos da rodada. Assim que ele publicar, eles aparecerão aqui instantaneamente!
             </p>
           </div>
         ) : (
           <div className="mt-4 space-y-3">
-            {jogos.map((j, idx) => {
+            {jogosPublicados.map((j, idx) => {
               const escolhaAtual = escolhasTemp[j.id];
               const ganhouJogo = Boolean(escolhaAtual && j.resultadoOficial && j.resultadoOficial === escolhaAtual);
               const perdeuJogo = Boolean(escolhaAtual && j.resultadoOficial && j.resultadoOficial !== escolhaAtual);
@@ -4274,7 +4615,7 @@ export default function App() {
                     setPage("loginJogador");
                     return;
                   }
-                  const jogosComPalpite = jogos.filter((j) => escolhasTemp[j.id]);
+                  const jogosComPalpite = jogosPublicados.filter((j) => escolhasTemp[j.id]);
                   if (jogosComPalpite.length === 0) {
                     alert("Selecione seus palpites nos jogos da rodada antes de finalizar a aposta!");
                     return;

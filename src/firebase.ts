@@ -607,6 +607,15 @@ export async function upsertJogoInDb(j: any): Promise<void> {
   if (j.resultadoOficial && ['CASA', 'EMPATE', 'FORA'].includes(j.resultadoOficial)) {
     payload.resultadoOficial = j.resultadoOficial;
   }
+  if (typeof j.publicado === 'boolean') {
+    payload.publicado = j.publicado;
+  }
+  if (j.bolaoId && typeof j.bolaoId === 'string') {
+    payload.bolaoId = j.bolaoId.slice(0, 80);
+  }
+  if (j.tituloBolao && typeof j.tituloBolao === 'string') {
+    payload.tituloBolao = j.tituloBolao.slice(0, 120);
+  }
   try {
     await setDoc(doc(db, 'jogos', id), payload);
     triggerAllListeners();

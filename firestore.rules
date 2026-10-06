@@ -58,7 +58,7 @@ service cloud.firestore {
 
     function isValidJogo(data) {
       return data.keys().hasAll(['id', 'casa', 'fora', 'escudoCasa', 'escudoFora', 'data', 'estadio']) &&
-        data.keys().hasOnly(['id', 'casa', 'fora', 'escudoCasa', 'escudoFora', 'data', 'estadio', 'resultadoOficial']) &&
+        data.keys().hasOnly(['id', 'casa', 'fora', 'escudoCasa', 'escudoFora', 'data', 'estadio', 'resultadoOficial', 'publicado', 'bolaoId', 'tituloBolao']) &&
         data.id is string && data.id.size() >= 1 && data.id.size() <= 64 &&
         data.casa is string && data.casa.size() >= 1 && data.casa.size() <= 80 &&
         data.fora is string && data.fora.size() >= 1 && data.fora.size() <= 80 &&
@@ -66,7 +66,10 @@ service cloud.firestore {
         data.escudoFora is string && data.escudoFora.size() <= 500000 &&
         data.data is string && data.data.size() >= 1 && data.data.size() <= 60 &&
         data.estadio is string && data.estadio.size() >= 1 && data.estadio.size() <= 100 &&
-        (!('resultadoOficial' in data) || (data.resultadoOficial is string && data.resultadoOficial in ['CASA', 'EMPATE', 'FORA']));
+        (!('resultadoOficial' in data) || (data.resultadoOficial is string && data.resultadoOficial in ['CASA', 'EMPATE', 'FORA'])) &&
+        (!('publicado' in data) || data.publicado is bool) &&
+        (!('bolaoId' in data) || (data.bolaoId is string && data.bolaoId.size() <= 80)) &&
+        (!('tituloBolao' in data) || (data.tituloBolao is string && data.tituloBolao.size() <= 120));
     }
 
     function isValidPalpite(data) {
@@ -159,7 +162,10 @@ service cloud.firestore {
           'escudoFora',
           'data',
           'estadio',
-          'resultadoOficial'
+          'resultadoOficial',
+          'publicado',
+          'bolaoId',
+          'tituloBolao'
         ]);
       allow delete: if isValidId(jogoId);
     }

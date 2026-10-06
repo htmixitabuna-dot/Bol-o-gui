@@ -137,6 +137,7 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
   const [statusMsg, setStatusMsg] = useState<string>('');
   const [erroApiMsg, setErroApiMsg] = useState<string>('');
   const [adicionandoId, setAdicionandoId] = useState<string>('');
+  const [modoRascunho, setModoRascunho] = useState<boolean>(true);
 
   // ABA 2: Adicionar Manual Rápido (sem mock de times)
   const [manualCasa, setManualCasa] = useState<string>('');
@@ -334,6 +335,21 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
       const escudoFora = getEscudoPadrao(foraLimpo) || params.escudoForaUrl || '';
 
       const novoJogoId = `${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      const bolaoIdSalvo = (() => {
+        try {
+          return localStorage.getItem('elite_bolao_preparo_id') || 'bolao_1';
+        } catch {
+          return 'bolao_1';
+        }
+      })();
+      const tituloBolaoSalvo = (() => {
+        try {
+          return localStorage.getItem('elite_titulo_novo_bolao') || 'Novo Bolão da Rodada';
+        } catch {
+          return 'Novo Bolão da Rodada';
+        }
+      })();
+
       const novoJogoBolao: Jogo = {
         id: novoJogoId,
         casa: casaLimpo,
@@ -342,6 +358,9 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
         escudoFora,
         data: horarioStr,
         estadio: campeonatoStr || 'Estádio Principal',
+        publicado: !modoRascunho,
+        bolaoId: bolaoIdSalvo,
+        tituloBolao: tituloBolaoSalvo,
       };
 
       await upsertJogoInDb(novoJogoBolao);
@@ -364,7 +383,11 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
         adicionado_ao_bolao: true,
       }).catch(() => {});
 
-      mostrarFeedback(`✅ ${casaLimpo} x ${foraLimpo} adicionado ao Bolão com 1 clique!`);
+      mostrarFeedback(
+        modoRascunho
+          ? `✅ ${casaLimpo} x ${foraLimpo} salvo no Novo Bolão! (Liberado apenas quando publicar)`
+          : `✅ ${casaLimpo} x ${foraLimpo} adicionado e publicado no Bolão!`
+      );
     } catch (err) {
       console.error('Erro ao adicionar jogo ao bolão:', err);
       mostrarFeedback('⚠️ Erro ao salvar confronto no banco. Tente novamente.');
@@ -422,6 +445,44 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
             </button>
           </div>
         )}
+
+        {/* MODO DE SALVAMENTO DO NOVO BOLÃO */}
+        <div className="bg-zinc-900/90 border border-amber-500/40 rounded-2xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <p className="text-xs font-black uppercase text-amber-300">
+              📋 Modo de Cadastro ao Clicar em Adicionar:
+            </p>
+            <p className="text-[11px] text-zinc-400">
+              {modoRascunho
+                ? 'Os jogos ficam SALVOS e PRONTOS no ADM, sendo liberados apenas quando você clicar em PUBLICAR.'
+                : 'Os jogos adicionados já ficam visíveis imediatamente para os jogadores.'}
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => setModoRascunho(true)}
+              className={`px-3 py-2 rounded-xl text-[11px] font-black uppercase cursor-pointer transition ${
+                modoRascunho
+                  ? 'bg-amber-500 text-black shadow'
+                  : 'bg-zinc-800 text-zinc-400 hover:text-white'
+              }`}
+            >
+              🔒 Deixar Pronto/Salvo
+            </button>
+            <button
+              type="button"
+              onClick={() => setModoRascunho(false)}
+              className={`px-3 py-2 rounded-xl text-[11px] font-black uppercase cursor-pointer transition ${
+                !modoRascunho
+                  ? 'bg-green-600 text-white shadow'
+                  : 'bg-zinc-800 text-zinc-400 hover:text-white'
+              }`}
+            >
+              🚀 Publicar Direto
+            </button>
+          </div>
+        </div>
 
         {/* SELETOR DE ABAS (ABA 1 e ABA 2) */}
         <div className="grid grid-cols-2 gap-2 bg-zinc-900 p-1.5 rounded-2xl border border-zinc-800">
@@ -770,26 +831,46 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
             RESUMO DOS JOGOS ATIVOS NA TABELA EXISTENTE 'jogos' DO BOLÃO
            =================================================================== */}
         <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 space-y-3">
-          <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-zinc-800 pb-2 gap-2">
             <div className="flex items-center gap-2">
               <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse"></span>
               <h3 className="text-xs font-black uppercase tracking-wider text-white">
-                Confrontos Ativos no Bolão ({jogosBolaoAtivos.length}/10)
+                Confrontos Cadastrados no Bolão ({jogosBolaoAtivos.length}/10)
               </h3>
             </div>
-            <span className="text-[11px] text-zinc-400">Tabela existente: jogos</span>
+            {jogosBolaoAtivos.some((j) => j.publicado === false) && (
+              <button
+                type="button"
+                onClick={async () => {
+                  const atualizados = jogosBolaoAtivos.map((j) => ({ ...j, publicado: true }));
+                  setJogosBolaoAtivos(atualizados);
+                  try {
+                    localStorage.setItem('elite_jogos_v11', JSON.stringify(atualizados));
+                  } catch {
+                    // ignore
+                  }
+                  await Promise.all(atualizados.map((j) => upsertJogoInDb(j).catch(() => {})));
+                  mostrarFeedback('🚀 BOLÃO PUBLICADO! Todos os jogos salvos foram liberados para os jogadores!');
+                }}
+                className="bg-green-600 hover:bg-green-500 text-white font-black px-3.5 py-1.5 rounded-xl text-[11px] uppercase cursor-pointer transition shadow"
+              >
+                🚀 Publicar Bolão Salvo p/ Jogadores
+              </button>
+            )}
           </div>
 
           {jogosBolaoAtivos.length === 0 ? (
             <p className="text-xs text-zinc-500 text-center py-4">
-              Nenhum jogo ativo no bolão ainda.
+              Nenhum jogo cadastrado no bolão ainda.
             </p>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {jogosBolaoAtivos.map((j) => (
                 <div
                   key={j.id}
-                  className="bg-black border border-zinc-800 rounded-xl p-2.5 flex items-center justify-between gap-2 text-xs"
+                  className={`bg-black border rounded-xl p-2.5 flex items-center justify-between gap-2 text-xs ${
+                    j.publicado === false ? 'border-amber-500/40' : 'border-zinc-800'
+                  }`}
                 >
                   <div className="flex items-center gap-2 min-w-0">
                     <EscudoTime nome={j.casa} badgeUrl={j.escudoCasa} size={26} />
@@ -797,7 +878,15 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
                     <span className="text-[#FF6B00] font-black">x</span>
                     <span className="font-bold text-white truncate">{j.fora}</span>
                     <EscudoTime nome={j.fora} badgeUrl={j.escudoFora} size={26} />
-                    <span className="text-[10px] text-zinc-500 font-mono">({j.data})</span>
+                    <span
+                      className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded shrink-0 ${
+                        j.publicado === false
+                          ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                          : 'bg-green-500/20 text-green-300 border border-green-500/40'
+                      }`}
+                    >
+                      {j.publicado === false ? 'SALVO' : 'PUBLICADO'}
+                    </span>
                   </div>
                   <button
                     type="button"

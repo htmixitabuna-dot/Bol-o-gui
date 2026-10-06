@@ -137,6 +137,20 @@
           "type": "string",
           "description": "Resultado oficial confirmado pelo ADM.",
           "enum": ["CASA", "EMPATE", "FORA"]
+        },
+        "publicado": {
+          "type": "boolean",
+          "description": "Indica se o confronto/bolão já foi publicado para os jogadores."
+        },
+        "bolaoId": {
+          "type": "string",
+          "description": "Identificador do pacote/bolão salvo ao qual o jogo pertence.",
+          "maxLength": 80
+        },
+        "tituloBolao": {
+          "type": "string",
+          "description": "Título ou nome do bolão cadastrado pelo ADM.",
+          "maxLength": 120
         }
       },
       "required": ["id", "casa", "fora", "escudoCasa", "escudoFora", "data", "estadio"]
