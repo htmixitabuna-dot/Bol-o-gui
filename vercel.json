@@ -1,12 +1,3 @@
 {
-  "rewrites": [
-    {
-      "source": "/pagamento-sucesso",
-      "destination": "/index.html"
-    },
-    {
-      "source": "/admin/importar-jogos",
-      "destination": "/index.html"
-    }
-  ]
+  "version": 2
 }
