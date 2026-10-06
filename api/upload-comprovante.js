@@ -1,109 +1,160 @@
-const PROJECT_ID = "gen-lang-client-0929605804";
-const DATABASE_ID = "ai-studio-bologui-41191dbc-bc23-4859-bc28-074d5c8a833c";
-const BASE_URL = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/${DATABASE_ID}/documents`;
+import { createClient } from "@supabase/supabase-js";
 
-function getJogadorDocId(emailOrId) {
-  const cleaned = String(emailOrId || "")
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-zA-Z0-9_-]/g, "_")
-    .slice(0, 90);
-  return cleaned || "jogador_anonimo";
+function normalizeSupabaseUrl(raw) {
+  let u = String(raw || "https://slaqxbccectdgmlokjos.supabase.co").trim();
+  u = u.replace("slaqxbcectdgmlokjos", "slaqxbccectdgmlokjos");
+  if (!/^https?:\/\//i.test(u)) {
+    u = `https://${u}`;
+  }
+  return u.replace(/\/+$/, "");
 }
 
-function toFirestoreValue(val) {
-  if (val === null || val === undefined) return { nullValue: null };
-  if (typeof val === "boolean") return { booleanValue: val };
-  if (typeof val === "number") {
-    if (Number.isInteger(val)) return { integerValue: String(val) };
-    return { doubleValue: val };
+const SUPABASE_URL = normalizeSupabaseUrl(process.env.NEXT_PUBLIC_SUPABASE_URL);
+const SUPABASE_KEY =
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+  "sb_publishable_Tqbx1xWWObM_PYo9A8Lwzg_HP4Q5M1Y";
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
+  auth: { persistSession: false, autoRefreshToken: false },
+});
+
+function stringToUuid(input) {
+  const str = String(input || "bolao_elite").trim().toLowerCase();
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(str)) {
+    return str;
   }
-  if (typeof val === "string") return { stringValue: val };
-  return { stringValue: String(val) };
+  const hashes = [0x12345678, 0x9abcdef0, 0x13579bdf, 0x2468ace0];
+  for (let i = 0; i < str.length; i++) {
+    const ch = str.charCodeAt(i);
+    hashes[0] = Math.imul(hashes[0] ^ ch, 0x85ebca6b) >>> 0;
+    hashes[1] = Math.imul(hashes[1] ^ (ch + i), 0xc2b2ae35) >>> 0;
+    hashes[2] = Math.imul(hashes[2] ^ (ch * 31), 0x27d4eb2f) >>> 0;
+    hashes[3] = Math.imul(hashes[3] ^ (ch ^ (i << 3)), 0x165667b1) >>> 0;
+  }
+  const hex = hashes.map((h) => h.toString(16).padStart(8, "0")).join("");
+  return (
+    hex.slice(0, 8) +
+    "-" +
+    hex.slice(8, 12) +
+    "-4" +
+    hex.slice(13, 16) +
+    "-a" +
+    hex.slice(17, 20) +
+    "-" +
+    hex.slice(20, 32)
+  );
 }
 
 export default async function handler(req, res) {
-  if (req.method && req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
+  }
+
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Metodo nao permitido. Use POST." });
   }
 
   try {
-    const body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
-    const email = String(body.email || "").trim().toLowerCase();
-    const nome = String(body.nome || "Jogador").trim();
-    const jogadorId = getJogadorDocId(email || body.jogadorId || nome);
-    const comprovante = String(body.comprovante || body.file || body.image || "");
+    const body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body || {};
+    const jogadorEmail = String(body.email || body.jogadorEmail || "").trim().toLowerCase();
+    const comprovanteRaw = String(body.comprovante || body.fileData || body.image || "").trim();
 
-    if (!comprovante) {
-      return res.status(400).json({ error: "Comprovante ausente" });
+    if (!jogadorEmail || !comprovanteRaw) {
+      return res.status(400).json({ error: "E-mail do jogador e comprovante sao obrigatorios." });
     }
 
-    const agora = Date.now();
-    const dataEnvioComprovante =
-      body.dataEnvioComprovante ||
-      `${new Date().toLocaleDateString("pt-BR")} às ${new Date().toLocaleTimeString("pt-BR", {
-        hour: "2-digit",
-        minute: "2-digit",
-      })}`;
+    const base64Data = comprovanteRaw.replace(/^data:[^;]+;base64,/, "");
+    const buffer = Buffer.from(base64Data, "base64");
+    const mimeMatch = comprovanteRaw.match(/^data:([^;]+);base64,/);
+    const contentType = mimeMatch ? mimeMatch[1] : "image/jpeg";
+    const ext = contentType.includes("png") ? "png" : contentType.includes("pdf") ? "pdf" : "jpg";
+    const safeEmail = jogadorEmail.replace(/[^a-z0-9_-]/g, "_");
+    const filePath = `depositos/${safeEmail}_${Date.now()}.${ext}`;
 
-    // Busca documento existente do jogador para preservar campos como pix e pontos
-    let existingFields = {};
+    let publicUrl = comprovanteRaw;
+
     try {
-      const getResp = await fetch(`${BASE_URL}/jogadores/${jogadorId}`);
-      if (getResp.ok) {
-        const docData = await getResp.json();
-        existingFields = docData.fields || {};
+      const { error: uploadError } = await supabase.storage
+        .from("comprovantes")
+        .upload(filePath, buffer, {
+          contentType,
+          upsert: true,
+        });
+
+      if (!uploadError) {
+        const { data: urlData } = supabase.storage.from("comprovantes").getPublicUrl(filePath);
+        if (urlData && urlData.publicUrl) {
+          publicUrl = urlData.publicUrl;
+        }
       }
     } catch {
-      // ignora erro de leitura prévia
+      // Mantem data URL caso o bucket 'comprovantes' nao exista
     }
 
-    const fields = {
-      ...existingFields,
-      id: toFirestoreValue(jogadorId),
-      nome: toFirestoreValue(nome),
-      email: toFirestoreValue(email || `${jogadorId}@bolao.com`),
-      pix: existingFields.pix || toFirestoreValue(String(body.pix || "-")),
-      pontos: existingFields.pontos || toFirestoreValue(0),
-      comprovante: toFirestoreValue(comprovante),
-      timestampComprovante: toFirestoreValue(agora),
-      dataEnvioComprovante: toFirestoreValue(dataEnvioComprovante),
-      statusPagamento: toFirestoreValue("EM_ANALISE"),
+    // Busca usuario existente em profiles ou jogadores
+    let userId = stringToUuid(jogadorEmail);
+    const { data: existingProfile } = await supabase
+      .from("profiles")
+      .select("*")
+      .ilike("email", jogadorEmail)
+      .limit(1);
+
+    if (existingProfile && existingProfile[0]?.id) {
+      userId = existingProfile[0].id;
+    }
+
+    const { data: existingJogador } = await supabase
+      .from("jogadores")
+      .select("*")
+      .eq("id", userId)
+      .limit(1);
+
+    let meta = {};
+    if (existingJogador && existingJogador[0]?.time_coracao) {
+      try {
+        if (String(existingJogador[0].time_coracao).startsWith("{")) {
+          meta = JSON.parse(existingJogador[0].time_coracao);
+        }
+      } catch {}
+    }
+
+    const updatedMeta = {
+      ...meta,
+      email: jogadorEmail,
+      comprovante: publicUrl,
+      statusPagamento: "pendente",
+      updatedAt: new Date().toISOString(),
     };
 
-    const patchResp = await fetch(`${BASE_URL}/jogadores/${jogadorId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ fields }),
-    });
+    const nome = existingProfile?.[0]?.nome || existingJogador?.[0]?.nome || meta.nome || jogadorEmail.split("@")[0];
+    const whatsapp = existingProfile?.[0]?.telefone || existingJogador?.[0]?.whatsapp || meta.telefone || jogadorEmail;
 
-    if (!patchResp.ok) {
-      const errTxt = await patchResp.text().catch(() => "");
-      return res.status(200).json({
-        ok: true,
-        localOnly: true,
-        jogadorId,
+    await supabase.from("jogadores").upsert(
+      {
+        id: userId,
         nome,
-        email,
-        dataEnvioComprovante,
-        timestampComprovante: agora,
-        notice: errTxt,
-      });
-    }
+        whatsapp,
+        pagou: Boolean(existingJogador?.[0]?.pagou || false),
+        time_coracao: JSON.stringify(updatedMeta),
+      },
+      { onConflict: "id" }
+    );
 
     return res.status(200).json({
       ok: true,
-      jogadorId,
-      nome,
-      email,
-      statusPagamento: "EM_ANALISE",
-      dataEnvioComprovante,
-      timestampComprovante: agora,
+      url: publicUrl,
+      email: jogadorEmail,
+      statusPagamento: "pendente",
     });
-  } catch (error) {
+  } catch (err) {
     return res.status(200).json({
       ok: true,
-      message: "Comprovante recebido",
+      url: req.body?.comprovante || "",
+      warning: String(err?.message || err),
     });
   }
 }

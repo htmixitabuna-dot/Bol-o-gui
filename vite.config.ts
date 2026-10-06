@@ -1,12 +1,28 @@
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import { BOLAO_ELITE_ICON_DATA_URL } from './src/pwaIconDataUrl'
 
-export default defineConfig({
-  plugins: [
-    react(),
-    VitePWA({
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), '')
+  const supabaseUrl =
+    env.NEXT_PUBLIC_SUPABASE_URL ||
+    process.env.NEXT_PUBLIC_SUPABASE_URL ||
+    'https://slaqxbccectdgmlokjos.supabase.co'
+  const supabaseAnonKey =
+    env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+    'sb_publishable_Tqbx1xWWObM_PYo9A8Lwzg_HP4Q5M1Y'
+
+  return {
+    envPrefix: ['NEXT_PUBLIC_'],
+    define: {
+      'process.env.NEXT_PUBLIC_SUPABASE_URL': JSON.stringify(supabaseUrl),
+      'process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY': JSON.stringify(supabaseAnonKey),
+    },
+    plugins: [
+      react(),
+      VitePWA({
       registerType: 'autoUpdate',
       includeAssets: [
         'favicon.ico',
@@ -95,5 +111,7 @@ export default defineConfig({
       },
     }),
   ],
+  }
 })
+
 

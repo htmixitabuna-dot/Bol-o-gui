@@ -7,7 +7,7 @@ import {
   deleteJogoFromDb,
   upsertJogoDisponivelInDb,
   JogoDisponivelItem,
-} from './firebase';
+} from './supabase';
 import { TIMES_PADRAO, getEscudoPadrao, Jogo } from './App';
 
 const getHojeISO = () => {
@@ -137,7 +137,7 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
   const [statusMsg, setStatusMsg] = useState<string>('');
   const [erroApiMsg, setErroApiMsg] = useState<string>('');
   const [adicionandoId, setAdicionandoId] = useState<string>('');
-  const [modoRascunho, setModoRascunho] = useState<boolean>(true);
+  const [modoRascunho, setModoRascunho] = useState<boolean>(false);
 
   // ABA 2: Adicionar Manual Rápido (sem mock de times)
   const [manualCasa, setManualCasa] = useState<string>('');

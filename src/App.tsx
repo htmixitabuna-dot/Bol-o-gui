@@ -16,9 +16,9 @@ import {
   getDoc,
   setDoc,
   onSnapshot,
-  OperationType,
-  handleFirestoreError,
   getJogadorDocId,
+  listarUsuariosDoSupabase,
+  buscarUsuarioNoSupabase,
   upsertJogadorInDb,
   deleteJogadorFromDb,
   clearJogadorDeletedLocal,
@@ -33,7 +33,7 @@ import {
   saveConfigInDb,
   inicializarConfigAdminInDb,
   compressImageToDataUrl,
-} from './firebase';
+} from './supabase';
 
 // ============================================================================
 // TIMES CAMPEONATO BRASILEIRO SÉRIE A (LISTA ATUALIZADA E ESCUDOS OFICIAIS)
@@ -159,7 +159,7 @@ export default function App() {
     let inicialVal = VALOR_COTA;
     let inicialLink = "";
     try {
-      const savedBolao = localStorage.getItem("firestore_doc_config/bolao");
+      const savedBolao = localStorage.getItem("supabase_doc_config/bolao");
       const savedCfg = localStorage.getItem("elite_config_v11");
       const parsed = savedBolao ? JSON.parse(savedBolao) : savedCfg ? JSON.parse(savedCfg) : null;
       const v = Number(parsed?.valorCota ?? parsed?.valor ?? parsed?.precoCota);
@@ -181,7 +181,7 @@ export default function App() {
   });
   const [valorPixAtual, setValorPixAtual] = useState<number>(() => {
     try {
-      const savedBolao = localStorage.getItem("firestore_doc_config/bolao");
+      const savedBolao = localStorage.getItem("supabase_doc_config/bolao");
       const savedCfg = localStorage.getItem("elite_config_v11");
       const parsed = savedBolao ? JSON.parse(savedBolao) : savedCfg ? JSON.parse(savedCfg) : null;
       const v = Number(parsed?.valorCota ?? parsed?.valor ?? parsed?.precoCota);
@@ -194,7 +194,7 @@ export default function App() {
   const [payloadPixAtual, setPayloadPixAtual] = useState<string>(() => {
     let inicialVal = 10;
     try {
-      const savedBolao = localStorage.getItem("firestore_doc_config/bolao");
+      const savedBolao = localStorage.getItem("supabase_doc_config/bolao");
       const savedCfg = localStorage.getItem("elite_config_v11");
       const parsed = savedBolao ? JSON.parse(savedBolao) : savedCfg ? JSON.parse(savedCfg) : null;
       const v = Number(parsed?.valorCota ?? parsed?.valor ?? parsed?.precoCota);
@@ -253,7 +253,7 @@ export default function App() {
   const [escolhasTemp, setEscolhasTemp] = useState<Record<string, EscolhaResultado>>({});
 
   // Termos
-  const [aceitouTermos, setAceitouTermos] = useState(false);
+  const [aceitouTermos, setAceitouTermos] = useState(true);
   const [showTermosModal, setShowTermosModal] = useState(false);
 
   // Filtro de apostas na área ADM
@@ -308,7 +308,7 @@ export default function App() {
         const parsedJd = JSON.parse(jd);
         let alterouJd = false;
         const limposJd = parsedJd
-          .filter((jg: any) => !isJogadorDeletedLocal(jg.email, jg._docId || jg.id))
+          .filter((jg: any) => !isJogadorDeletedLocal(jg.email, jg._docId || jg.id, jg.timestampCadastro))
           .map((jg: any) => {
             if (jg.timestampComprovante && agora - jg.timestampComprovante > TRES_DIAS_MS) {
               alterouJd = true;
@@ -354,7 +354,7 @@ export default function App() {
 
       if (u) {
         const parsedU = JSON.parse(u);
-        if (isJogadorDeletedLocal(parsedU.email, parsedU._docId || parsedU.id)) {
+        if (isJogadorDeletedLocal(parsedU.email, parsedU._docId || parsedU.id, parsedU.timestampCadastro)) {
           localStorage.removeItem("elite_user_v11");
           localStorage.removeItem("elite_pix_confirmado_v11");
           setUser(null);
@@ -384,7 +384,7 @@ export default function App() {
         const listaDb: any[] = [];
         snapshot.forEach((docSnap) => {
           const data = docSnap.data();
-          if (isJogadorDeletedLocal(data.email, docSnap.id)) {
+          if (isJogadorDeletedLocal(data.email, docSnap.id, data.timestampCadastro)) {
             return;
           }
           if (data.timestampComprovante && agoraMs - data.timestampComprovante > TRES_DIAS_MS) {
@@ -401,11 +401,28 @@ export default function App() {
             listaDb.push({ ...data, _docId: docSnap.id });
           }
         });
-        setJogadores(listaDb);
-        localStorage.setItem("elite_jogadores_v11", JSON.stringify(listaDb));
+        setJogadores((prevLocal) => {
+          const emailsNoBanco = new Set(listaDb.map((x) => (x.email || "").toLowerCase()));
+          const locaisNaoSincronizados = prevLocal.filter((loc) => {
+            const em = (loc.email || "").toLowerCase();
+            if (!em || emailsNoBanco.has(em)) return false;
+            if (isJogadorDeletedLocal(em, loc._docId || loc.id, loc.timestampCadastro)) return false;
+            upsertJogadorInDb(loc).catch(() => {});
+            return true;
+          });
+          const combinada = [...listaDb, ...locaisNaoSincronizados];
+          localStorage.setItem("elite_jogadores_v11", JSON.stringify(combinada));
+          return combinada;
+        });
 
         setUser((prevUser: any) => {
           if (!prevUser?.email) return prevUser;
+          if (isJogadorDeletedLocal(prevUser.email, prevUser._docId || prevUser.id, prevUser.timestampCadastro)) {
+            localStorage.removeItem("elite_user_v11");
+            localStorage.removeItem("elite_pix_confirmado_v11");
+            setPagamentoConfirmadoLocal(false);
+            return null;
+          }
           const atualizado = listaDb.find(
             (x) => (x.email || "").toLowerCase() === prevUser.email.toLowerCase()
           );
@@ -413,17 +430,10 @@ export default function App() {
             localStorage.setItem("elite_user_v11", JSON.stringify(atualizado));
             return atualizado;
           }
-          // Se o jogador não existe mais no banco de dados (foi excluído pelo ADM), encerra a sessão dele:
-          // ele só poderá voltar se realizar um Novo Cadastro.
-          localStorage.removeItem("elite_user_v11");
-          localStorage.removeItem("elite_pix_confirmado_v11");
-          setPagamentoConfirmadoLocal(false);
-          return null;
+          return prevUser;
         });
       },
-      (error) => {
-        handleFirestoreError(error, OperationType.LIST, "jogadores");
-      }
+      () => {}
     );
 
     const unsubJogos = onSnapshot(
@@ -432,15 +442,17 @@ export default function App() {
         setDbConectado(true);
         const listaJogos: Jogo[] = [];
         snapshot.forEach((docSnap) => {
-          listaJogos.push(docSnap.data() as Jogo);
+          const d = docSnap.data() as Jogo;
+          listaJogos.push({
+            ...d,
+            publicado: d.publicado !== undefined ? d.publicado : true,
+          });
         });
-        listaJogos.sort((a, b) => a.id.localeCompare(b.id));
+        listaJogos.sort((a, b) => String(a.id).localeCompare(String(b.id)));
         setJogos(listaJogos);
         localStorage.setItem("elite_jogos_v11", JSON.stringify(listaJogos));
       },
-      (error) => {
-        handleFirestoreError(error, OperationType.LIST, "jogos");
-      }
+      () => {}
     );
 
     const unsubPalpites = onSnapshot(
@@ -454,9 +466,7 @@ export default function App() {
         setPalpites(listaPalpites);
         localStorage.setItem("elite_palpites_v11", JSON.stringify(listaPalpites));
       },
-      (error) => {
-        handleFirestoreError(error, OperationType.LIST, "palpites");
-      }
+      () => {}
     );
 
     const unsubDepositos = onSnapshot(
@@ -520,12 +530,25 @@ export default function App() {
         setComprovantesPremiacao(listaPrem);
         localStorage.setItem("elite_comprovantes_premiacao_v11", JSON.stringify(listaPrem));
       },
-      (error) => {
-        handleFirestoreError(error, OperationType.LIST, "comprovantes_premiacao");
-      }
+      () => {}
     );
 
+    const handleStorageSync = (ev: StorageEvent) => {
+      if (ev.key === "elite_jogadores_v11" && ev.newValue) {
+        try {
+          const novaLista = JSON.parse(ev.newValue);
+          if (Array.isArray(novaLista)) {
+            setJogadores(novaLista);
+          }
+        } catch {
+          // ignore
+        }
+      }
+    };
+    window.addEventListener("storage", handleStorageSync);
+
     return () => {
+      window.removeEventListener("storage", handleStorageSync);
       unsubJogadores();
       unsubJogos();
       unsubPalpites();
@@ -535,10 +558,26 @@ export default function App() {
     };
   }, []);
 
-  // Inicialização automática no Admin com VALOR_COTA = 10 e chave PIX aleatória
+  // Inicialização automática no Admin com VALOR_COTA = 10 e carregamento de todos os usuários do Supabase
   useEffect(() => {
     if (page === "admin") {
       inicializarConfigAdminInDb().catch(() => {});
+      listarUsuariosDoSupabase()
+        .then((usuariosSupabase) => {
+          if (usuariosSupabase && usuariosSupabase.length > 0) {
+            setDbConectado(true);
+            setJogadores((prev) => {
+              const emailsNoBanco = new Set(usuariosSupabase.map((x) => (x.email || "").toLowerCase()));
+              const extras = prev.filter(
+                (loc) => loc.email && !emailsNoBanco.has(loc.email.toLowerCase())
+              );
+              const combinada = [...usuariosSupabase, ...extras];
+              localStorage.setItem("elite_jogadores_v11", JSON.stringify(combinada));
+              return combinada;
+            });
+          }
+        })
+        .catch(() => {});
     }
   }, [page]);
 
@@ -841,7 +880,7 @@ export default function App() {
       const nomeJogador = (usuarioAtivo.nome || "Jogador").trim();
       const jogadorId = usuarioAtivo.id || getJogadorDocId(emailJogador);
 
-      // Atualiza estado local e grava direto no documento do jogador no Firestore para aparecer na área do ADM (/admin)
+      // Atualiza estado local e grava direto no registro do jogador no Supabase para aparecer na área do ADM (/admin)
       enviarComprovante(emailJogador, comprovanteBase64);
 
       // Envia também para o endpoint /api/upload-comprovante
@@ -1075,10 +1114,10 @@ export default function App() {
     (j) => (j.bolaoId || "bolao_salvo_1") === bolaoEmPreparoId
   );
 
-  // Salva o confronto no Novo Bolão em preparo (publicado: false) — NÃO libera para os jogadores ainda
+  // Cria o jogo no Supabase já publicado (publicado: true) para aparecer automaticamente para todos os usuários logados
   const addJogo = () => {
-    if (jogosDoBolaoEmPreparo.length >= 10) {
-      return alert("Máximo de 10 jogos neste bolão salvo! Crie outro bolão ou publique este.");
+    if (jogosPublicados.length >= 10) {
+      return alert("Máximo de 10 jogos ativos no bolão! Exclua algum jogo para adicionar outro.");
     }
     if (nomeTime1.trim() === nomeTime2.trim()) {
       return alert("Selecione dois times diferentes!");
@@ -1093,17 +1132,17 @@ export default function App() {
       escudoFora: escudoTime2 || getEscudoPadrao(nomeTime2),
       data: dataJ || "A definir",
       estadio: estadio || "Estádio Principal",
-      publicado: false,
+      publicado: true,
       bolaoId: bolaoEmPreparoId,
       tituloBolao: tituloLimpo,
     };
 
     const novaLista = [...jogos, novo];
     saveJogos(novaLista);
-    setBolaoSalvoAviso(true);
-    setTimeout(() => setBolaoSalvoAviso(false), 5000);
+    setRodadaPublicadaAviso(true);
+    setTimeout(() => setRodadaPublicadaAviso(false), 5000);
     mostrarAvisoAdm(
-      `🔒 Jogo "${novo.casa} x ${novo.fora}" salvo no "${tituloLimpo}"! Ele está pronto e oculto até você clicar em PUBLICAR P/ OS JOGADORES.`
+      `🚀 Jogo "${novo.casa} x ${novo.fora}" criado no Supabase e liberado automaticamente para todos os usuários logados apostarem!`
     );
   };
 
@@ -1395,7 +1434,7 @@ export default function App() {
     const emailNorm = (email || "").trim().toLowerCase();
     const docIdPadrao = getJogadorDocId(emailNorm || nome || "");
 
-    // Coleta todos os IDs de documento relacionados a esse jogador para exclusão total no Firestore
+    // Coleta todos os IDs relacionados a esse jogador para exclusão total no Supabase
     const idsParaDeletar: string[] = [];
     if (docIdExtra) idsParaDeletar.push(docIdExtra);
     if (docIdPadrao && docIdPadrao !== "jogador_anonimo") idsParaDeletar.push(docIdPadrao);
@@ -1421,7 +1460,7 @@ export default function App() {
     setJogadores(novaLista);
     localStorage.setItem("elite_jogadores_v11", JSON.stringify(novaLista));
 
-    // Remove do banco de dados Firestore (jogadores, palpites e depositos)
+    // Remove do banco de dados Supabase (users, profiles, jogadores, palpites e depositos)
     deleteJogadorFromDb(emailNorm, idsParaDeletar, nome).catch(() => {});
 
     const palpitesDoJogador = palpites.filter((p) => (p.jogadorEmail || "").trim().toLowerCase() === emailNorm);
@@ -3064,7 +3103,7 @@ export default function App() {
 
         {abaLoginJogador === "entrar" ? (
           <form
-            onSubmit={(e) => {
+            onSubmit={async (e) => {
               e.preventDefault();
               setErroLoginJogador("");
               const termo = buscaLoginInput.trim().toLowerCase();
@@ -3072,14 +3111,18 @@ export default function App() {
                 setErroLoginJogador("Digite seu E-mail ou Chave PIX para entrar.");
                 return;
               }
-              const encontrado = jogadores.find(
+              let encontrado = jogadores.find(
                 (jg: any) =>
                   (jg.email || "").trim().toLowerCase() === termo ||
-                  (jg.pix || "").trim().toLowerCase() === termo
+                  (jg.pix || "").trim().toLowerCase() === termo ||
+                  (jg.nome || "").trim().toLowerCase() === termo
               );
               if (!encontrado) {
+                encontrado = await buscarUsuarioNoSupabase(termo);
+              }
+              if (!encontrado) {
                 setErroLoginJogador(
-                  "Não encontramos um cadastro com esse E-mail ou Chave PIX. Verifique os dados ou clique em 'Novo Cadastro'."
+                  "Não encontramos um cadastro com esse E-mail ou Chave PIX no Supabase. Verifique os dados ou clique em 'Novo Cadastro'."
                 );
                 return;
               }
@@ -3168,14 +3211,17 @@ export default function App() {
                 ? {
                     ...existente,
                     id: docId,
+                    _docId: docId,
                     nome,
                     email,
                     pix,
-                    dataCadastro: existente.dataCadastro || dataHoraCadastro,
-                    timestampCadastro: existente.timestampCadastro || agora,
+                    dataCadastro: dataHoraCadastro,
+                    timestampCadastro: agora,
+                    _pendingSync: true,
                   }
                 : {
                     id: docId,
+                    _docId: docId,
                     nome,
                     email,
                     pix,
@@ -3185,14 +3231,16 @@ export default function App() {
                     aprovado: false,
                     dataCadastro: dataHoraCadastro,
                     timestampCadastro: agora,
+                    _pendingSync: true,
                   };
 
               clearJogadorDeletedLocal(email, docId);
               const lista = [...jogadores.filter((x: any) => (x.email || "").toLowerCase() !== email), novo];
-              saveJogadores(lista);
-              await upsertJogadorInDb(novo, true).catch(() => {});
+              setJogadores(lista);
+              localStorage.setItem("elite_jogadores_v11", JSON.stringify(lista));
               setUser(novo);
               localStorage.setItem("elite_user_v11", JSON.stringify(novo));
+              await upsertJogadorInDb(novo, true).catch(() => {});
 
               // Vai direto para a tela de palpites (o jogador só é cobrado após fazer suas apostas)
               setPage("palpites");
@@ -3488,13 +3536,27 @@ export default function App() {
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-800 pb-2">
             <div>
               <h3 className="font-black text-sm text-white flex items-center gap-2">
-                <span className="text-[#FF6B00] text-base">🗄️</span> BANCO DE DADOS: APOSTADORES CADASTRADOS ({jogadores.length})
+                <span className="text-[#FF6B00] text-base">🗄️</span> USUÁRIOS DO SUPABASE CADASTRADOS ({jogadores.length})
               </h3>
               <p className="text-[11px] text-zinc-400">
-                Todos os apostadores que se cadastram pelo link ficam salvos automaticamente aqui no banco de dados.
+                Todos os usuários salvos na tabela users / profiles do Supabase aparecem automaticamente aqui.
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={async () => {
+                  const listaSupabase = await listarUsuariosDoSupabase();
+                  if (listaSupabase.length > 0) {
+                    setJogadores(listaSupabase);
+                    localStorage.setItem("elite_jogadores_v11", JSON.stringify(listaSupabase));
+                  }
+                  mostrarAvisoAdm(`🔄 Lista sincronizada com o Supabase (${listaSupabase.length || jogadores.length} usuário(s))!`);
+                }}
+                className="text-[10px] bg-zinc-800 hover:bg-zinc-700 text-[#FF6B00] border border-[#FF6B00]/50 px-3 py-1.5 rounded-lg cursor-pointer font-bold transition flex items-center gap-1"
+              >
+                <span>🔄</span> Atualizar do Supabase
+              </button>
               {jogadores.some((jg) => jg.comprovante) && (
                 <button
                   type="button"
@@ -4393,7 +4455,7 @@ export default function App() {
                 </div>
                 {linkSalvoAviso && (
                   <div className="bg-green-950/80 border border-green-700 text-green-300 px-3 py-2 rounded-lg text-[11px] font-bold flex items-center gap-1.5">
-                    <span>✅</span> Link de Pagamento InfinitePay salvo no Firebase!
+                    <span>✅</span> Link de Pagamento InfinitePay salvo no Supabase!
                   </div>
                 )}
               </div>
@@ -4709,7 +4771,7 @@ export default function App() {
               onClick={addJogo}
               className="flex-1 bg-[#FF6B00] hover:bg-[#ff7b1a] text-black font-black py-3.5 px-4 rounded-xl cursor-pointer transition uppercase text-xs shadow-lg shadow-[#FF6B00]/20 flex items-center justify-center gap-1.5"
             >
-              <span>💾</span> SALVAR CONFRONTO NO NOVO BOLÃO ({jogosDoBolaoEmPreparo.length}/10) • NÃO PUBLICAR AINDA
+              <span>🚀</span> CRIAR JOGO E LIBERAR P/ TODOS OS USUÁRIOS ({jogosPublicados.length}/10)
             </button>
             {jogosSalvosNaoPublicados.length > 0 && (
               <button
