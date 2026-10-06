@@ -6,7 +6,6 @@ import {
   upsertJogoInDb,
   deleteJogoFromDb,
   upsertJogoDisponivelInDb,
-  deleteJogoDisponivelFromDb,
   JogoDisponivelItem,
 } from './firebase';
 import { TIMES_PADRAO, getEscudoPadrao, Jogo } from './App';
@@ -19,6 +18,24 @@ const getHojeISO = () => {
   return `${yyyy}-${mm}-${dd}`;
 };
 
+export const formatarDataParaEspn = (dataStr: string): string => {
+  const limpo = (dataStr || '').trim();
+  // Se vier no formato DD/MM/YYYY (ex: 06/10/2026 -> 20261006)
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(limpo)) {
+    const [dd, mm, yyyy] = limpo.split('/');
+    return `${yyyy}${mm}${dd}`;
+  }
+  // Se vier no formato YYYY-MM-DD (ex: 2026-10-06 -> 20261006)
+  if (/^\d{4}-\d{2}-\d{2}$/.test(limpo)) {
+    return limpo.replace(/-/g, '');
+  }
+  // Se já vier YYYYMMDD
+  if (/^\d{8}$/.test(limpo)) {
+    return limpo;
+  }
+  return getHojeISO().replace(/-/g, '');
+};
+
 const gerarUuidSimples = () => {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID().replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -26,26 +43,10 @@ const gerarUuidSimples = () => {
   return `jd_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 };
 
-const SUGESTOES_SERIE_A_PADRAO: Array<{
-  time_casa: string;
-  time_fora: string;
-  campeonato: string;
-  horario: string;
-}> = [
-  { time_casa: 'Flamengo', time_fora: 'Palmeiras', campeonato: 'Brasileirão Série A', horario: '16:00' },
-  { time_casa: 'Corinthians', time_fora: 'São Paulo', campeonato: 'Brasileirão Série A', horario: '16:00' },
-  { time_casa: 'Bahia', time_fora: 'Vitória', campeonato: 'Brasileirão Série A', horario: '18:30' },
-  { time_casa: 'Atlético-MG', time_fora: 'Cruzeiro', campeonato: 'Brasileirão Série A', horario: '18:30' },
-  { time_casa: 'Grêmio', time_fora: 'Internacional', campeonato: 'Brasileirão Série A', horario: '18:30' },
-  { time_casa: 'Botafogo', time_fora: 'Fluminense', campeonato: 'Brasileirão Série A', horario: '20:00' },
-  { time_casa: 'Vasco da Gama', time_fora: 'Santos', campeonato: 'Brasileirão Série A', horario: '20:00' },
-  { time_casa: 'Fortaleza', time_fora: 'Ceará', campeonato: 'Brasileirão Série A', horario: '21:30' },
-];
-
-interface JogoSugeridoCard extends JogoDisponivelItem {
+interface JogoEspnCard extends JogoDisponivelItem {
   escudoCasaUrl?: string;
   escudoForaUrl?: string;
-  origem?: 'thesportsdb' | 'football-data' | 'banco' | 'sugestao';
+  origem: 'espn';
 }
 
 function EscudoTime({ nome, badgeUrl, size = 36 }: { nome: string; badgeUrl?: string; size?: number }) {
@@ -130,30 +131,19 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
   const [aba, setAba] = useState<'sugeridos' | 'manual'>('sugeridos');
   const [dataFiltro, setDataFiltro] = useState<string>(getHojeISO);
   const [carregandoApi, setCarregandoApi] = useState<boolean>(false);
-  const [jogosApi, setJogosApi] = useState<JogoSugeridoCard[]>([]);
+  const [jogosEspn, setJogosEspn] = useState<JogoEspnCard[]>([]);
   const [jogosDisponiveisDb, setJogosDisponiveisDb] = useState<JogoDisponivelItem[]>([]);
   const [jogosBolaoAtivos, setJogosBolaoAtivos] = useState<Jogo[]>([]);
   const [statusMsg, setStatusMsg] = useState<string>('');
   const [erroApiMsg, setErroApiMsg] = useState<string>('');
   const [adicionandoId, setAdicionandoId] = useState<string>('');
 
-  // Opcional: Token Football-Data.org caso o ADM queira usar
-  const [mostrarConfigToken, setMostrarConfigToken] = useState<boolean>(false);
-  const [footballDataToken, setFootballDataToken] = useState<string>(() => {
-    try {
-      return localStorage.getItem('elite_fd_token_v1') || '';
-    } catch {
-      return '';
-    }
-  });
-
-  // ABA 2: Adicionar Manual Rápido (2 campos principais: Casa x Fora + Horário opcional)
-  const [manualCasa, setManualCasa] = useState<string>('Flamengo');
-  const [manualFora, setManualFora] = useState<string>('Palmeiras');
+  // ABA 2: Adicionar Manual Rápido (sem mock de times)
+  const [manualCasa, setManualCasa] = useState<string>('');
+  const [manualFora, setManualFora] = useState<string>('');
   const [manualHorario, setManualHorario] = useState<string>('16:00');
   const [manualCampeonato, setManualCampeonato] = useState<string>('Brasileirão Série A');
 
-  // Lote rápido de 4 jogos (fallback / atalho rápido)
   const [loteRapido, setLoteRapido] = useState<
     Array<{ casa: string; fora: string; horario: string; campeonato: string }>
   >([
@@ -168,7 +158,7 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
     setTimeout(() => setStatusMsg(''), 4000);
   };
 
-  // Escuta a tabela existente 'jogos' e a tabela nova 'jogos_disponiveis'
+  // Escuta a tabela existente 'jogos' e a tabela 'jogos_disponiveis'
   useEffect(() => {
     const unsubJogos = onSnapshot(
       collection(db, 'jogos'),
@@ -186,7 +176,6 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
         }
       },
       () => {
-        // Fallback localStorage se offline
         try {
           const local = localStorage.getItem('elite_jogos_v11');
           if (local) setJogosBolaoAtivos(JSON.parse(local));
@@ -214,121 +203,75 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
     };
   }, []);
 
-  // Busca jogos sugeridos do dia (TheSportsDB 100% grátis sem key + Football-Data opcional)
+  // Busca exclusivamente na API pública da ESPN (sem token, sem mocks/fallbacks)
   const buscarJogosDoDia = async (dataAlvo: string) => {
     setCarregandoApi(true);
     setErroApiMsg('');
-    const encontrados: JogoSugeridoCard[] = [];
+    setJogosEspn([]);
+
+    const datesParam = formatarDataParaEspn(dataAlvo);
+    const urlEspn = `https://site.api.espn.com/apis/site/v2/sports/soccer/bra.1/scoreboard?dates=${encodeURIComponent(datesParam)}`;
 
     try {
-      // 1. Tenta TheSportsDB (100% grátis, sem API key)
-      const urlsSportsDb = [
-        `https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d=${encodeURIComponent(dataAlvo)}&s=Soccer`,
-        `https://www.thesportsdb.com/api/v1/json/3/eventsday.php?d=${encodeURIComponent(dataAlvo)}`,
-      ];
+      const resp = await fetch(urlEspn);
+      if (!resp.ok) {
+        setJogosEspn([]);
+        return;
+      }
 
-      for (const url of urlsSportsDb) {
-        try {
-          const resp = await fetch(url);
-          if (resp.ok) {
-            const data = await resp.json();
-            const events = Array.isArray(data?.events) ? data.events : [];
-            for (const ev of events) {
-              const sport = String(ev?.strSport || '').toLowerCase();
-              if (sport && sport !== 'soccer' && sport !== 'football') continue;
-              const casa = String(ev?.strHomeTeam || '').trim();
-              const fora = String(ev?.strAwayTeam || '').trim();
-              if (!casa || !fora) continue;
-              const idEv = `tsdb_${ev?.idEvent || `${casa}_${fora}_${dataAlvo}`}`.replace(/[^a-zA-Z0-9_-]/g, '_');
-              if (encontrados.some((x) => x.id === idEv)) continue;
+      const data = await resp.json();
+      const events = Array.isArray(data?.events) ? data.events : [];
 
-              const horarioRaw = String(ev?.strTimeLocal || ev?.strTime || '16:00').slice(0, 5);
-              encontrados.push({
-                id: idEv,
-                time_casa: casa,
-                time_fora: fora,
-                campeonato: String(ev?.strLeague || 'Futebol Internacional').trim(),
-                horario: horarioRaw || '16:00',
-                data: String(ev?.dateEvent || dataAlvo),
-                adicionado_ao_bolao: false,
-                escudoCasaUrl: ev?.strHomeTeamBadge || getEscudoPadrao(casa),
-                escudoForaUrl: ev?.strAwayTeamBadge || getEscudoPadrao(fora),
-                origem: 'thesportsdb',
-              });
-            }
+      if (events.length === 0) {
+        setJogosEspn([]);
+        return;
+      }
+
+      const encontrados: JogoEspnCard[] = [];
+
+      for (let i = 0; i < events.length; i++) {
+        const ev = events[i];
+        const comp = ev?.competitions?.[0];
+        const competitors = comp?.competitors || [];
+
+        const casa = String(competitors[0]?.team?.displayName || '').trim();
+        const fora = String(competitors[1]?.team?.displayName || '').trim();
+        if (!casa || !fora) continue;
+
+        const rawDate = ev?.date || comp?.date || '';
+        let horarioFormatado = '';
+        if (rawDate) {
+          const dt = new Date(rawDate);
+          if (!isNaN(dt.getTime())) {
+            horarioFormatado = dt.toLocaleTimeString('pt-BR', {
+              hour: '2-digit',
+              minute: '2-digit',
+            });
+          } else {
+            horarioFormatado = String(rawDate);
           }
-        } catch {
-          // Continua silenciosamente para próxima fonte
         }
+
+        const idEv = `espn_${ev?.id || `${datesParam}_${i}_${casa}_${fora}`}`.replace(/[^a-zA-Z0-9_-]/g, '_');
+
+        encontrados.push({
+          id: idEv,
+          time_casa: casa,
+          time_fora: fora,
+          campeonato: 'Brasileirão Série A',
+          horario: horarioFormatado || '16:00',
+          data: dataAlvo,
+          adicionado_ao_bolao: false,
+          escudoCasaUrl: competitors[0]?.team?.logo || getEscudoPadrao(casa),
+          escudoForaUrl: competitors[1]?.team?.logo || getEscudoPadrao(fora),
+          origem: 'espn',
+        });
       }
 
-      // 2. Se houver token do football-data.org configurado, tenta buscar também
-      if (footballDataToken.trim()) {
-        try {
-          const fdResp = await fetch(
-            `https://api.football-data.org/v4/matches?dateFrom=${encodeURIComponent(dataAlvo)}&dateTo=${encodeURIComponent(dataAlvo)}`,
-            {
-              headers: {
-                'X-Auth-Token': footballDataToken.trim(),
-              },
-            }
-          );
-          if (fdResp.ok) {
-            const fdData = await fdResp.json();
-            const matches = Array.isArray(fdData?.matches) ? fdData.matches : [];
-            for (const m of matches) {
-              const casa = String(m?.homeTeam?.shortName || m?.homeTeam?.name || '').trim();
-              const fora = String(m?.awayTeam?.shortName || m?.awayTeam?.name || '').trim();
-              if (!casa || !fora) continue;
-              const idFd = `fd_${m?.id || `${casa}_${fora}_${dataAlvo}`}`.replace(/[^a-zA-Z0-9_-]/g, '_');
-              if (encontrados.some((x) => x.id === idFd)) continue;
-
-              let horarioFd = '16:00';
-              if (m?.utcDate) {
-                const dt = new Date(m.utcDate);
-                if (!isNaN(dt.getTime())) {
-                  horarioFd = dt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-                }
-              }
-
-              encontrados.push({
-                id: idFd,
-                time_casa: casa,
-                time_fora: fora,
-                campeonato: String(m?.competition?.name || 'Campeonato').trim(),
-                horario: horarioFd,
-                data: dataAlvo,
-                adicionado_ao_bolao: false,
-                escudoCasaUrl: m?.homeTeam?.crest || getEscudoPadrao(casa),
-                escudoForaUrl: m?.awayTeam?.crest || getEscudoPadrao(fora),
-                origem: 'football-data',
-              });
-            }
-          }
-        } catch {
-          // Continua com os jogos já carregados
-        }
-      }
-
-      setJogosApi(encontrados);
-
-      // Salva/sincroniza na tabela nova 'jogos_disponiveis' sem bloquear a UI
-      for (const item of encontrados.slice(0, 25)) {
-        const jaExiste = jogosDisponiveisDb.find((d) => d.id === item.id);
-        if (!jaExiste) {
-          upsertJogoDisponivelInDb({
-            id: item.id,
-            time_casa: item.time_casa,
-            time_fora: item.time_fora,
-            campeonato: item.campeonato,
-            horario: item.horario,
-            data: item.data,
-            adicionado_ao_bolao: false,
-          }).catch(() => {});
-        }
-      }
+      setJogosEspn(encontrados);
     } catch {
-      setErroApiMsg('A busca externa falhou no momento. Use as sugestões abaixo ou a aba Adicionar Manual Rápido.');
+      setJogosEspn([]);
+      setErroApiMsg('Erro ao consultar a API da ESPN no momento.');
     } finally {
       setCarregandoApi(false);
     }
@@ -353,8 +296,6 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
     return false;
   };
 
-  // AÇÃO PRINCIPAL: 1 Clique -> Faz INSERT na tabela EXISTENTE 'jogos' (sem criar colunas novas)
-  // e marca adicionado_ao_bolao = true na tabela nova 'jogos_disponiveis'
   const adicionarJogoAoBolao = async (params: {
     id?: string;
     time_casa: string;
@@ -392,7 +333,6 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
       const escudoCasa = getEscudoPadrao(casaLimpo) || params.escudoCasaUrl || '';
       const escudoFora = getEscudoPadrao(foraLimpo) || params.escudoForaUrl || '';
 
-      // 1. Insere na tabela EXISTENTE 'jogos' usando apenas as colunas que já existem
       const novoJogoId = `${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
       const novoJogoBolao: Jogo = {
         id: novoJogoId,
@@ -406,7 +346,6 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
 
       await upsertJogoInDb(novoJogoBolao);
 
-      // Atualiza também o localStorage para sincronia imediata com a tela principal
       const novaListaJogos = [...jogosBolaoAtivos, novoJogoBolao];
       setJogosBolaoAtivos(novaListaJogos);
       try {
@@ -415,7 +354,6 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
         // ignore
       }
 
-      // 2. Salva/atualiza na tabela NOVA 'jogos_disponiveis' com adicionado_ao_bolao = true
       await upsertJogoDisponivelInDb({
         id: dispId,
         time_casa: casaLimpo,
@@ -435,41 +373,6 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
     }
   };
 
-  // Monta a lista combinada para a ABA 1 ("Jogos Sugeridos Hoje")
-  const sugestoesSerieACards: JogoSugeridoCard[] = SUGESTOES_SERIE_A_PADRAO.map((s, idx) => {
-    const idFixo = `seriea_${dataFiltro}_${idx}_${s.time_casa}_${s.time_fora}`.replace(/[^a-zA-Z0-9_-]/g, '_');
-    return {
-      id: idFixo,
-      time_casa: s.time_casa,
-      time_fora: s.time_fora,
-      campeonato: s.campeonato,
-      horario: s.horario,
-      data: dataFiltro,
-      adicionado_ao_bolao: false,
-      escudoCasaUrl: getEscudoPadrao(s.time_casa),
-      escudoForaUrl: getEscudoPadrao(s.time_fora),
-      origem: 'sugestao',
-    };
-  });
-
-  const jogosDoBancoHoje: JogoSugeridoCard[] = jogosDisponiveisDb
-    .filter((d) => !d.data || d.data === dataFiltro)
-    .map((d) => ({
-      ...d,
-      escudoCasaUrl: getEscudoPadrao(d.time_casa),
-      escudoForaUrl: getEscudoPadrao(d.time_fora),
-      origem: 'banco',
-    }));
-
-  const todosSugeridosMap = new Map<string, JogoSugeridoCard>();
-  for (const item of [...jogosApi, ...jogosDoBancoHoje, ...sugestoesSerieACards]) {
-    const chave = `${item.time_casa.trim().toLowerCase()}__${item.time_fora.trim().toLowerCase()}`;
-    if (!todosSugeridosMap.has(chave)) {
-      todosSugeridosMap.set(chave, item);
-    }
-  }
-  const listaSugeridosFinal = Array.from(todosSugeridosMap.values());
-
   return (
     <div className="min-h-screen bg-[#0A0A0A] text-white p-4 pb-24">
       <div className="max-w-4xl mx-auto space-y-5">
@@ -482,15 +385,15 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
             <div>
               <div className="flex items-center gap-2">
                 <span className="text-[10px] font-black uppercase tracking-wider bg-[#FF6B00] text-black px-2 py-0.5 rounded">
-                  ATALHO ADM • MODO SEGURO
+                  ESPN OFICIAL • BRASILEIRÃO SÉRIE A
                 </span>
                 <span className="text-[10px] text-zinc-400 font-mono">/admin/importar-jogos</span>
               </div>
               <h1 className="text-lg sm:text-xl font-black text-white mt-0.5">
-                Jogos do Dia Clicáveis (1 Clique p/ o Bolão)
+                Jogos Oficiais do Brasileirão (ESPN)
               </h1>
               <p className="text-xs text-zinc-400">
-                Clique em qualquer jogo abaixo para inserir direto na tabela de confrontos ativos ({jogosBolaoAtivos.length}/10).
+                Confrontos reais da ESPN em tempo real ({jogosBolaoAtivos.length}/10 ativos no bolão).
               </p>
             </div>
           </div>
@@ -531,7 +434,7 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
                 : 'text-zinc-400 hover:text-white'
             }`}
           >
-            <span>📅</span> ABA 1: Jogos Sugeridos Hoje ({listaSugeridosFinal.length})
+            <span>📅</span> Jogos ESPN Hoje ({jogosEspn.length})
           </button>
 
           <button
@@ -543,12 +446,12 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
                 : 'text-zinc-400 hover:text-white'
             }`}
           >
-            <span>⚡</span> ABA 2: Adicionar Manual Rápido
+            <span>⚡</span> Adicionar Manual Rápido
           </button>
         </div>
 
         {/* ===================================================================
-            ABA 1: JOGOS SUGERIDOS HOJE (TheSportsDB Grátis + Sugestões Série A)
+            ABA 1: JOGOS REAIS DA ESPN (SEM MOCKS / SEM FALLBACKS FALSOS)
            =================================================================== */}
         {aba === 'sugeridos' && (
           <div className="space-y-4">
@@ -568,50 +471,14 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
                   disabled={carregandoApi}
                   className="bg-zinc-800 hover:bg-zinc-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs cursor-pointer transition"
                 >
-                  {carregandoApi ? '🔄 Buscando...' : '🔄 Atualizar Jogos de Hoje'}
+                  {carregandoApi ? '🔄 Buscando na ESPN...' : '🔄 Atualizar Jogos da ESPN'}
                 </button>
               </div>
 
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setMostrarConfigToken(!mostrarConfigToken)}
-                  className="text-[11px] text-zinc-400 hover:text-[#FF6B00] underline cursor-pointer"
-                >
-                  {mostrarConfigToken ? 'Ocultar Token Football-Data' : '⚙️ Usar Token Football-Data (Opcional)'}
-                </button>
+              <div className="text-[11px] text-zinc-400 font-mono">
+                ESPN API • dates={formatarDataParaEspn(dataFiltro)}
               </div>
             </div>
-
-            {mostrarConfigToken && (
-              <div className="bg-zinc-900/70 border border-zinc-800 rounded-xl p-3.5 space-y-2">
-                <div className="text-xs font-bold text-zinc-300">
-                  Token Grátis football-data.org (Opcional — TheSportsDB já funciona 100% grátis sem token):
-                </div>
-                <div className="flex gap-2">
-                  <input
-                    value={footballDataToken}
-                    onChange={(e) => {
-                      setFootballDataToken(e.target.value);
-                      try {
-                        localStorage.setItem('elite_fd_token_v1', e.target.value);
-                      } catch {
-                        // ignore
-                      }
-                    }}
-                    placeholder="Cole aqui seu X-Auth-Token se desejar..."
-                    className="flex-1 bg-black border border-zinc-800 rounded-lg px-3 py-2 text-xs text-white font-mono outline-none focus:border-[#FF6B00]"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => buscarJogosDoDia(dataFiltro)}
-                    className="bg-[#FF6B00] text-black font-black px-4 py-2 rounded-lg text-xs uppercase cursor-pointer"
-                  >
-                    Buscar
-                  </button>
-                </div>
-              </div>
-            )}
 
             {erroApiMsg && (
               <div className="bg-amber-950/60 border border-amber-700/80 text-amber-200 p-3 rounded-xl text-xs">
@@ -619,92 +486,103 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
               </div>
             )}
 
-            {/* Lista de Jogos Clicáveis */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {listaSugeridosFinal.map((item) => {
-                const adicionado = jaEstaNoBolao(item.time_casa, item.time_fora, item.id);
-                const estaSalvando = adicionandoId === item.id;
+            {carregandoApi ? (
+              <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-8 text-center text-xs text-zinc-400">
+                🔄 Consultando jogos oficiais do Brasileirão na ESPN...
+              </div>
+            ) : jogosEspn.length === 0 ? (
+              <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-8 text-center space-y-2">
+                <div className="text-3xl">⚽</div>
+                <div className="text-sm sm:text-base font-black text-white">
+                  Nenhum jogo oficial do Brasileirão hoje - Data FIFA
+                </div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {jogosEspn.map((item) => {
+                  const adicionado = jaEstaNoBolao(item.time_casa, item.time_fora, item.id);
+                  const estaSalvando = adicionandoId === item.id;
 
-                return (
-                  <div
-                    key={item.id}
-                    className={`p-4 rounded-2xl border transition flex flex-col justify-between gap-3 ${
-                      adicionado
-                        ? 'bg-green-950/20 border-green-700/60'
-                        : 'bg-zinc-900 border-zinc-800 hover:border-zinc-700'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between text-[10px] text-zinc-400 border-b border-zinc-800/80 pb-2">
-                      <span className="font-bold text-[#FF6B00] uppercase truncate max-w-[200px]">
-                        🏆 {item.campeonato}
-                      </span>
-                      <span className="bg-black px-2 py-0.5 rounded text-zinc-300 font-mono">
-                        ⏰ {item.horario} • {item.data}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center justify-between gap-2 py-1">
-                      <div className="flex items-center gap-2.5 flex-1 min-w-0">
-                        <EscudoTime nome={item.time_casa} badgeUrl={item.escudoCasaUrl} size={38} />
-                        <span className="font-black text-sm text-white truncate">{item.time_casa}</span>
-                      </div>
-
-                      <span className="text-xs font-black text-[#FF6B00] px-1.5">X</span>
-
-                      <div className="flex items-center justify-end gap-2.5 flex-1 min-w-0 text-right">
-                        <span className="font-black text-sm text-white truncate">{item.time_fora}</span>
-                        <EscudoTime nome={item.time_fora} badgeUrl={item.escudoForaUrl} size={38} />
-                      </div>
-                    </div>
-
-                    <button
-                      type="button"
-                      disabled={adicionado || estaSalvando || jogosBolaoAtivos.length >= 10}
-                      onClick={() =>
-                        adicionarJogoAoBolao({
-                          id: item.id,
-                          time_casa: item.time_casa,
-                          time_fora: item.time_fora,
-                          campeonato: item.campeonato,
-                          horario: item.horario,
-                          data: item.data,
-                          escudoCasaUrl: item.escudoCasaUrl,
-                          escudoForaUrl: item.escudoForaUrl,
-                        })
-                      }
-                      className={`w-full py-2.5 px-4 rounded-xl font-black text-xs uppercase tracking-wider transition flex items-center justify-center gap-1.5 ${
+                  return (
+                    <div
+                      key={item.id}
+                      className={`p-4 rounded-2xl border transition flex flex-col justify-between gap-3 ${
                         adicionado
-                          ? 'bg-green-600/20 text-green-300 border border-green-600/50 cursor-default'
-                          : jogosBolaoAtivos.length >= 10
-                          ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed'
-                          : 'bg-[#FF6B00] hover:bg-[#ff7b1a] text-black cursor-pointer shadow-md shadow-[#FF6B00]/15'
+                          ? 'bg-green-950/20 border-green-700/60'
+                          : 'bg-zinc-900 border-zinc-800 hover:border-zinc-700'
                       }`}
                     >
-                      {adicionado ? (
-                        <>
-                          <span>✅</span> JÁ ADICIONADO AO BOLÃO
-                        </>
-                      ) : estaSalvando ? (
-                        <span>⏳ ADICIONANDO...</span>
-                      ) : (
-                        <>
-                          <span>➕</span> ADICIONAR AO BOLÃO (1 CLIQUE)
-                        </>
-                      )}
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
+                      <div className="flex items-center justify-between text-[10px] text-zinc-400 border-b border-zinc-800/80 pb-2">
+                        <span className="font-bold text-[#FF6B00] uppercase truncate max-w-[200px]">
+                          🏆 {item.campeonato}
+                        </span>
+                        <span className="bg-black px-2 py-0.5 rounded text-zinc-300 font-mono">
+                          ⏰ {item.horario} • {item.data}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between gap-2 py-1">
+                        <div className="flex items-center gap-2.5 flex-1 min-w-0">
+                          <EscudoTime nome={item.time_casa} badgeUrl={item.escudoCasaUrl} size={38} />
+                          <span className="font-black text-sm text-white truncate">{item.time_casa}</span>
+                        </div>
+
+                        <span className="text-xs font-black text-[#FF6B00] px-1.5">X</span>
+
+                        <div className="flex items-center justify-end gap-2.5 flex-1 min-w-0 text-right">
+                          <span className="font-black text-sm text-white truncate">{item.time_fora}</span>
+                          <EscudoTime nome={item.time_fora} badgeUrl={item.escudoForaUrl} size={38} />
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        disabled={adicionado || estaSalvando || jogosBolaoAtivos.length >= 10}
+                        onClick={() =>
+                          adicionarJogoAoBolao({
+                            id: item.id,
+                            time_casa: item.time_casa,
+                            time_fora: item.time_fora,
+                            campeonato: item.campeonato,
+                            horario: item.horario,
+                            data: item.data,
+                            escudoCasaUrl: item.escudoCasaUrl,
+                            escudoForaUrl: item.escudoForaUrl,
+                          })
+                        }
+                        className={`w-full py-2.5 px-4 rounded-xl font-black text-xs uppercase tracking-wider transition flex items-center justify-center gap-1.5 ${
+                          adicionado
+                            ? 'bg-green-600/20 text-green-300 border border-green-600/50 cursor-default'
+                            : jogosBolaoAtivos.length >= 10
+                            ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed'
+                            : 'bg-[#FF6B00] hover:bg-[#ff7b1a] text-black cursor-pointer shadow-md shadow-[#FF6B00]/15'
+                        }`}
+                      >
+                        {adicionado ? (
+                          <>
+                            <span>✅</span> JÁ ADICIONADO AO BOLÃO
+                          </>
+                        ) : estaSalvando ? (
+                          <span>⏳ ADICIONANDO...</span>
+                        ) : (
+                          <>
+                            <span>➕</span> ADICIONAR AO BOLÃO (1 CLIQUE)
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
 
         {/* ===================================================================
-            ABA 2: ADICIONAR MANUAL RÁPIDO (2 Campos: Casa x Fora + Lote 4 Jogos)
+            ABA 2: ADICIONAR MANUAL RÁPIDO
            =================================================================== */}
         {aba === 'manual' && (
           <div className="space-y-5">
-            {/* Card Principal: 2 Campos Casa x Fora */}
             <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 space-y-4">
               <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
                 <div>
@@ -717,7 +595,6 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {/* Campo 1: Time Casa */}
                 <div className="bg-black/60 border border-zinc-800 p-3.5 rounded-xl space-y-2.5">
                   <div className="flex items-center gap-2.5">
                     <EscudoTime nome={manualCasa} size={40} />
@@ -728,7 +605,7 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
                       <input
                         value={manualCasa}
                         onChange={(e) => setManualCasa(e.target.value)}
-                        placeholder="Ex: Flamengo"
+                        placeholder="Digite o Time Casa"
                         className="w-full bg-zinc-900 border border-zinc-700 rounded-lg p-2.5 text-xs text-white font-bold outline-none focus:border-[#FF6B00]"
                       />
                     </div>
@@ -752,7 +629,6 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
                   </div>
                 </div>
 
-                {/* Campo 2: Time Fora */}
                 <div className="bg-black/60 border border-zinc-800 p-3.5 rounded-xl space-y-2.5">
                   <div className="flex items-center gap-2.5">
                     <EscudoTime nome={manualFora} size={40} />
@@ -763,7 +639,7 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
                       <input
                         value={manualFora}
                         onChange={(e) => setManualFora(e.target.value)}
-                        placeholder="Ex: Palmeiras"
+                        placeholder="Digite o Time Fora"
                         className="w-full bg-zinc-900 border border-zinc-700 rounded-lg p-2.5 text-xs text-white font-bold outline-none focus:border-[#FF6B00]"
                       />
                     </div>
@@ -827,7 +703,6 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
               </button>
             </div>
 
-            {/* Grade de 4 Inputs Simples: Time Casa x Time Fora + Horário */}
             <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 space-y-3">
               <h3 className="text-sm font-black text-white">
                 📋 Preenchimento Rápido (4 Confrontos: Time Casa x Time Fora + Horário)
@@ -907,7 +782,7 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
 
           {jogosBolaoAtivos.length === 0 ? (
             <p className="text-xs text-zinc-500 text-center py-4">
-              Nenhum jogo ativo no bolão ainda. Clique em &quot;Adicionar ao Bolão&quot; acima para inserir!
+              Nenhum jogo ativo no bolão ainda.
             </p>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
