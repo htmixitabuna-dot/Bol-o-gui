@@ -1,13 +1,22 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
+import { BOLAO_ELITE_ICON_DATA_URL } from './src/pwaIconDataUrl'
 
 export default defineConfig({
   plugins: [
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png', 'pwa-maskable-512x512.png'],
+      includeAssets: [
+        'favicon.ico',
+        'apple-touch-icon.png',
+        'apple-touch-icon-precomposed.png',
+        'apple-touch-icon-180x180.png',
+        'pwa-192x192.png',
+        'pwa-512x512.png',
+        'pwa-maskable-512x512.png',
+      ],
       manifest: {
         id: '/',
         name: 'Bolões Elite - Palpites Esportivos',
@@ -21,19 +30,25 @@ export default defineConfig({
         scope: '/',
         icons: [
           {
-            src: '/pwa-192x192.png',
+            src: BOLAO_ELITE_ICON_DATA_URL,
+            sizes: '180x180',
+            type: 'image/png',
+            purpose: 'any',
+          },
+          {
+            src: '/pwa-192x192.png?v=5',
             sizes: '192x192',
             type: 'image/png',
             purpose: 'any',
           },
           {
-            src: '/pwa-512x512.png',
+            src: '/pwa-512x512.png?v=5',
             sizes: '512x512',
             type: 'image/png',
             purpose: 'any',
           },
           {
-            src: '/pwa-maskable-512x512.png',
+            src: '/pwa-maskable-512x512.png?v=5',
             sizes: '512x512',
             type: 'image/png',
             purpose: 'maskable',

@@ -3,7 +3,25 @@ import { createRoot } from 'react-dom/client';
 import { registerSW } from 'virtual:pwa-register';
 import App from './App.tsx';
 import ImportarJogosAdmin from './ImportarJogosAdmin.tsx';
+import { BOLAO_ELITE_ICON_DATA_URL } from './pwaIconDataUrl';
 import './index.css';
+
+if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+  const isIOSDevice =
+    /iphone|ipad|ipod/i.test(window.navigator.userAgent) ||
+    (window.navigator.platform === 'MacIntel' && window.navigator.maxTouchPoints > 1);
+
+  if (isIOSDevice) {
+    // Em iOS Safari, remove o link do manifest externo para forçar o uso imediato
+    // do apple-touch-icon embutido em Base64 (evita o ícone "B" escuro quando o iOS
+    // tenta baixar o manifest sem cookies em segundo plano).
+    document.querySelectorAll('link[rel="manifest"]').forEach((el) => el.remove());
+  }
+
+  document.querySelectorAll('link[rel="apple-touch-icon"], link[rel="apple-touch-icon-precomposed"]').forEach((el) => {
+    el.setAttribute('href', BOLAO_ELITE_ICON_DATA_URL);
+  });
+}
 
 registerSW({ immediate: true });
 
