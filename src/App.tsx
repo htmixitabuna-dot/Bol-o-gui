@@ -128,6 +128,9 @@ export default function App() {
       if (path.includes("/pagamento-sucesso") || params.get("jogador_id")) {
         return "pagamentoSucesso";
       }
+      if (path === "/admin") {
+        return "admin";
+      }
     }
     return "landing";
   });
@@ -201,6 +204,10 @@ export default function App() {
   const [pastaComprovanteAberta, setPastaComprovanteAberta] = useState(false);
   const [tempComprovante, setTempComprovante] = useState<string>("");
   const [modalPixAberto, setModalPixAberto] = useState(false);
+  const [mostrarQrPixDireto, setMostrarQrPixDireto] = useState(false);
+  const [enviandoComprovantePix, setEnviandoComprovantePix] = useState(false);
+  const [comprovanteEnviadoAviso, setComprovanteEnviadoAviso] = useState(false);
+  const [carregandoInfinitePay, setCarregandoInfinitePay] = useState(false);
   const [confirmandoJaPaguei, setConfirmandoJaPaguei] = useState(false);
   const [pagamentoConfirmadoLocal, setPagamentoConfirmadoLocal] = useState<boolean>(() => {
     try {
@@ -608,42 +615,198 @@ export default function App() {
   }, [page, modalPixAberto]);
 
   const abrirLinkPagamentoInfinitePay = async () => {
-    let linkPagamentoInfinitePay = String(config.linkPagamentoInfinitePay || "").trim();
-    if (!linkPagamentoInfinitePay) {
+    setCarregandoInfinitePay(true);
+    try {
+      const usuarioLogado = user || {
+        id: auth.currentUser?.uid || "inho_jogador",
+        nome: auth.currentUser?.displayName || "Jogador Bolao",
+        email: auth.currentUser?.email || "inhobahia29@gmail.com",
+        pix: "",
+      };
+      const jogadorId = usuarioLogado.id || getJogadorDocId(usuarioLogado.email || usuarioLogado.nome || "jogador");
+      const name = String(usuarioLogado.nome || "Jogador Bolao").trim();
+      const email = String(usuarioLogado.email || "jogador@bolao.com").trim().toLowerCase();
+      const rawPhone = String(
+        usuarioLogado.phone_number || usuarioLogado.telefone || usuarioLogado.pix || "+5573999999999"
+      ).trim();
+      const digits = rawPhone.replace(/\D/g, "");
+      let phone_number = "+5573999999999";
+      if (digits.length >= 10 && digits.length <= 11) {
+        phone_number = `+55${digits}`;
+      } else if (digits.length >= 12 && digits.length <= 13 && digits.startsWith("55")) {
+        phone_number = `+${digits}`;
+      }
+
+      let checkoutUrl = "";
       try {
-        const cached = localStorage.getItem("firestore_doc_config/bolao") || localStorage.getItem("elite_config_v11");
-        if (cached) {
-          linkPagamentoInfinitePay = String(JSON.parse(cached)?.linkPagamentoInfinitePay || "").trim();
+        const resp = await fetch("/api/criar-pagamento-infinitepay", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jogadorId,
+            nome: name,
+            email,
+            phone_number,
+            customer: {
+              name,
+              email,
+              phone_number,
+            },
+            items: [
+              {
+                quantity: 1,
+                price: 1000,
+                description: "Cota Bolao Elite",
+              },
+            ],
+          }),
+        });
+        if (resp.ok) {
+          const data = await resp.json().catch(() => ({}));
+          if (data?.url) {
+            checkoutUrl = data.url;
+          }
         }
       } catch {
-        // ignore
+        // fallback caso /api/criar-pagamento-infinitepay não esteja rodando localmente no Vite dev
       }
+
+      if (!checkoutUrl) {
+        try {
+          const origin = typeof window !== "undefined" ? window.location.origin : "https://bol-o-gui.vercel.app";
+          const directResp = await fetch("https://api.checkout.infinitepay.io/links", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Accept: "application/json",
+            },
+            body: JSON.stringify({
+              handle: "irailson-da-472",
+              order_nsu: `${jogadorId}_${Date.now()}`,
+              redirect_url: `${origin}/pagamento-sucesso?jogador_id=${encodeURIComponent(jogadorId)}`,
+              customer: {
+                name,
+                email,
+                phone_number,
+              },
+              items: [
+                {
+                  quantity: 1,
+                  price: 1000,
+                  description: "Cota Bolao Elite",
+                },
+              ],
+            }),
+          });
+          if (directResp.ok) {
+            const directData = await directResp.json().catch(() => ({}));
+            checkoutUrl = directData?.url || directData?.checkout_url || directData?.data?.url || "";
+          }
+        } catch {
+          // ignore CORS/network fallback
+        }
+      }
+
+      if (!checkoutUrl) {
+        const origin = typeof window !== "undefined" ? window.location.origin : "https://bol-o-gui.vercel.app";
+        checkoutUrl = `https://checkout.infinitepay.io/irailson-da-472?items=[{"name":"Cota+Bolao+Elite","price":1000,"quantity":1}]&customer_name=${encodeURIComponent(
+          name
+        )}&customer_email=${encodeURIComponent(email)}&customer_cellphone=${encodeURIComponent(
+          phone_number
+        )}&order_nsu=${encodeURIComponent(jogadorId)}&redirect_url=${encodeURIComponent(
+          `${origin}/pagamento-sucesso?jogador_id=${encodeURIComponent(jogadorId)}`
+        )}`;
+      }
+
+      window.open(checkoutUrl, "_blank");
+    } finally {
+      setCarregandoInfinitePay(false);
     }
-    if (linkPagamentoInfinitePay) {
-      const urlFinal = /^https?:\/\//i.test(linkPagamentoInfinitePay)
-        ? linkPagamentoInfinitePay
-        : `https://${linkPagamentoInfinitePay}`;
-      window.open(urlFinal, "_blank");
-      return;
+  };
+
+  const acionarPixDireto = async () => {
+    let codigoPix =
+      payloadPixAtual ||
+      gerarPayloadPix("f0e74d2a-d610-4b76-842e-8b7e1a08047d", Number(config.valorCota) || 10, "IRAILSON DA SILVA", "ITABUNA");
+    try {
+      const resp = await fetch(`/api/pix-key?valor=${encodeURIComponent(String(Number(config.valorCota) || 10))}`);
+      if (resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        if (data?.pixCopiaECola || data?.payload) {
+          codigoPix = data.pixCopiaECola || data.payload;
+          setPayloadPixAtual(codigoPix);
+        }
+      }
+    } catch {
+      // usa payload gerado localmente
     }
     try {
-      const docSnap = await getDoc(doc(db, "config", "bolao"));
-      linkPagamentoInfinitePay = String(docSnap.data()?.linkPagamentoInfinitePay || "").trim();
+      await navigator.clipboard.writeText(codigoPix);
     } catch {
-      // ignore
+      // ignore clipboard error
     }
-    if (linkPagamentoInfinitePay) {
-      const urlFinal = /^https?:\/\//i.test(linkPagamentoInfinitePay)
-        ? linkPagamentoInfinitePay
-        : `https://${linkPagamentoInfinitePay}`;
-      window.open(urlFinal, "_blank");
-    } else {
-      alert("Configure o LINK DE PAGAMENTO INFINITEPAY no painel ADM antes de pagar!");
+    setCopiadoPix(true);
+    setTimeout(() => setCopiadoPix(false), 3500);
+    setMostrarQrPixDireto(true);
+  };
+
+  const handleUploadComprovanteApi = async (file: File | undefined) => {
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      alert("Imagem muito grande, use arquivo até 5MB!");
+      return;
+    }
+    setEnviandoComprovantePix(true);
+    try {
+      let comprovanteBase64 = "";
+      try {
+        comprovanteBase64 = await compressImageToDataUrl(file, 900, 0.72);
+      } catch {
+        comprovanteBase64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onerror = () => reject(new Error("Erro ao ler arquivo"));
+          reader.onload = (ev: any) => resolve(String(ev.target?.result || ""));
+          reader.readAsDataURL(file);
+        });
+      }
+
+      const usuarioAtivo = user || {
+        id: auth.currentUser?.uid || "inho_jogador",
+        nome: auth.currentUser?.displayName || "Jogador",
+        email: auth.currentUser?.email || "inhobahia29@gmail.com",
+        pix: "-",
+        pontos: 0,
+      };
+      const emailJogador = (usuarioAtivo.email || "inhobahia29@gmail.com").trim().toLowerCase();
+      const nomeJogador = (usuarioAtivo.nome || "Jogador").trim();
+      const jogadorId = usuarioAtivo.id || getJogadorDocId(emailJogador);
+
+      // Atualiza estado local e grava direto no documento do jogador no Firestore para aparecer na área do ADM (/admin)
+      enviarComprovante(emailJogador, comprovanteBase64);
+
+      // Envia também para o endpoint /api/upload-comprovante
+      await fetch("/api/upload-comprovante", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jogadorId,
+          nome: nomeJogador,
+          email: emailJogador,
+          comprovante: comprovanteBase64,
+        }),
+      }).catch(() => {});
+
+      setComprovanteEnviadoAviso(true);
+      setTimeout(() => setComprovanteEnviadoAviso(false), 6000);
+      alert("✅ Comprovante enviado com sucesso para a sua pasta no painel do ADM! Aguarde a liberação em até 5 min.");
+    } finally {
+      setEnviandoComprovantePix(false);
     }
   };
 
   const abrirModalPixDireto = async () => {
-    await abrirLinkPagamentoInfinitePay();
+    await acionarPixDireto();
+    setModalPixAberto(true);
   };
 
   const confirmarJaPaguei = async () => {
@@ -962,8 +1125,22 @@ export default function App() {
     const horaEnvio = new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
     const dataHoraFormatada = `${new Date().toLocaleDateString("pt-BR")} às ${horaEnvio}`;
 
-    const jogadoresAtualizados = jogadores.map((jg: any) => {
-      if (jg.email === email) {
+    const existeNaLista = jogadores.some((jg: any) => (jg.email || "").toLowerCase() === email.toLowerCase());
+    const baseLista = existeNaLista
+      ? jogadores
+      : [
+          ...jogadores,
+          {
+            id: getJogadorDocId(email),
+            nome: user?.nome || auth.currentUser?.displayName || "Jogador",
+            email,
+            pix: user?.pix || "-",
+            pontos: user?.pontos || 0,
+          },
+        ];
+
+    const jogadoresAtualizados = baseLista.map((jg: any) => {
+      if ((jg.email || "").toLowerCase() === email.toLowerCase()) {
         const nextJg = {
           ...jg,
           comprovante: comprovanteBase64,
@@ -1593,6 +1770,184 @@ export default function App() {
             ))}
           </div>
         )}
+      </div>
+    </div>
+  );
+
+  const salvarPalpitesTemporariosSeHouver = async () => {
+    if (!user) return;
+    const jogosComPalpite = jogos.filter((j) => escolhasTemp[j.id]);
+    if (jogosComPalpite.length === 0) return;
+
+    const jaPago =
+      !modoNovaAposta &&
+      Boolean(
+        isDepositoConfirmado ||
+          user.status_pagamento === "pago" ||
+          user.aprovado === true ||
+          user.statusPagamento === "APROVADO"
+      );
+
+    const novosPalpites: Palpite[] = jogosComPalpite.map((j) => ({
+      jogadorEmail: user.email,
+      jogoId: j.id,
+      escolha: escolhasTemp[j.id],
+      pago: jaPago,
+    }));
+
+    const outros = palpites.filter((p) => p.jogadorEmail !== user.email);
+    const todos = [...outros, ...novosPalpites];
+    setPalpites(todos);
+    localStorage.setItem("elite_palpites_v11", JSON.stringify(todos));
+    setModoNovaAposta(false);
+
+    for (const np of novosPalpites) {
+      await upsertPalpiteInDb(np).catch(() => {});
+    }
+  };
+
+  const BotoesPagamentoDuplo = ({ validarPalpitesAntes = false }: { validarPalpitesAntes?: boolean }) => (
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4 text-left">
+      {/* CAIXA 1: BOTÃO 1 VERDE - PIX DIRETO + ENVIAR COMPROVANTE */}
+      <div className="bg-zinc-950 border-2 border-green-600/80 rounded-2xl p-4 flex flex-col justify-between space-y-3 shadow-lg shadow-green-950/30">
+        <div className="space-y-2.5">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-black uppercase tracking-wider bg-green-500/20 text-green-400 border border-green-500/40 px-2.5 py-0.5 rounded-full">
+              Opção 1 • PIX Manual
+            </span>
+            <span className="text-sm font-black text-green-400">R$ 10</span>
+          </div>
+
+          <button
+            type="button"
+            onClick={async () => {
+              if (validarPalpitesAntes) {
+                if (!user) {
+                  setPage("loginJogador");
+                  return;
+                }
+                const jogosComPalpite = jogos.filter((j) => escolhasTemp[j.id]);
+                if (jogosComPalpite.length === 0 && meusPalpitesSalvos.length === 0) {
+                  alert("Selecione seus palpites nos jogos da rodada antes de pagar!");
+                  return;
+                }
+                await salvarPalpitesTemporariosSeHouver();
+              }
+              await acionarPixDireto();
+            }}
+            className="w-full bg-green-600 hover:bg-green-500 text-black font-black py-3.5 px-3 rounded-xl cursor-pointer transition text-xs sm:text-sm uppercase tracking-wider shadow-lg shadow-green-600/25 flex items-center justify-center gap-1.5 text-center"
+          >
+            <span>💠</span>
+            <span>PAGAR NO PIX DIRETO - R$10</span>
+          </button>
+
+          {copiadoPix && (
+            <div className="bg-green-950 border border-green-600 text-green-300 text-[11px] font-bold px-2.5 py-1.5 rounded-lg text-center">
+              ✅ PIX Copia e Cola copiado! Escaneie o QR abaixo ou cole no seu banco.
+            </div>
+          )}
+
+          {mostrarQrPixDireto && (
+            <div className="bg-black/90 border border-green-700/60 rounded-xl p-3 space-y-2 text-center animate-fade-in">
+              <div className="bg-white p-2.5 rounded-xl w-fit mx-auto">
+                <QRCodeSVG value={payloadPixRender} size={150} level="M" includeMargin={false} />
+              </div>
+              <input
+                type="text"
+                readOnly
+                value={payloadPixRender}
+                className="w-full bg-zinc-900 border border-zinc-800 px-2 py-1.5 rounded text-[10px] text-zinc-200 font-mono outline-none select-all"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard.writeText(payloadPixRender);
+                  setCopiadoPix(true);
+                  setTimeout(() => setCopiadoPix(false), 3000);
+                }}
+                className="w-full bg-zinc-800 hover:bg-zinc-700 text-green-400 border border-green-600/50 font-black py-1.5 rounded-lg text-[10px] uppercase cursor-pointer"
+              >
+                {copiadoPix ? "✅ COPIADO!" : "📋 COPIAR PIX COPIA E COLA"}
+              </button>
+            </div>
+          )}
+
+          {/* Botão ENVIAR COMPROVANTE logo abaixo */}
+          <label className="w-full bg-zinc-900 hover:bg-zinc-800 border-2 border-green-500/70 text-green-400 hover:text-green-300 font-black py-3 px-3 rounded-xl cursor-pointer transition text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 text-center shadow">
+            <span>📤</span>
+            <span>{enviandoComprovantePix ? "ENVIANDO COMPROVANTE..." : "ENVIAR COMPROVANTE"}</span>
+            <input
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  handleUploadComprovanteApi(file);
+                  e.target.value = "";
+                }
+              }}
+            />
+          </label>
+
+          {comprovanteEnviadoAviso && (
+            <div className="bg-green-950/90 border border-green-500 text-green-200 text-[11px] font-bold p-2 rounded-lg text-center">
+              ✅ Comprovante enviado para a sua área no ADM!
+            </div>
+          )}
+        </div>
+
+        <div className="bg-green-950/40 border border-green-800/60 rounded-xl px-3 py-2 text-[11px] text-green-300 font-bold text-center">
+          Envie comprovante e aguarde ADM 5 min
+        </div>
+      </div>
+
+      {/* CAIXA 2: BOTÃO 2 LARANJA - CHECKOUT INTEGRADO INFINITEPAY */}
+      <div className="bg-zinc-950 border-2 border-[#FF6B00]/80 rounded-2xl p-4 flex flex-col justify-between space-y-3 shadow-lg shadow-[#FF6B00]/10">
+        <div className="space-y-2.5">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-black uppercase tracking-wider bg-[#FF6B00]/20 text-[#FF6B00] border border-[#FF6B00]/40 px-2.5 py-0.5 rounded-full">
+              Opção 2 • Checkout Integrado
+            </span>
+            <span className="text-sm font-black text-[#FF6B00]">R$ 10</span>
+          </div>
+
+          <button
+            type="button"
+            disabled={carregandoInfinitePay}
+            onClick={async () => {
+              if (validarPalpitesAntes) {
+                if (!user) {
+                  setPage("loginJogador");
+                  return;
+                }
+                const jogosComPalpite = jogos.filter((j) => escolhasTemp[j.id]);
+                if (jogosComPalpite.length === 0 && meusPalpitesSalvos.length === 0) {
+                  alert("Selecione seus palpites nos jogos da rodada antes de pagar!");
+                  return;
+                }
+                await salvarPalpitesTemporariosSeHouver();
+              }
+              await abrirLinkPagamentoInfinitePay();
+            }}
+            className="w-full bg-[#FF6B00] hover:bg-[#ff7b1a] text-black font-black py-3.5 px-3 rounded-xl cursor-pointer transition text-xs sm:text-sm uppercase tracking-wider shadow-lg shadow-[#FF6B00]/25 flex items-center justify-center gap-1.5 text-center"
+          >
+            <span>⚡</span>
+            <span>
+              {carregandoInfinitePay
+                ? "ABRINDO INFINITEPAY..."
+                : "PAGAR AUTOMÁTICO E LIBERAR NA HORA - R$10"}
+            </span>
+          </button>
+
+          <div className="text-[11px] text-zinc-400 leading-relaxed text-center pt-1">
+            Abre o Checkout Integrado InfinitePay já com seus dados de jogador logado.
+          </div>
+        </div>
+
+        <div className="bg-[#FF6B00]/15 border border-[#FF6B00]/50 rounded-xl px-3 py-2 text-[11px] text-[#FF6B00] font-bold text-center">
+          Liberação automática em 30s, sem cadastro, sem comprovante
+        </div>
       </div>
     </div>
   );
@@ -3911,77 +4266,31 @@ export default function App() {
               );
             })}
 
-            <button
-              type="button"
-              onClick={async () => {
-                if (!user) {
-                  setPage("loginJogador");
-                  return;
-                }
-
-                // Garante que o jogador selecionou pelo menos 1 palpite antes de cobrar
-                const jogosComPalpite = jogos.filter((j) => escolhasTemp[j.id]);
-                if (jogosComPalpite.length === 0) {
-                  alert("Selecione seus palpites nos jogos da rodada antes de finalizar a aposta!");
-                  return;
-                }
-
-                // Verifica se preencheu todos os confrontos
-                const naoPreenchidos = jogos.filter((j) => !escolhasTemp[j.id]);
-                if (naoPreenchidos.length > 0) {
-                  const confirma = confirm(
-                    `Você ainda não palpitou em ${naoPreenchidos.length} jogo(s). Deseja salvar assim mesmo?`
-                  );
-                  if (!confirma) return;
-                }
-
-                const jaPago =
-                  !modoNovaAposta &&
-                  Boolean(
-                    isDepositoConfirmado ||
-                      user.status_pagamento === "pago" ||
-                      user.aprovado === true ||
-                      user.statusPagamento === "APROVADO"
-                  );
-
-                const novosPalpites: Palpite[] = jogos
-                  .filter((j) => escolhasTemp[j.id])
-                  .map((j) => ({
-                    jogadorEmail: user!.email,
-                    jogoId: j.id,
-                    escolha: escolhasTemp[j.id],
-                    pago: jaPago,
-                  }));
-
-                const outros = palpites.filter((p) => p.jogadorEmail !== user!.email);
-                const todos = [...outros, ...novosPalpites];
-                setPalpites(todos);
-                localStorage.setItem("elite_palpites_v11", JSON.stringify(todos));
-                setModoNovaAposta(false);
-
-                if (!jaPago) {
-                  abrirLinkPagamentoInfinitePay();
-                  setPage("pagamento");
-                }
-
-                for (const np of novosPalpites) {
-                  await upsertPalpiteInDb(np).catch(() => {});
-                }
-
-                if (jaPago) {
+            {isMinhaApostaAprovada && !modoNovaAposta && (
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!user) {
+                    setPage("loginJogador");
+                    return;
+                  }
+                  const jogosComPalpite = jogos.filter((j) => escolhasTemp[j.id]);
+                  if (jogosComPalpite.length === 0) {
+                    alert("Selecione seus palpites nos jogos da rodada antes de finalizar a aposta!");
+                    return;
+                  }
+                  await salvarPalpitesTemporariosSeHouver();
                   setPage("minhasApostas");
-                  return;
-                }
-              }}
-              className="w-full bg-[#FF6B00] hover:bg-[#ff7b1a] text-black font-black py-4 rounded-xl mt-4 cursor-pointer hover:scale-[1.02] active:scale-[0.98] transition uppercase tracking-wider text-sm shadow-lg shadow-[#FF6B00]/20 flex items-center justify-center gap-2"
-            >
-              <span>⚡</span>
-              <span>
-                {isMinhaApostaAprovada && !modoNovaAposta
-                  ? "SALVAR MEUS PALPITES (PAGAMENTO JÁ CONFIRMADO)"
-                  : `PAGAR AGORA (R$ ${valorCotaNumerico})`}
-              </span>
-            </button>
+                }}
+                className="w-full bg-[#FF6B00] hover:bg-[#ff7b1a] text-black font-black py-4 rounded-xl mt-4 cursor-pointer hover:scale-[1.02] active:scale-[0.98] transition uppercase tracking-wider text-sm shadow-lg shadow-[#FF6B00]/20 flex items-center justify-center gap-2"
+              >
+                <span>⚡</span>
+                <span>SALVAR MEUS PALPITES (PAGAMENTO JÁ CONFIRMADO)</span>
+              </button>
+            )}
+
+            {/* 2 BOTÕES DE PAGAMENTO LADO A LADO EM CAIXAS SEPARADAS */}
+            <BotoesPagamentoDuplo validarPalpitesAntes={true} />
 
             {meusPalpitesSalvos.length > 0 && !modoNovaAposta && (
               <button
@@ -4349,22 +4658,22 @@ export default function App() {
   }
 
   // =========================================================================
-  // 7. TELA DE PAGAMENTO PIX DIRETO (CHAVE ALEATÓRIA INFINITEPAY)
+  // 7. TELA DE PAGAMENTO DO BOLÃO (2 BOTÕES LADO A LADO EM CAIXAS SEPARADAS)
   // =========================================================================
   return (
     <div className="min-h-screen bg-[#0A0A0A] text-white p-6 flex flex-col items-center justify-center">
-      <div className="max-w-md w-full bg-zinc-900 p-6 rounded-2xl border border-zinc-800 text-center shadow-2xl">
+      <div className="max-w-2xl w-full bg-zinc-900 p-6 rounded-2xl border border-zinc-800 text-center shadow-2xl">
         <img
           src={logoBolao}
           alt=""
           className="w-20 h-20 object-contain mx-auto mb-2 drop-shadow-[0_8px_16px_rgba(239,68,68,0.3)] rounded-xl"
         />
         <div className="inline-block border border-[#FF6B00]/30 bg-[#FF6B00]/10 text-[#FF6B00] text-xs font-bold px-4 py-1.5 rounded-full uppercase">
-          PIX DIRETO • CONTA SEPARADA
+          PAGAMENTO DO BOLÃO • R$ {valorCotaNumerico}
         </div>
-        <h2 className="text-3xl font-black mt-4">Pagamento PIX</h2>
+        <h2 className="text-3xl font-black mt-4">Escolha como Pagar</h2>
         <p className="text-zinc-300 text-xs sm:text-sm mt-2 font-bold">
-          PIX vai para InfinitePay - conta separada
+          Pague no PIX Direto enviando comprovante ou no Checkout Automático InfinitePay
         </p>
 
         {/* Contabilizador de Depósito na Tela de Pagamento */}
@@ -4372,39 +4681,8 @@ export default function App() {
           <ContabilizadorDepositosJogador mostrarBotaoDepositar={false} />
         </div>
 
-        {/* CARD DE PAGAMENTO INFINITEPAY */}
-        <div className="mt-6 bg-black p-5 rounded-2xl border border-zinc-800 text-left space-y-4">
-          <div className="flex justify-between items-center border-b border-zinc-900 pb-3">
-            <div>
-              <span className="text-[10px] text-zinc-500 uppercase font-bold block">Valor da Cota:</span>
-              <span className="text-[11px] text-zinc-400">
-                Pagamento via <strong className="text-white">Link InfinitePay</strong>
-              </span>
-            </div>
-            <span className="text-3xl font-black text-[#FF6B00]">R$ {valorCotaNumerico}</span>
-          </div>
-
-          <button
-            type="button"
-            onClick={abrirLinkPagamentoInfinitePay}
-            className="w-full bg-[#FF6B00] hover:bg-[#ff7b1a] text-black font-black py-4 px-4 rounded-xl cursor-pointer transition text-xs sm:text-sm uppercase tracking-wider shadow-lg shadow-[#FF6B00]/25 flex items-center justify-center gap-2"
-          >
-            <span>⚡</span>
-            <span>PAGAR AGORA NA INFINITEPAY (R$ {valorCotaNumerico})</span>
-          </button>
-
-          <div className="pt-2 border-t border-zinc-900 space-y-3 text-center">
-            <button
-              type="button"
-              disabled={confirmandoJaPaguei}
-              onClick={confirmarJaPaguei}
-              className="w-full bg-green-500 hover:bg-green-400 text-black font-black py-4 rounded-xl text-sm uppercase tracking-wider cursor-pointer transition shadow-lg shadow-green-500/30 flex items-center justify-center gap-2"
-            >
-              <span>✅</span>
-              <span>{confirmandoJaPaguei ? "CONFIRMANDO..." : "JÁ PAGUEI"}</span>
-            </button>
-          </div>
-        </div>
+        {/* 2 BOTÕES LADO A LADO EM CAIXAS SEPARADAS */}
+        <BotoesPagamentoDuplo validarPalpitesAntes={false} />
 
         <div className="mt-6 space-y-2">
           <button
