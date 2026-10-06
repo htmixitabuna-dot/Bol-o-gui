@@ -886,6 +886,58 @@ export async function deletePalpiteFromDb(email: string, jogoId: string): Promis
   }
 }
 
+export interface ComprovantePremiacaoItem {
+  id: string;
+  ganhadorNome: string;
+  colocacao: string;
+  valorPago: number;
+  descricao?: string;
+  imagemComprovante: string;
+  dataEnvio: string;
+  timestamp: number;
+}
+
+export async function upsertComprovantePremiacaoInDb(item: ComprovantePremiacaoItem): Promise<void> {
+  const id = String(item.id || '')
+    .replace(/[^a-zA-Z0-9_-]/g, '_')
+    .slice(0, 120);
+  if (!id || !item.imagemComprovante) return;
+  const path = `comprovantes_premiacao/${id}`;
+  const valorNum = Number(item.valorPago);
+  const payload: Record<string, any> = {
+    id,
+    ganhadorNome: String(item.ganhadorNome || 'Ganhador do Bolão').trim().slice(0, 120) || 'Ganhador do Bolão',
+    colocacao: String(item.colocacao || 'Premiação do Bolão').trim().slice(0, 80) || 'Premiação do Bolão',
+    valorPago: !isNaN(valorNum) && valorNum >= 0 ? valorNum : 0,
+    imagemComprovante: String(item.imagemComprovante).slice(0, 900000),
+    dataEnvio: String(item.dataEnvio || new Date().toLocaleDateString('pt-BR')).trim().slice(0, 80) || 'Recente',
+    timestamp: typeof item.timestamp === 'number' && !isNaN(item.timestamp) ? item.timestamp : Date.now(),
+  };
+  if (item.descricao && String(item.descricao).trim()) {
+    payload.descricao = String(item.descricao).trim().slice(0, 200);
+  }
+  try {
+    await setDoc(doc(db, 'comprovantes_premiacao', id), payload);
+    triggerAllListeners();
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+export async function deleteComprovantePremiacaoFromDb(itemId: string): Promise<void> {
+  const id = String(itemId || '')
+    .replace(/[^a-zA-Z0-9_-]/g, '_')
+    .slice(0, 120);
+  if (!id) return;
+  const path = `comprovantes_premiacao/${id}`;
+  try {
+    await deleteDoc(doc(db, 'comprovantes_premiacao', id));
+    triggerAllListeners();
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
+  }
+}
+
 export async function inicializarConfigAdminInDb(): Promise<void> {
   try {
     const ref = doc(db, 'config', 'bolao');

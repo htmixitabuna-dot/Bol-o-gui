@@ -119,6 +119,19 @@ service cloud.firestore {
         (!('id' in data) || (data.id is string && data.id.size() <= 128));
     }
 
+    function isValidComprovantePremiacao(data) {
+      return data.keys().hasAll(['id', 'ganhadorNome', 'colocacao', 'valorPago', 'imagemComprovante', 'dataEnvio', 'timestamp']) &&
+        data.keys().hasOnly(['id', 'ganhadorNome', 'colocacao', 'valorPago', 'descricao', 'imagemComprovante', 'dataEnvio', 'timestamp']) &&
+        data.id is string && data.id.size() >= 1 && data.id.size() <= 120 &&
+        data.ganhadorNome is string && data.ganhadorNome.size() >= 1 && data.ganhadorNome.size() <= 120 &&
+        data.colocacao is string && data.colocacao.size() >= 1 && data.colocacao.size() <= 80 &&
+        data.valorPago is number && data.valorPago >= 0 &&
+        (!('descricao' in data) || (data.descricao is string && data.descricao.size() <= 200)) &&
+        data.imagemComprovante is string && data.imagemComprovante.size() >= 1 && data.imagemComprovante.size() <= 900000 &&
+        data.dataEnvio is string && data.dataEnvio.size() >= 1 && data.dataEnvio.size() <= 80 &&
+        data.timestamp is number;
+    }
+
     match /test/{docId} {
       allow get: if isValidId(docId);
     }
@@ -223,6 +236,24 @@ service cloud.firestore {
           'id'
         ]);
       allow delete: if isValidId(depositoId);
+    }
+
+    match /comprovantes_premiacao/{comprovanteId} {
+      allow get: if isValidId(comprovanteId);
+      allow list: if request.time != null;
+      allow create: if isValidId(comprovanteId) && isValidComprovantePremiacao(incoming());
+      allow update: if isValidId(comprovanteId) && isValidComprovantePremiacao(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'ganhadorNome',
+          'colocacao',
+          'valorPago',
+          'descricao',
+          'imagemComprovante',
+          'dataEnvio',
+          'timestamp'
+        ]);
+      allow delete: if isValidId(comprovanteId);
     }
   }
 }

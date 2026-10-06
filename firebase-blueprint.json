@@ -328,6 +328,55 @@
         }
       },
       "required": ["userId", "valor", "status", "chaveDestino", "createdAt"]
+    },
+    "ComprovantePremiacao": {
+      "title": "ComprovantePremiacao",
+      "description": "Comprovante de pagamento da premiação enviado pelo ADM na Área de Transparência para conferência de todos os jogadores.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Identificador único do comprovante de premiação.",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "ganhadorNome": {
+          "type": "string",
+          "description": "Nome do jogador vencedor que recebeu o prêmio.",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "colocacao": {
+          "type": "string",
+          "description": "Colocação do ganhador (ex: 1º Lugar, 2º Lugar, 3º Lugar).",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "valorPago": {
+          "type": "number",
+          "description": "Valor pago da premiação em reais."
+        },
+        "descricao": {
+          "type": "string",
+          "description": "Observação ou identificação da rodada da premiação.",
+          "maxLength": 200
+        },
+        "imagemComprovante": {
+          "type": "string",
+          "description": "Imagem do comprovante de pagamento PIX em base64.",
+          "maxLength": 900000
+        },
+        "dataEnvio": {
+          "type": "string",
+          "description": "Data e horário formatados do envio do comprovante pelo ADM.",
+          "maxLength": 80
+        },
+        "timestamp": {
+          "type": "number",
+          "description": "Timestamp numérico do envio para ordenação."
+        }
+      },
+      "required": ["id", "ganhadorNome", "colocacao", "valorPago", "imagemComprovante", "dataEnvio", "timestamp"]
     }
   },
   "firestore": {
@@ -354,6 +403,10 @@
     "/depositos/{depositoId}": {
       "schema": "Deposito",
       "description": "Coleção de depósitos PIX diretos confirmados."
+    },
+    "/comprovantes_premiacao/{comprovanteId}": {
+      "schema": "ComprovantePremiacao",
+      "description": "Coleção pública de comprovantes de pagamento da premiação enviados pelo ADM para transparência."
     }
   }
 }

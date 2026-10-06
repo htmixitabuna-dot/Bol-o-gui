@@ -26,6 +26,9 @@ import {
   deleteJogoFromDb,
   upsertPalpiteInDb,
   deletePalpiteFromDb,
+  ComprovantePremiacaoItem,
+  upsertComprovantePremiacaoInDb,
+  deleteComprovantePremiacaoFromDb,
   saveConfigInDb,
   inicializarConfigAdminInDb,
   compressImageToDataUrl,
@@ -263,6 +266,24 @@ export default function App() {
   const [linkSalvoAviso, setLinkSalvoAviso] = useState(false);
   const [avisoAdm, setAvisoAdm] = useState("");
 
+  // Área de Transparência (Comprovantes de Pagamento da Premiação enviados pelo ADM para todos os jogadores)
+  const [comprovantesPremiacao, setComprovantesPremiacao] = useState<ComprovantePremiacaoItem[]>(() => {
+    try {
+      const saved = localStorage.getItem("elite_comprovantes_premiacao_v11");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [ganhadorPremiacaoNome, setGanhadorPremiacaoNome] = useState("");
+  const [colocacaoPremiacao, setColocacaoPremiacao] = useState("🥇 1º Lugar (50%)");
+  const [valorPremiacaoPago, setValorPremiacaoPago] = useState("");
+  const [descricaoPremiacao, setDescricaoPremiacao] = useState("");
+  const [imgComprovantePremiacao, setImgComprovantePremiacao] = useState("");
+  const [enviandoComprovantePremiacao, setEnviandoComprovantePremiacao] = useState(false);
+  const [modalTransparenciaAberto, setModalTransparenciaAberto] = useState(false);
+  const [comprovantePremiacaoZoom, setComprovantePremiacaoZoom] = useState<ComprovantePremiacaoItem | null>(null);
+
   const mostrarAvisoAdm = (msg: string) => {
     setAvisoAdm(msg);
     setTimeout(() => setAvisoAdm(""), 4000);
@@ -486,12 +507,30 @@ export default function App() {
       () => {}
     );
 
+    const unsubComprovantesPremiacao = onSnapshot(
+      collection(db, "comprovantes_premiacao"),
+      (snapshot) => {
+        setDbConectado(true);
+        const listaPrem: ComprovantePremiacaoItem[] = [];
+        snapshot.forEach((docSnap) => {
+          listaPrem.push(docSnap.data() as ComprovantePremiacaoItem);
+        });
+        listaPrem.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+        setComprovantesPremiacao(listaPrem);
+        localStorage.setItem("elite_comprovantes_premiacao_v11", JSON.stringify(listaPrem));
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.LIST, "comprovantes_premiacao");
+      }
+    );
+
     return () => {
       unsubJogadores();
       unsubJogos();
       unsubPalpites();
       unsubDepositos();
       unsubConfig();
+      unsubComprovantesPremiacao();
     };
   }, []);
 
@@ -1416,6 +1455,81 @@ export default function App() {
     mostrarAvisoAdm(`🗑️ Jogador "${nome}" foi excluído do banco de dados! Só voltará se fizer um novo cadastro.`);
   };
 
+  const enviarComprovantePremiacaoAdm = async () => {
+    const nomeGanhadorLimpo = ganhadorPremiacaoNome.trim();
+    if (!nomeGanhadorLimpo) {
+      alert("Informe o nome do ganhador que recebeu a premiação!");
+      return;
+    }
+    if (!imgComprovantePremiacao) {
+      alert("Anexe a imagem/foto do comprovante PIX de pagamento da premiação!");
+      return;
+    }
+
+    const valorPadraoColocacao =
+      colocacaoPremiacao.includes("1º")
+        ? premio1
+        : colocacaoPremiacao.includes("2º")
+        ? premio2
+        : colocacaoPremiacao.includes("3º")
+        ? premio3
+        : premio80;
+
+    const valorDigitado = parseFloat(String(valorPremiacaoPago).replace(",", "."));
+    const valorFinal = !isNaN(valorDigitado) && valorDigitado > 0 ? valorDigitado : Number(valorPadraoColocacao.toFixed(2));
+
+    setEnviandoComprovantePremiacao(true);
+    try {
+      const agora = Date.now();
+      const dataHoraEnvio = `${new Date().toLocaleDateString("pt-BR")} às ${new Date().toLocaleTimeString("pt-BR", {
+        hour: "2-digit",
+        minute: "2-digit",
+      })}`;
+
+      const novoComp: ComprovantePremiacaoItem = {
+        id: `prem_${agora}_${Math.random().toString(36).slice(2, 6)}`,
+        ganhadorNome: nomeGanhadorLimpo,
+        colocacao: colocacaoPremiacao,
+        valorPago: valorFinal,
+        descricao: descricaoPremiacao.trim() || "Comprovante oficial de pagamento da premiação enviado pelo ADM",
+        imagemComprovante: imgComprovantePremiacao,
+        dataEnvio: dataHoraEnvio,
+        timestamp: agora,
+      };
+
+      const novaLista = [novoComp, ...comprovantesPremiacao];
+      setComprovantesPremiacao(novaLista);
+      localStorage.setItem("elite_comprovantes_premiacao_v11", JSON.stringify(novaLista));
+
+      await upsertComprovantePremiacaoInDb(novoComp);
+
+      setGanhadorPremiacaoNome("");
+      setValorPremiacaoPago("");
+      setDescricaoPremiacao("");
+      setImgComprovantePremiacao("");
+
+      mostrarAvisoAdm(
+        `🛡️ Comprovante de premiação de "${nomeGanhadorLimpo}" enviado! Todos os jogadores já podem conferir na Área de Transparência.`
+      );
+      alert(
+        `✅ Comprovante de pagamento da premiação enviado com sucesso!\nEle já chegou na Área de Transparência de todos os jogadores para conferência.`
+      );
+    } finally {
+      setEnviandoComprovantePremiacao(false);
+    }
+  };
+
+  const excluirComprovantePremiacaoAdm = async (id: string) => {
+    const novaLista = comprovantesPremiacao.filter((c) => c.id !== id);
+    setComprovantesPremiacao(novaLista);
+    localStorage.setItem("elite_comprovantes_premiacao_v11", JSON.stringify(novaLista));
+    await deleteComprovantePremiacaoFromDb(id).catch(() => {});
+    if (comprovantePremiacaoZoom?.id === id) {
+      setComprovantePremiacaoZoom(null);
+    }
+    mostrarAvisoAdm("🗑️ Comprovante da Área de Transparência removido.");
+  };
+
   const salvarValorCota = async () => {
     const valorDigitado = parseFloat(String(config.valor).replace(",", "."));
     if (isNaN(valorDigitado) || valorDigitado <= 0) {
@@ -2107,6 +2221,250 @@ export default function App() {
     </div>
   );
 
+  // Painel da Área de Transparência visível automaticamente para todos os jogadores
+  const PainelTransparenciaJogadores = () => (
+    <div className="mt-4 bg-gradient-to-b from-emerald-950/50 via-zinc-900 to-zinc-950 border-2 border-emerald-500/60 p-4 rounded-2xl space-y-3 shadow-xl">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-800 pb-2.5">
+        <div className="flex items-center gap-2.5">
+          <div className="w-9 h-9 rounded-xl bg-emerald-500/20 border border-emerald-500/60 flex items-center justify-center text-lg shrink-0">
+            🛡️
+          </div>
+          <div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-[9px] font-black uppercase tracking-wider bg-emerald-500 text-black px-2 py-0.5 rounded">
+                100% TRANSPARÊNCIA
+              </span>
+              <span className="text-[10px] text-emerald-400 font-bold">
+                • Conferência Oficial dos Jogadores
+              </span>
+            </div>
+            <h3 className="text-xs sm:text-sm font-black uppercase tracking-wider text-white mt-0.5">
+              Área de Transparência • Pagamento da Premiação ({comprovantesPremiacao.length})
+            </h3>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => setModalTransparenciaAberto(true)}
+          className="bg-emerald-500 hover:bg-emerald-400 text-black font-black px-3 py-1.5 rounded-xl text-[10px] uppercase tracking-wider cursor-pointer transition shrink-0 shadow"
+        >
+          🔍 Ver Todos ({comprovantesPremiacao.length})
+        </button>
+      </div>
+
+      <p className="text-[11px] text-zinc-300 leading-relaxed">
+        Assim que o ADM realiza o pagamento dos ganhadores, os comprovantes PIX da premiação aparecem automaticamente aqui para conferência de todos os participantes.
+      </p>
+
+      {comprovantesPremiacao.length === 0 ? (
+        <div className="bg-black/60 border border-dashed border-zinc-800 rounded-xl p-3.5 text-center text-xs text-zinc-400">
+          ⏳ Aguardando envio dos comprovantes de pagamento da premiação desta rodada pelo ADM.
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+          {comprovantesPremiacao.slice(0, 4).map((comp) => (
+            <div
+              key={comp.id}
+              className="bg-black/80 border border-emerald-500/40 hover:border-emerald-400 rounded-xl p-3 flex items-center justify-between gap-3 transition"
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                <button
+                  type="button"
+                  onClick={() => setComprovantePremiacaoZoom(comp)}
+                  className="relative w-14 h-14 rounded-lg overflow-hidden border border-emerald-500/60 bg-zinc-900 shrink-0 cursor-pointer group"
+                  title="Clique para ampliar o comprovante"
+                >
+                  <img
+                    src={comp.imagemComprovante}
+                    alt={comp.ganhadorNome}
+                    className="w-full h-full object-cover"
+                  />
+                  <div className="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition text-xs text-white font-bold">
+                    🔍
+                  </div>
+                </button>
+                <div className="min-w-0">
+                  <span className="text-[9px] font-black uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-1.5 py-0.5 rounded inline-block">
+                    {comp.colocacao}
+                  </span>
+                  <div className="font-black text-xs text-white truncate mt-0.5">
+                    🏆 {comp.ganhadorNome}
+                  </div>
+                  <div className="text-xs font-black text-emerald-400">
+                    Prêmio Pago: R$ {Number(comp.valorPago || 0).toFixed(2).replace(".", ",")}
+                  </div>
+                  <div className="text-[10px] text-zinc-500 truncate">{comp.dataEnvio}</div>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setComprovantePremiacaoZoom(comp)}
+                className="bg-emerald-950 hover:bg-emerald-900 text-emerald-300 border border-emerald-600/60 font-black px-2.5 py-2 rounded-lg text-[10px] uppercase cursor-pointer shrink-0 transition"
+              >
+                🔍 Conferir
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
+  // Modal Completo da Área de Transparência + Zoom de Comprovante de Premiação
+  const ModalAreaTransparencia = () => (
+    <>
+      {modalTransparenciaAberto && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 text-left">
+          <div className="bg-zinc-900 border-2 border-emerald-500/70 rounded-3xl max-w-2xl w-full p-5 max-h-[88vh] overflow-y-auto space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+              <div className="flex items-center gap-2.5">
+                <span className="text-2xl">🛡️</span>
+                <div>
+                  <h3 className="text-base sm:text-lg font-black text-white uppercase">
+                    Área de Transparência • Premiações Pagas
+                  </h3>
+                  <p className="text-xs text-emerald-400 font-bold">
+                    Comprovantes oficiais enviados pelo ADM para simples conferência de todos os jogadores
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setModalTransparenciaAberto(false)}
+                className="text-zinc-400 hover:text-white text-lg font-black p-1 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {comprovantesPremiacao.length === 0 ? (
+              <div className="bg-black/60 border border-dashed border-zinc-800 rounded-2xl p-8 text-center space-y-2">
+                <div className="text-3xl">🛡️</div>
+                <div className="text-sm font-black text-white">
+                  Nenhum comprovante de premiação publicado ainda
+                </div>
+                <p className="text-xs text-zinc-400 max-w-md mx-auto">
+                  Assim que o ADM enviar os comprovantes de pagamento da premiação dos vencedores, eles aparecerão aqui instantaneamente para todos os jogadores conferirem.
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {comprovantesPremiacao.map((comp) => (
+                  <div
+                    key={comp.id}
+                    className="bg-black border border-emerald-500/40 rounded-2xl p-3.5 space-y-3 flex flex-col justify-between"
+                  >
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[10px] font-black uppercase bg-emerald-500 text-black px-2 py-0.5 rounded">
+                          {comp.colocacao}
+                        </span>
+                        <span className="text-[10px] text-zinc-400 font-mono">{comp.dataEnvio}</span>
+                      </div>
+
+                      <div>
+                        <div className="text-sm font-black text-white">🏆 Ganhador: {comp.ganhadorNome}</div>
+                        <div className="text-base font-black text-emerald-400">
+                          Valor Pago: R$ {Number(comp.valorPago || 0).toFixed(2).replace(".", ",")}
+                        </div>
+                        {comp.descricao && (
+                          <div className="text-[11px] text-zinc-400 mt-0.5">{comp.descricao}</div>
+                        )}
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => setComprovantePremiacaoZoom(comp)}
+                        className="w-full h-44 bg-zinc-950 border border-zinc-800 rounded-xl overflow-hidden flex items-center justify-center cursor-pointer group relative"
+                      >
+                        <img
+                          src={comp.imagemComprovante}
+                          alt={`Comprovante ${comp.ganhadorNome}`}
+                          className="w-full h-full object-contain"
+                        />
+                        <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition flex items-center justify-center text-xs font-black text-white">
+                          🔍 CLIQUE PARA AMPLIAR COMPROVANTE
+                        </div>
+                      </button>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setComprovantePremiacaoZoom(comp)}
+                      className="w-full bg-emerald-600 hover:bg-emerald-500 text-black font-black py-2.5 rounded-xl text-xs uppercase cursor-pointer transition"
+                    >
+                      🔍 Ampliar Comprovante p/ Conferência
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={() => setModalTransparenciaAberto(false)}
+              className="w-full bg-zinc-800 hover:bg-zinc-700 text-white font-bold py-3 rounded-xl text-xs uppercase cursor-pointer transition"
+            >
+              Fechar Área de Transparência
+            </button>
+          </div>
+        </div>
+      )}
+
+      {comprovantePremiacaoZoom && (
+        <div className="fixed inset-0 z-[60] bg-black/90 backdrop-blur-sm flex items-center justify-center p-4 text-left">
+          <div className="bg-zinc-900 border-2 border-emerald-500 rounded-3xl max-w-lg w-full p-5 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+              <div>
+                <span className="text-[10px] font-black uppercase bg-emerald-500 text-black px-2 py-0.5 rounded">
+                  {comprovantePremiacaoZoom.colocacao}
+                </span>
+                <h3 className="text-base font-black text-white mt-1">
+                  🏆 Ganhador: {comprovantePremiacaoZoom.ganhadorNome}
+                </h3>
+                <div className="text-xs font-black text-emerald-400">
+                  Valor Pago: R$ {Number(comprovantePremiacaoZoom.valorPago || 0).toFixed(2).replace(".", ",")} •{" "}
+                  <span className="text-zinc-400 font-normal">{comprovantePremiacaoZoom.dataEnvio}</span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setComprovantePremiacaoZoom(null)}
+                className="text-zinc-400 hover:text-white text-lg font-black p-1 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {comprovantePremiacaoZoom.descricao && (
+              <div className="text-xs text-zinc-300 bg-black/60 border border-zinc-800 p-2.5 rounded-xl">
+                {comprovantePremiacaoZoom.descricao}
+              </div>
+            )}
+
+            <div className="bg-black rounded-2xl p-2 max-h-[60vh] overflow-auto flex items-center justify-center border border-zinc-800">
+              <img
+                src={comprovantePremiacaoZoom.imagemComprovante}
+                alt="Comprovante da Premiação"
+                className="w-full h-auto object-contain max-h-[56vh] rounded-lg"
+              />
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setComprovantePremiacaoZoom(null)}
+              className="w-full bg-emerald-500 hover:bg-emerald-400 text-black font-black py-3 rounded-xl text-xs uppercase cursor-pointer transition"
+            >
+              ✓ Fechar Conferência
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+
   // Dados das apostas salvas do jogador conectado
   const meusPalpitesSalvos = user
     ? palpites.filter((p) => (p.jogadorEmail || "").toLowerCase() === (user.email || "").toLowerCase())
@@ -2568,6 +2926,7 @@ export default function App() {
           </div>
           <div className="text-zinc-600">© 2026 Bolões Elite • Todos os direitos reservados</div>
         </footer>
+        <ModalAreaTransparencia />
 
         {showTermosModal && (
           <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 text-left">
@@ -3475,6 +3834,241 @@ export default function App() {
                   </div>
                 );
               })}
+            </div>
+          )}
+        </div>
+
+        {/* ================================================================= */}
+        {/* SEÇÃO 2.5: ÁREA DE TRANSPARÊNCIA - ENVIAR COMPROVANTES DA PREMIAÇÃO */}
+        {/* ================================================================= */}
+        <div className="bg-zinc-900 p-4 rounded-xl border-2 border-emerald-500/60 space-y-4 shadow-xl">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-800 pb-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-black uppercase tracking-wider bg-emerald-500 text-black px-2 py-0.5 rounded">
+                  TRANSPARÊNCIA P/ TODOS OS JOGADORES
+                </span>
+                <span className="text-[10px] text-emerald-400 font-bold">
+                  ⚡ Chega na hora na tela de todos os jogadores
+                </span>
+              </div>
+              <h3 className="font-black text-sm sm:text-base text-white flex items-center gap-2 mt-1">
+                <span>🛡️</span> ÁREA DE TRANSPARÊNCIA: COMPROVANTES DE PAGAMENTO DA PREMIAÇÃO
+              </h3>
+              <p className="text-[11px] text-zinc-400">
+                Envie aqui o comprovante PIX do pagamento do prêmio dos ganhadores. Todos os jogadores recebem imediatamente para simples conferência!
+              </p>
+            </div>
+            <span className="text-[10px] bg-black border border-emerald-500/50 text-emerald-400 font-black px-2.5 py-1 rounded-lg shrink-0">
+              {comprovantesPremiacao.length} Comprovante(s) Publicado(s)
+            </span>
+          </div>
+
+          {/* Atalho rápido para selecionar ganhador direto do Ranking */}
+          {rankingGanhadores.length > 0 && (
+            <div className="bg-black/60 border border-zinc-800 p-3 rounded-xl space-y-2">
+              <div className="text-[10px] font-black uppercase text-emerald-400">
+                ⚡ Selecionar Ganhador Rápido do Ranking (1 Clique):
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {rankingGanhadores.slice(0, 5).map((jg, i) => {
+                  const colSugerida =
+                    i === 0
+                      ? "🥇 1º Lugar (50%)"
+                      : i === 1
+                      ? "🥈 2º Lugar (30%)"
+                      : i === 2
+                      ? "🥉 3º Lugar (20%)"
+                      : "🏆 Premiação do Bolão";
+                  const valSugerido =
+                    i === 0 ? premio1 : i === 1 ? premio2 : i === 2 ? premio3 : premio80;
+
+                  return (
+                    <button
+                      key={`sel_ganhador_${jg.email || i}`}
+                      type="button"
+                      onClick={() => {
+                        setGanhadorPremiacaoNome(jg.nome);
+                        setColocacaoPremiacao(colSugerida);
+                        setValorPremiacaoPago(valSugerido > 0 ? valSugerido.toFixed(2) : "");
+                      }}
+                      className="text-[11px] bg-zinc-900 hover:bg-emerald-950 border border-zinc-700 hover:border-emerald-500 text-white px-2.5 py-1.5 rounded-lg font-bold cursor-pointer transition flex items-center gap-1.5"
+                    >
+                      <span className="text-emerald-400 font-black">{i + 1}º</span>
+                      <span>{jg.nome}</span>
+                      <span className="text-[10px] text-zinc-400">({jg.pontos} pts)</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Formulário de Envio do Comprovante da Premiação */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div>
+              <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1">
+                Nome do Ganhador
+              </label>
+              <input
+                value={ganhadorPremiacaoNome}
+                onChange={(e) => setGanhadorPremiacaoNome(e.target.value)}
+                placeholder="Ex: Carlos Silva"
+                className="w-full bg-black border border-zinc-800 p-2.5 rounded-lg text-xs text-white font-bold outline-none focus:border-emerald-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1">
+                Colocação / Prêmio
+              </label>
+              <select
+                value={colocacaoPremiacao}
+                onChange={(e) => {
+                  const col = e.target.value;
+                  setColocacaoPremiacao(col);
+                  if (col.includes("1º") && premio1 > 0) setValorPremiacaoPago(premio1.toFixed(2));
+                  else if (col.includes("2º") && premio2 > 0) setValorPremiacaoPago(premio2.toFixed(2));
+                  else if (col.includes("3º") && premio3 > 0) setValorPremiacaoPago(premio3.toFixed(2));
+                }}
+                className="w-full bg-black border border-zinc-800 p-2.5 rounded-lg text-xs text-white font-bold outline-none focus:border-emerald-500"
+              >
+                <option value="🥇 1º Lugar (50%)">🥇 1º Lugar (50%)</option>
+                <option value="🥈 2º Lugar (30%)">🥈 2º Lugar (30%)</option>
+                <option value="🥉 3º Lugar (20%)">🥉 3º Lugar (20%)</option>
+                <option value="🏆 Premiação Geral / Rateio">🏆 Premiação Geral / Rateio</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1">
+                Valor Pago no PIX (R$)
+              </label>
+              <input
+                value={valorPremiacaoPago}
+                onChange={(e) => setValorPremiacaoPago(e.target.value)}
+                placeholder={`Ex: ${premio1 > 0 ? premio1.toFixed(2) : "80.00"}`}
+                className="w-full bg-black border border-zinc-800 p-2.5 rounded-lg text-xs text-emerald-400 font-black outline-none focus:border-emerald-500"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-center">
+            <div>
+              <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1">
+                Observação / Identificação da Rodada (Opcional)
+              </label>
+              <input
+                value={descricaoPremiacao}
+                onChange={(e) => setDescricaoPremiacao(e.target.value)}
+                placeholder="Ex: Pagamento PIX Premiação Rodada Brasileirão"
+                className="w-full bg-black border border-zinc-800 p-2.5 rounded-lg text-xs text-white outline-none focus:border-emerald-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[10px] uppercase font-bold text-emerald-400 mb-1">
+                📎 Anexar Foto/Print do Comprovante PIX da Premiação:
+              </label>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => handleFile(e.target.files?.[0], setImgComprovantePremiacao)}
+                className="w-full text-xs text-zinc-300 file:mr-2 file:py-2 file:px-3 file:rounded-lg file:border-0 file:text-[10px] file:font-black file:bg-emerald-500 file:text-black cursor-pointer bg-black border border-zinc-800 p-1.5 rounded-lg"
+              />
+            </div>
+          </div>
+
+          {imgComprovantePremiacao && (
+            <div className="bg-black/80 border border-emerald-500/50 p-3 rounded-xl flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <img
+                  src={imgComprovantePremiacao}
+                  alt="Prévia do Comprovante"
+                  className="w-16 h-16 object-cover rounded-lg border border-emerald-500"
+                />
+                <div className="text-xs">
+                  <div className="font-black text-emerald-400">✅ Imagem do comprovante carregada!</div>
+                  <div className="text-[11px] text-zinc-400">
+                    Clique no botão abaixo para enviar para a Área de Transparência de todos os jogadores.
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setImgComprovantePremiacao("")}
+                className="text-xs text-red-400 hover:text-red-300 font-bold px-2.5 py-1 rounded border border-red-800/60 cursor-pointer"
+              >
+                Remover Imagem
+              </button>
+            </div>
+          )}
+
+          <button
+            type="button"
+            disabled={enviandoComprovantePremiacao}
+            onClick={enviarComprovantePremiacaoAdm}
+            className="w-full bg-emerald-500 hover:bg-emerald-400 disabled:bg-zinc-800 text-black font-black py-3.5 px-4 rounded-xl cursor-pointer transition uppercase text-xs sm:text-sm tracking-wider shadow-lg shadow-emerald-500/20 flex items-center justify-center gap-2"
+          >
+            <span>📤</span>
+            <span>
+              {enviandoComprovantePremiacao
+                ? "ENVIANDO PARA TODOS OS JOGADORES..."
+                : "ENVIAR COMPROVANTE DE PREMIAÇÃO P/ TODOS OS JOGADORES"}
+            </span>
+          </button>
+
+          {/* Lista de comprovantes de premiação já enviados */}
+          {comprovantesPremiacao.length > 0 && (
+            <div className="pt-3 border-t border-zinc-800 space-y-2.5">
+              <div className="text-[11px] font-black uppercase text-zinc-300">
+                📋 Comprovantes de Premiação Visíveis para Todos os Jogadores ({comprovantesPremiacao.length}):
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                {comprovantesPremiacao.map((comp) => (
+                  <div
+                    key={comp.id}
+                    className="bg-black/80 border border-zinc-800 rounded-xl p-3 flex items-center justify-between gap-2.5 text-xs"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <img
+                        src={comp.imagemComprovante}
+                        alt={comp.ganhadorNome}
+                        onClick={() => setComprovantePremiacaoZoom(comp)}
+                        className="w-12 h-12 rounded-lg object-cover border border-emerald-500/50 cursor-pointer shrink-0"
+                      />
+                      <div className="min-w-0">
+                        <span className="text-[9px] font-black uppercase bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded">
+                          {comp.colocacao}
+                        </span>
+                        <div className="font-bold text-white truncate mt-0.5">{comp.ganhadorNome}</div>
+                        <div className="text-emerald-400 font-black">
+                          R$ {Number(comp.valorPago || 0).toFixed(2).replace(".", ",")} •{" "}
+                          <span className="text-[10px] text-zinc-500 font-normal">{comp.dataEnvio}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setComprovantePremiacaoZoom(comp)}
+                        className="bg-zinc-800 hover:bg-zinc-700 text-emerald-300 px-2.5 py-1.5 rounded-lg text-[10px] font-bold cursor-pointer"
+                      >
+                        🔍 Ver
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => excluirComprovantePremiacaoAdm(comp.id)}
+                        className="bg-red-950/70 hover:bg-red-900 text-red-300 border border-red-800/70 px-2.5 py-1.5 rounded-lg text-[10px] font-bold cursor-pointer"
+                        title="Excluir comprovante da Área de Transparência"
+                      >
+                        🗑️
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>
@@ -4431,6 +5025,7 @@ export default function App() {
             </div>
           </div>
         )}
+        <ModalAreaTransparencia />
       </div>
     );
   }
@@ -4582,6 +5177,9 @@ export default function App() {
 
         {/* Contabilizador de Depósito em Tempo Real na Área do Jogador */}
         <ContabilizadorDepositosJogador mostrarBotaoDepositar={true} />
+
+        {/* Área de Transparência em Tempo Real (Comprovantes de Premiação enviados pelo ADM) */}
+        <PainelTransparenciaJogadores />
 
         {/* Área Minhas Apostas (exibida automaticamente quando o jogador já selecionou seus times / ADM aprovou) */}
         {meusPalpitesSalvos.length > 0 && !modoNovaAposta && <AreaMinhasApostas modoCompacto={true} />}
@@ -4951,6 +5549,7 @@ export default function App() {
           </div>
         )}
         <ModalPixDireto />
+        <ModalAreaTransparencia />
       </div>
     );
   }
@@ -4999,6 +5598,8 @@ export default function App() {
 
         <AreaMinhasApostas modoCompacto={false} />
 
+        <PainelTransparenciaJogadores />
+
         <div className="space-y-2 pt-2">
           <button
             type="button"
@@ -5024,6 +5625,7 @@ export default function App() {
             </button>
           </div>
         </div>
+        <ModalAreaTransparencia />
       </div>
     );
   }
@@ -5057,6 +5659,9 @@ export default function App() {
 
         {/* Contabilizador de Depósito também visível no Ranking */}
         <ContabilizadorDepositosJogador mostrarBotaoDepositar={true} />
+
+        {/* Área de Transparência também visível no Ranking */}
+        <PainelTransparenciaJogadores />
 
         <div className="space-y-2.5">
           {rankingGanhadores.length === 0 ? (
@@ -5133,6 +5738,7 @@ export default function App() {
           )}
         </div>
         <ModalPixDireto />
+        <ModalAreaTransparencia />
       </div>
     );
   }
