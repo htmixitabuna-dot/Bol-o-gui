@@ -1,20 +1,11 @@
-import { initializeApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
-import {
-  getFirestore,
-  doc,
-  getDoc,
-  getDocFromServer,
-  collection,
-  onSnapshot,
-  setDoc,
-  deleteDoc,
-} from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
-const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
-export const auth = getAuth(app);
+const PROJECT_ID = firebaseConfig.projectId || 'gen-lang-client-0929605804';
+const DATABASE_ID = firebaseConfig.firestoreDatabaseId || 'ai-studio-bologui-41191dbc-bc23-4859-bc28-074d5c8a833c';
+const BASE_URL = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/${DATABASE_ID}/documents`;
+
+export const db = { projectId: PROJECT_ID, databaseId: DATABASE_ID };
+export const auth: { currentUser: any } = { currentUser: null };
 
 export enum OperationType {
   CREATE = 'create',
@@ -51,17 +42,223 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
       emailVerified: auth.currentUser?.emailVerified,
       isAnonymous: auth.currentUser?.isAnonymous,
       tenantId: auth.currentUser?.tenantId,
-      providerInfo:
-        auth.currentUser?.providerData?.map((provider) => ({
-          providerId: provider.providerId,
-          email: provider.email,
-        })) || [],
+      providerInfo: [],
     },
     operationType,
     path,
   };
   console.error('Firestore Error: ', JSON.stringify(errInfo));
   throw new Error(JSON.stringify(errInfo));
+}
+
+// Helpers para serializar e desserializar documentos da REST API do Firestore
+function toFirestoreValue(val: any): any {
+  if (val === null || val === undefined) return { nullValue: null };
+  if (typeof val === 'boolean') return { booleanValue: val };
+  if (typeof val === 'number') {
+    if (Number.isInteger(val)) return { integerValue: String(val) };
+    return { doubleValue: val };
+  }
+  if (typeof val === 'string') return { stringValue: val };
+  if (Array.isArray(val)) {
+    return { arrayValue: { values: val.map(toFirestoreValue) } };
+  }
+  if (typeof val === 'object') {
+    const fields: Record<string, any> = {};
+    for (const [k, v] of Object.entries(val)) {
+      if (v !== undefined) {
+        fields[k] = toFirestoreValue(v);
+      }
+    }
+    return { mapValue: { fields } };
+  }
+  return { stringValue: String(val) };
+}
+
+function fromFirestoreValue(field: any): any {
+  if (!field || typeof field !== 'object') return undefined;
+  if ('stringValue' in field) return field.stringValue;
+  if ('booleanValue' in field) return Boolean(field.booleanValue);
+  if ('integerValue' in field) return Number(field.integerValue);
+  if ('doubleValue' in field) return Number(field.doubleValue);
+  if ('nullValue' in field) return null;
+  if ('timestampValue' in field) return field.timestampValue;
+  if ('arrayValue' in field) {
+    const vals = field.arrayValue?.values || [];
+    return vals.map(fromFirestoreValue);
+  }
+  if ('mapValue' in field) {
+    return fromFirestoreFields(field.mapValue?.fields || {});
+  }
+  return undefined;
+}
+
+function fromFirestoreFields(fields: Record<string, any>): Record<string, any> {
+  const out: Record<string, any> = {};
+  if (!fields) return out;
+  for (const [k, v] of Object.entries(fields)) {
+    out[k] = fromFirestoreValue(v);
+  }
+  return out;
+}
+
+export interface CollectionRef {
+  type: 'collection';
+  path: string;
+}
+
+export interface DocRef {
+  type: 'doc';
+  path: string;
+  id: string;
+}
+
+export function collection(_db: any, colPath: string): CollectionRef {
+  return { type: 'collection', path: colPath.replace(/^\/+|\/+$/g, '') };
+}
+
+export function doc(_db: any, ...segments: string[]): DocRef {
+  const clean = segments.map((s) => String(s || '').replace(/^\/+|\/+$/g, '')).filter(Boolean);
+  const fullPath = clean.join('/');
+  const id = clean[clean.length - 1] || '';
+  return { type: 'doc', path: fullPath, id };
+}
+
+export async function getDoc(ref: DocRef): Promise<{
+  id: string;
+  exists: () => boolean;
+  data: () => any;
+}> {
+  const resp = await fetch(`${BASE_URL}/${ref.path}`);
+  if (resp.status === 404) {
+    return {
+      id: ref.id,
+      exists: () => false,
+      data: () => undefined,
+    };
+  }
+  if (!resp.ok) {
+    throw new Error(`HTTP ${resp.status} on GET ${ref.path}`);
+  }
+  const raw = await resp.json();
+  const parsed = fromFirestoreFields(raw?.fields || {});
+  return {
+    id: ref.id,
+    exists: () => Boolean(raw && raw.fields),
+    data: () => parsed,
+  };
+}
+
+export async function getDocFromServer(ref: DocRef) {
+  return getDoc(ref);
+}
+
+export async function setDoc(ref: DocRef, data: Record<string, any>): Promise<void> {
+  const fields: Record<string, any> = {};
+  for (const [k, v] of Object.entries(data)) {
+    if (v !== undefined) {
+      fields[k] = toFirestoreValue(v);
+    }
+  }
+  const resp = await fetch(`${BASE_URL}/${ref.path}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fields }),
+  });
+  if (!resp.ok) {
+    const txt = await resp.text().catch(() => '');
+    throw new Error(`Firestore PATCH ${ref.path} failed (${resp.status}): ${txt}`);
+  }
+}
+
+export async function deleteDoc(ref: DocRef): Promise<void> {
+  const resp = await fetch(`${BASE_URL}/${ref.path}`, {
+    method: 'DELETE',
+  });
+  if (!resp.ok && resp.status !== 404) {
+    throw new Error(`Firestore DELETE ${ref.path} failed (${resp.status})`);
+  }
+}
+
+// Listeners ativos para notificar imediatamente após escritas locais + polling leve
+const activeListeners = new Set<() => void>();
+
+function triggerAllListeners() {
+  activeListeners.forEach((fn) => {
+    try {
+      fn();
+    } catch {
+      // ignore
+    }
+  });
+}
+
+export function onSnapshot(
+  ref: CollectionRef | DocRef,
+  onNext: (snap: any) => void,
+  onError?: (err: Error) => void
+): () => void {
+  let cancelled = false;
+  let lastHash = '';
+
+  const poll = async () => {
+    if (cancelled) return;
+    try {
+      if (ref.type === 'doc') {
+        const snap = await getDoc(ref);
+        if (cancelled) return;
+        const hash = JSON.stringify({ e: snap.exists(), d: snap.data() });
+        if (hash !== lastHash) {
+          lastHash = hash;
+          onNext(snap);
+        }
+      } else {
+        const resp = await fetch(`${BASE_URL}/${ref.path}?pageSize=300`);
+        if (!resp.ok) {
+          throw new Error(`HTTP ${resp.status} listing ${ref.path}`);
+        }
+        const raw = await resp.json();
+        if (cancelled) return;
+        const docsRaw = Array.isArray(raw?.documents) ? raw.documents : [];
+        const docs = docsRaw.map((d: any) => {
+          const nameParts = String(d?.name || '').split('/');
+          const docId = nameParts[nameParts.length - 1] || '';
+          const parsed = fromFirestoreFields(d?.fields || {});
+          return {
+            id: docId,
+            exists: () => true,
+            data: () => parsed,
+          };
+        });
+        const hash = JSON.stringify(docs.map((x: any) => ({ id: x.id, d: x.data() })));
+        if (hash !== lastHash) {
+          lastHash = hash;
+          onNext({
+            docs,
+            size: docs.length,
+            empty: docs.length === 0,
+            forEach: (cb: (docSnap: any) => void) => {
+              docs.forEach(cb);
+            },
+          });
+        }
+      }
+    } catch (err: any) {
+      if (!cancelled && onError) {
+        onError(err instanceof Error ? err : new Error(String(err)));
+      }
+    }
+  };
+
+  poll();
+  activeListeners.add(poll);
+  const timer = setInterval(poll, 4000);
+
+  return () => {
+    cancelled = true;
+    activeListeners.delete(poll);
+    clearInterval(timer);
+  };
 }
 
 export function getJogadorDocId(email: string): string {
@@ -128,6 +325,7 @@ export async function upsertJogadorInDb(jg: any): Promise<void> {
 
   try {
     await setDoc(doc(db, 'jogadores', docId), payload);
+    triggerAllListeners();
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -145,7 +343,7 @@ export async function buscarValorAtualBolao(): Promise<number> {
       }
     }
   } catch (err) {
-    console.warn('Erro ao ler config/bolao_config via SDK:', err);
+    console.warn('Erro ao ler config/bolao_config:', err);
   }
   throw new Error('Valor da cota não encontrado em config/bolao_config no banco de dados.');
 }
@@ -185,7 +383,7 @@ export async function criarPagamentoInfinitePay(params: {
   if (!urlRetornada) {
     valorReais = await buscarValorAtualBolao();
     valorCentavos = Math.round(valorReais * 100);
-    const redirectUrl = `${redirect_origin.replace(/\/+$/, '')}/pagamento-sucesso?jogador_id=${encodeURIComponent(jogador_id)}`;
+    const redirectUrl = `${redirect_origin.replace(/\/+$/, '')}/?pagamento=sucesso&jogador_id=${encodeURIComponent(jogador_id)}`;
     const itemPayload = [{ quantity: 1, price: valorCentavos, description: 'Bolao - Participacao' }];
 
     const ipResp = await fetch('https://api.infinitepay.io/invoices/public/checkout/links', {
@@ -224,6 +422,7 @@ export async function deleteJogadorFromDb(email: string): Promise<void> {
   const path = `jogadores/${docId}`;
   try {
     await deleteDoc(doc(db, 'jogadores', docId));
+    triggerAllListeners();
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
   }
@@ -247,6 +446,7 @@ export async function upsertJogoInDb(j: any): Promise<void> {
   }
   try {
     await setDoc(doc(db, 'jogos', id), payload);
+    triggerAllListeners();
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -258,6 +458,7 @@ export async function deleteJogoFromDb(jogoId: string): Promise<void> {
   const path = `jogos/${id}`;
   try {
     await deleteDoc(doc(db, 'jogos', id));
+    triggerAllListeners();
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
   }
@@ -290,6 +491,7 @@ export async function upsertJogoDisponivelInDb(item: JogoDisponivelItem): Promis
   };
   try {
     await setDoc(doc(db, 'jogos_disponiveis', id), payload);
+    triggerAllListeners();
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -303,6 +505,7 @@ export async function deleteJogoDisponivelFromDb(itemId: string): Promise<void> 
   const path = `jogos_disponiveis/${id}`;
   try {
     await deleteDoc(doc(db, 'jogos_disponiveis', id));
+    triggerAllListeners();
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
   }
@@ -322,6 +525,7 @@ export async function upsertPalpiteInDb(p: any): Promise<void> {
   };
   try {
     await setDoc(doc(db, 'palpites', docId), payload);
+    triggerAllListeners();
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -332,6 +536,7 @@ export async function deletePalpiteFromDb(email: string, jogoId: string): Promis
   const path = `palpites/${docId}`;
   try {
     await deleteDoc(doc(db, 'palpites', docId));
+    triggerAllListeners();
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
   }
@@ -351,6 +556,7 @@ export async function saveConfigInDb(cfg: any): Promise<void> {
   };
   try {
     await setDoc(doc(db, 'config', 'bolao_config'), payload);
+    triggerAllListeners();
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -392,8 +598,6 @@ export function compressImageToDataUrl(file: File, maxDim = 900, quality = 0.72)
     reader.readAsDataURL(file);
   });
 }
-
-export { collection, doc, getDoc, onSnapshot };
 
 async function testConnection() {
   try {
