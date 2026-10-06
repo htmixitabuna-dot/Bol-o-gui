@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import logoOficial from './assets/images/bolao_elite_logo_1791164462566.jpg';
+import { PWAInstallButton } from './PWAInstallButton';
 import {
   db,
   auth,
@@ -2896,6 +2897,9 @@ export default function App() {
             </div>
           )}
 
+          {/* Banner para Instalar o App no Celular com a Logo do Bolões Elite */}
+          <PWAInstallButton variant="banner" logoSrc={logoBolao} />
+
           <div className="grid grid-cols-3 mt-8 border-t border-zinc-900 pt-5 text-center w-full">
             <div>
               <div className="text-2xl font-black text-[#FF6B00]">
@@ -5073,6 +5077,7 @@ export default function App() {
             >
               <span>📁</span> Comprovantes
             </button>
+            <PWAInstallButton variant="compact" logoSrc={logoBolao} />
             <button
               onClick={() => setPage("classificacao")}
               className="text-xs bg-[#FF6B00]/10 border border-[#FF6B00]/40 text-[#FF6B00] hover:bg-[#FF6B00]/20 px-2.5 py-1.5 rounded-lg cursor-pointer font-bold transition flex items-center gap-1"

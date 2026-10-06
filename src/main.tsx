@@ -1,8 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
+import { registerSW } from 'virtual:pwa-register';
 import App from './App.tsx';
 import ImportarJogosAdmin from './ImportarJogosAdmin.tsx';
 import './index.css';
+
+registerSW({ immediate: true });
 
 function isImportarJogosUrl(): boolean {
   if (typeof window === 'undefined') return false;
