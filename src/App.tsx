@@ -2556,9 +2556,90 @@ export default function App() {
           </div>
         </main>
 
-        <footer className="text-center text-[10px] text-zinc-600 pb-3">
-          © 2026 Bolões Elite • Todos os direitos reservados
+        <footer className="text-center text-[10px] text-zinc-500 pb-4 space-y-1.5">
+          <div>
+            <button
+              type="button"
+              onClick={() => setShowTermosModal(true)}
+              className="text-[#FF6B00] hover:underline font-bold cursor-pointer"
+            >
+              📄 Termos de Uso e Regulamento - Elite do Bolão
+            </button>
+          </div>
+          <div className="text-zinc-600">© 2026 Bolões Elite • Todos os direitos reservados</div>
         </footer>
+
+        {showTermosModal && (
+          <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 text-left">
+            <div className="bg-zinc-900 border border-zinc-800 rounded-3xl max-w-lg w-full p-6 max-h-[85vh] overflow-y-auto space-y-4 shadow-2xl">
+              <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+                <h3 className="text-sm sm:text-base font-black text-[#FF6B00] uppercase">
+                  TERMOS DE USO E REGULAMENTO - ELITE DO BOLÃO - ATUALIZADO
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setShowTermosModal(false)}
+                  className="text-zinc-400 hover:text-white font-black text-base cursor-pointer ml-2"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="text-xs text-zinc-300 space-y-3.5 leading-relaxed">
+                <div>
+                  <strong className="text-white block mb-0.5">1. NATUREZA DA PLATAFORMA</strong>
+                  <p>
+                    O ELITE DO BOLÃO é uma plataforma de tecnologia para organização de concursos de prognósticos esportivos recreativos entre participantes. NÃO somos casa de apostas de quota fixa (Lei 14.790/2023), não operamos como banca e não definimos odds.
+                  </p>
+                </div>
+
+                <div>
+                  <strong className="text-white block mb-0.5">2. COMPOSIÇÃO DA PARTICIPAÇÃO</strong>
+                  <p>Toda participação paga pelo usuário é dividida de forma transparente e automática:</p>
+                  <p className="mt-1">
+                    <strong>80% (oitenta por cento) = POTE DE PRÊMIOS:</strong> valor destinado integralmente e rateado entre os acertadores do bolão.
+                  </p>
+                  <p className="mt-1">
+                    <strong>20% (vinte por cento) = TAXA DE SERVIÇO:</strong> valor destinado à plataforma para custos de tecnologia, hospedagem, processamento de pagamentos (InfinitePay/PIX), suporte e organização.
+                  </p>
+                  <p className="mt-1.5 text-zinc-400 bg-black/50 p-2.5 rounded-xl border border-zinc-800">
+                    Exemplos ilustrativos: Bolão de R$10 = R$8 de pote + R$2 de taxa. Bolão de R$20 = R$16 de pote + R$4 de taxa. Bolão de R$50 = R$40 de pote + R$10 de taxa.
+                  </p>
+                </div>
+
+                <div>
+                  <strong className="text-white block mb-0.5">3. PRÊMIOS</strong>
+                  <p>
+                    100% do valor arrecadado a título de POTE (os 80%) é distribuído entre os ganhadores conforme regras de cada bolão. A plataforma não retém nenhuma porcentagem do pote de prêmios.
+                  </p>
+                </div>
+
+                <div>
+                  <strong className="text-white block mb-0.5">4. RESPONSABILIDADE DO USUÁRIO</strong>
+                  <p>
+                    O usuário declara que participa de forma voluntária de um bolão recreativo e social, e que a taxa de 20% é uma taxa de serviço digital, faturada pelo CPF da plataforma.
+                  </p>
+                </div>
+
+                <div>
+                  <strong className="text-white block mb-0.5">5. LEGISLAÇÃO</strong>
+                  <p>
+                    Esta atividade não se confunde com apostas de quota fixa, loterias ou jogos de azar explorados contra a banca, por não haver banca.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setAceitouTermos(true);
+                  setShowTermosModal(false);
+                }}
+                className="w-full bg-[#FF6B00] hover:bg-[#ff7b1a] text-black font-black py-3.5 rounded-xl cursor-pointer text-xs uppercase tracking-wider transition"
+              >
+                ENTENDI E CONCORDO
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -2796,7 +2877,7 @@ export default function App() {
                   className="mt-1 w-4 h-4 rounded accent-[#FF6B00] cursor-pointer"
                 />
                 <span className="text-xs text-zinc-300 leading-snug">
-                  Li e concordo com os Termos de Uso e Política de Privacidade do Bolão.
+                  Li e concordo com os Termos de Uso e Regulamento - Elite do Bolão.
                 </span>
               </label>
               <button
@@ -2804,7 +2885,7 @@ export default function App() {
                 onClick={() => setShowTermosModal(true)}
                 className="text-[11px] text-[#FF6B00] hover:underline font-bold block ml-6 cursor-pointer"
               >
-                📄 Ler Termos e Regras
+                📄 Ler Termos de Uso e Regulamento Atualizado
               </button>
             </div>
 
@@ -2819,26 +2900,70 @@ export default function App() {
         )}
 
         {showTermosModal && (
-          <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-zinc-900 border border-zinc-800 rounded-3xl max-w-lg w-full p-6 max-h-[85vh] overflow-y-auto space-y-4">
-              <h3 className="text-lg font-black text-white">Termos & Política de Privacidade</h3>
-              <div className="text-xs text-zinc-300 space-y-3 leading-relaxed">
-                <p>
-                  <strong>REGRA DE APOSTAS:</strong> O apostador escolhe quem vence (Mandante ou Visitante) ou Empate.
-                  Cada acerto garante 1 ponto. A triagem é automática após o ADM confirmar os resultados oficiais.
-                </p>
-                <p>
-                  <strong>PREMIAÇÃO:</strong> 20% do valor arrecadado fica com a banca organizadora e 80% é distribuído:
-                  1º lugar (50%), 2º lugar (30%) e 3º lugar (20%). Em caso de empate de pontos, o valor da colocação
-                  é dividido igualmente. Apenas apostas com pagamento validado pelo ADM participam da premiação.
-                </p>
+          <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-zinc-900 border border-zinc-800 rounded-3xl max-w-lg w-full p-6 max-h-[85vh] overflow-y-auto space-y-4 shadow-2xl">
+              <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+                <h3 className="text-sm sm:text-base font-black text-[#FF6B00] uppercase">
+                  TERMOS DE USO E REGULAMENTO - ELITE DO BOLÃO - ATUALIZADO
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setShowTermosModal(false)}
+                  className="text-zinc-400 hover:text-white font-black text-base cursor-pointer ml-2"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="text-xs text-zinc-300 space-y-3.5 leading-relaxed">
+                <div>
+                  <strong className="text-white block mb-0.5">1. NATUREZA DA PLATAFORMA</strong>
+                  <p>
+                    O ELITE DO BOLÃO é uma plataforma de tecnologia para organização de concursos de prognósticos esportivos recreativos entre participantes. NÃO somos casa de apostas de quota fixa (Lei 14.790/2023), não operamos como banca e não definimos odds.
+                  </p>
+                </div>
+
+                <div>
+                  <strong className="text-white block mb-0.5">2. COMPOSIÇÃO DA PARTICIPAÇÃO</strong>
+                  <p>Toda participação paga pelo usuário é dividida de forma transparente e automática:</p>
+                  <p className="mt-1">
+                    <strong>80% (oitenta por cento) = POTE DE PRÊMIOS:</strong> valor destinado integralmente e rateado entre os acertadores do bolão.
+                  </p>
+                  <p className="mt-1">
+                    <strong>20% (vinte por cento) = TAXA DE SERVIÇO:</strong> valor destinado à plataforma para custos de tecnologia, hospedagem, processamento de pagamentos (InfinitePay/PIX), suporte e organização.
+                  </p>
+                  <p className="mt-1.5 text-zinc-400 bg-black/50 p-2.5 rounded-xl border border-zinc-800">
+                    Exemplos ilustrativos: Bolão de R$10 = R$8 de pote + R$2 de taxa. Bolão de R$20 = R$16 de pote + R$4 de taxa. Bolão de R$50 = R$40 de pote + R$10 de taxa.
+                  </p>
+                </div>
+
+                <div>
+                  <strong className="text-white block mb-0.5">3. PRÊMIOS</strong>
+                  <p>
+                    100% do valor arrecadado a título de POTE (os 80%) é distribuído entre os ganhadores conforme regras de cada bolão. A plataforma não retém nenhuma porcentagem do pote de prêmios.
+                  </p>
+                </div>
+
+                <div>
+                  <strong className="text-white block mb-0.5">4. RESPONSABILIDADE DO USUÁRIO</strong>
+                  <p>
+                    O usuário declara que participa de forma voluntária de um bolão recreativo e social, e que a taxa de 20% é uma taxa de serviço digital, faturada pelo CPF da plataforma.
+                  </p>
+                </div>
+
+                <div>
+                  <strong className="text-white block mb-0.5">5. LEGISLAÇÃO</strong>
+                  <p>
+                    Esta atividade não se confunde com apostas de quota fixa, loterias ou jogos de azar explorados contra a banca, por não haver banca.
+                  </p>
+                </div>
               </div>
               <button
+                type="button"
                 onClick={() => {
                   setAceitouTermos(true);
                   setShowTermosModal(false);
                 }}
-                className="w-full bg-[#FF6B00] text-black font-black py-3 rounded-xl cursor-pointer text-xs"
+                className="w-full bg-[#FF6B00] hover:bg-[#ff7b1a] text-black font-black py-3.5 rounded-xl cursor-pointer text-xs uppercase tracking-wider transition"
               >
                 ENTENDI E CONCORDO
               </button>
