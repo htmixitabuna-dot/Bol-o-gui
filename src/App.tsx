@@ -118,7 +118,7 @@ export function geraPixPayload(chave: string, nome: string, cidade: string, valo
 }
 
 export default function App() {
-  const [page, setPage] = useState<"landing" | "loginJogador" | "adminLogin" | "admin" | "palpites" | "pagamento" | "classificacao">("landing");
+  const [page, setPage] = useState<"landing" | "loginJogador" | "adminLogin" | "admin" | "palpites" | "minhasApostas" | "pagamento" | "classificacao">("landing");
   const [jogos, setJogos] = useState<Jogo[]>([]);
   const [jogadores, setJogadores] = useState<any[]>([]);
   const [palpites, setPalpites] = useState<Palpite[]>([]);
@@ -1019,6 +1019,330 @@ export default function App() {
       </div>
     </div>
   );
+
+  // Dados das apostas salvas do jogador conectado
+  const meusPalpitesSalvos = user
+    ? palpites.filter((p) => (p.jogadorEmail || "").toLowerCase() === (user.email || "").toLowerCase())
+    : [];
+  const isMinhaApostaAprovada = Boolean(
+    user &&
+      (user.statusPagamento === "APROVADO" ||
+        meusPalpitesSalvos.some((p) => p.pago))
+  );
+  const codigoAutenticidadeJogador = user
+    ? `ELITE-${(user.nome || "JG")
+        .replace(/[^a-zA-Z]/g, "")
+        .slice(0, 3)
+        .toUpperCase()}-${(user.email || "000")
+        .replace(/[^a-zA-Z0-9]/g, "")
+        .slice(0, 4)
+        .toUpperCase()}-${String(meusPalpitesSalvos.length).padStart(2, "0")}`
+    : "ELITE-0000";
+
+  const meusPontosAtuais = meusPalpitesSalvos.reduce((acc, ap) => {
+    const jgMatch = jogos.find((j) => j.id === ap.jogoId);
+    if (jgMatch?.resultadoOficial && jgMatch.resultadoOficial === ap.escolha) {
+      return acc + 1;
+    }
+    return acc;
+  }, 0);
+
+  const minhasApostasGanhas = meusPalpitesSalvos.filter((ap) => {
+    const jgMatch = jogos.find((j) => j.id === ap.jogoId);
+    return Boolean(jgMatch?.resultadoOficial && jgMatch.resultadoOficial === ap.escolha);
+  }).length;
+
+  const minhasApostasPerdidas = meusPalpitesSalvos.filter((ap) => {
+    const jgMatch = jogos.find((j) => j.id === ap.jogoId);
+    return Boolean(jgMatch?.resultadoOficial && jgMatch.resultadoOficial !== ap.escolha);
+  }).length;
+
+  const AreaMinhasApostas = ({ modoCompacto = false }: { modoCompacto?: boolean }) => {
+    if (!user) return null;
+
+    return (
+      <div className="mt-4 bg-zinc-900 border-2 border-[#FF6B00]/60 rounded-2xl p-4 space-y-4 shadow-2xl">
+        {/* Cabeçalho Geral do Bilhete Oficial do Jogador */}
+        <div className="bg-gradient-to-r from-[#FF6B00]/20 via-black to-black border border-[#FF6B00]/40 rounded-xl p-3.5 space-y-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800 pb-2.5">
+            <div className="flex items-center gap-2.5">
+              <img src={logoBolao} alt="Logo" className="w-9 h-9 object-contain rounded-lg border border-[#FF6B00]/40" />
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-[#FF6B00]">
+                    🎫 ÁREA MINHAS APOSTAS • COMPROVANTE DE TITULARIDADE
+                  </span>
+                </div>
+                <h3 className="text-base sm:text-lg font-black text-white leading-tight">
+                  Apostador: {user.nome}
+                </h3>
+              </div>
+            </div>
+
+            <div className="flex flex-col items-end">
+              <span
+                className={`text-[10px] font-black px-2.5 py-1 rounded-full uppercase border ${
+                  isMinhaApostaAprovada
+                    ? "bg-green-500 text-black border-green-400 shadow-md shadow-green-500/20"
+                    : user.statusPagamento === "EM_ANALISE"
+                    ? "bg-amber-500 text-black border-amber-400"
+                    : "bg-zinc-800 text-zinc-300 border-zinc-700"
+                }`}
+              >
+                {isMinhaApostaAprovada
+                  ? "✅ APROVADA PELO ADM"
+                  : user.statusPagamento === "EM_ANALISE"
+                  ? "⏳ EM ANÁLISE NO ADM"
+                  : "⚪ AGUARDANDO PAGAMENTO"}
+              </span>
+              <span className="text-[10px] font-mono text-zinc-400 mt-1">
+                ID: <strong className="text-white">{codigoAutenticidadeJogador}</strong>
+              </span>
+            </div>
+          </div>
+
+          {/* Dados Completos do Jogador para Comprovação */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs bg-black/70 p-2.5 rounded-lg border border-zinc-800">
+            <div>
+              <span className="text-[9px] text-zinc-500 uppercase font-bold block">Nome do Jogador</span>
+              <span className="font-black text-white">{user.nome}</span>
+            </div>
+            <div>
+              <span className="text-[9px] text-zinc-500 uppercase font-bold block">E-mail Registrado</span>
+              <span className="font-mono text-zinc-200 font-bold break-all">{user.email}</span>
+            </div>
+            <div>
+              <span className="text-[9px] text-zinc-500 uppercase font-bold block">Chave PIX do Jogador</span>
+              <span className="font-mono text-[#FF6B00] font-black break-all">{user.pix}</span>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-zinc-300 pt-0.5">
+            <span>
+              📋 Times Selecionados: <strong className="text-white">{meusPalpitesSalvos.length} confronto(s)</strong>
+            </span>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="bg-green-950/90 border border-green-600 text-green-300 font-black px-2.5 py-0.5 rounded-lg">
+                ✅ GANHOU: {minhasApostasGanhas}
+              </span>
+              <span className="bg-red-950/90 border border-red-600 text-red-300 font-black px-2.5 py-0.5 rounded-lg">
+                ❌ PERDEU: {minhasApostasPerdidas}
+              </span>
+              <span className="bg-zinc-900 border border-zinc-700 text-[#FF6B00] font-black px-2.5 py-0.5 rounded-lg">
+                🏆 {meusPontosAtuais} pt(s)
+              </span>
+            </div>
+            {user.dataAprovacao && (
+              <span className="text-green-400 font-bold">
+                ✓ Validado pelo ADM às {user.dataAprovacao}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Lista de Apostas Individuais (Com Dados do Jogador no Topo de CADA Aposta) */}
+        {meusPalpitesSalvos.length === 0 ? (
+          <div className="bg-black/60 border border-dashed border-zinc-800 rounded-xl p-6 text-center space-y-2">
+            <div className="text-2xl">⚽</div>
+            <div className="text-xs font-bold text-white">
+              Você ainda não enviou seus palpites nesta rodada
+            </div>
+            <p className="text-[11px] text-zinc-400">
+              Selecione os times nos confrontos e clique em "Enviar Apostas & Pagar" para gerar seus bilhetes oficiais.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-black uppercase text-[#FF6B00] tracking-wider">
+                📌 Seus Times Selecionados ({meusPalpitesSalvos.length} Apostas)
+              </span>
+              {modoCompacto && (
+                <button
+                  type="button"
+                  onClick={() => setPage("minhasApostas")}
+                  className="text-[11px] bg-[#FF6B00] hover:bg-[#ff7b1a] text-black font-black px-3 py-1 rounded-lg cursor-pointer transition"
+                >
+                  🔍 Abrir Tela Cheia p/ Print
+                </button>
+              )}
+            </div>
+
+            {meusPalpitesSalvos.map((ap, idx) => {
+              const match = jogos.find((j) => j.id === ap.jogoId);
+              if (!match) return null;
+
+              const timeSelecionadoNome =
+                ap.escolha === "CASA"
+                  ? match.casa
+                  : ap.escolha === "FORA"
+                  ? match.fora
+                  : "EMPATE";
+              const escudoSelecionado =
+                ap.escolha === "CASA"
+                  ? match.escudoCasa
+                  : ap.escolha === "FORA"
+                  ? match.escudoFora
+                  : undefined;
+
+              const acertou = Boolean(match.resultadoOficial && match.resultadoOficial === ap.escolha);
+              const errou = Boolean(match.resultadoOficial && match.resultadoOficial !== ap.escolha);
+              const textoResultadoOficial = match.resultadoOficial
+                ? match.resultadoOficial === "CASA"
+                  ? `Vitória do ${match.casa}`
+                  : match.resultadoOficial === "FORA"
+                  ? `Vitória do ${match.fora}`
+                  : "Empate"
+                : null;
+
+              return (
+                <div
+                  key={ap.jogoId}
+                  className={`rounded-2xl border-2 overflow-hidden shadow-lg transition ${
+                    acertou
+                      ? "bg-gradient-to-b from-green-950/30 to-black border-green-500 shadow-green-500/10"
+                      : errou
+                      ? "bg-gradient-to-b from-red-950/30 to-black border-red-600 shadow-red-600/10"
+                      : isMinhaApostaAprovada
+                      ? "bg-black border-green-700/70"
+                      : "bg-black border-zinc-800"
+                  }`}
+                >
+                  {/* TOPO DE CADA APOSTA: DADOS DO JOGADOR PARA COMPROVAR QUE É DELE + SINALIZAÇÃO GANHOU / PERDEU */}
+                  <div className="bg-zinc-950 border-b border-zinc-800 px-3.5 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
+                    <div className="space-y-0.5">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-[10px] bg-[#FF6B00] text-black font-black px-2 py-0.5 rounded uppercase">
+                          Aposta #{idx + 1}
+                        </span>
+                        <span className="text-xs font-black text-white">
+                          👤 {user.nome}
+                        </span>
+                        <span className="text-[10px] font-mono text-zinc-400">
+                          ({user.email})
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-zinc-400 flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                        <span>
+                          PIX do Titular: <strong className="text-[#FF6B00] font-mono">{user.pix}</strong>
+                        </span>
+                        <span>
+                          Bilhete: <strong className="text-zinc-300 font-mono">{codigoAutenticidadeJogador}</strong>
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                      {acertou && (
+                        <span className="text-[10px] bg-green-500 text-black font-black px-2.5 py-1 rounded-full uppercase shadow-md shadow-green-500/30 flex items-center gap-1">
+                          <span>✅</span> GANHOU
+                        </span>
+                      )}
+                      {errou && (
+                        <span className="text-[10px] bg-red-600 text-white font-black px-2.5 py-1 rounded-full uppercase shadow-md shadow-red-600/30 flex items-center gap-1">
+                          <span>❌</span> PERDEU
+                        </span>
+                      )}
+                      <span
+                        className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase border ${
+                          isMinhaApostaAprovada
+                            ? "bg-green-950 text-green-400 border-green-600"
+                            : user.statusPagamento === "EM_ANALISE"
+                            ? "bg-amber-950 text-amber-300 border-amber-600"
+                            : "bg-zinc-900 text-zinc-400 border-zinc-700"
+                        }`}
+                      >
+                        {isMinhaApostaAprovada
+                          ? "✓ APROVADA PELO ADM"
+                          : user.statusPagamento === "EM_ANALISE"
+                          ? "⏳ EM ANÁLISE"
+                          : "PENDENTE"}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* CORPO DA APOSTA: CONFRONTO E TIME SELECIONADO */}
+                  <div className="p-3.5 space-y-3">
+                    <div className="flex items-center justify-between text-[10px] text-zinc-400 font-bold uppercase">
+                      <span>Confronto #{idx + 1} • {match.data}</span>
+                      <span>🏟️ {match.estadio}</span>
+                    </div>
+
+                    {/* Placar / Confronto */}
+                    <div className="flex items-center justify-between gap-2 bg-zinc-900/70 p-2.5 rounded-xl border border-zinc-800/80">
+                      <div className="flex items-center gap-2 flex-1 min-w-0">
+                        <Escudo src={match.escudoCasa} nome={match.casa} size={32} />
+                        <span className="font-bold text-xs text-white truncate">{match.casa}</span>
+                      </div>
+                      <span className="text-[10px] font-black text-zinc-500 px-1">VS</span>
+                      <div className="flex items-center gap-2 flex-1 min-w-0 justify-end">
+                        <span className="font-bold text-xs text-white truncate text-right">{match.fora}</span>
+                        <Escudo src={match.escudoFora} nome={match.fora} size={32} />
+                      </div>
+                    </div>
+
+                    {/* Destaque do Time Selecionado pelo Jogador + Sinalização GANHOU / PERDEU */}
+                    <div
+                      className={`p-3 rounded-xl border-2 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 ${
+                        acertou
+                          ? "bg-green-950/60 border-green-500 text-green-100"
+                          : errou
+                          ? "bg-red-950/60 border-red-600 text-red-100"
+                          : "bg-[#FF6B00]/15 border-[#FF6B00] text-white"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5">
+                        {ap.escolha === "EMPATE" ? (
+                          <div className="w-9 h-9 rounded-full bg-[#FF6B00] text-black font-black text-xs flex items-center justify-center shrink-0">
+                            X
+                          </div>
+                        ) : (
+                          <Escudo src={escudoSelecionado} nome={timeSelecionadoNome} size={36} />
+                        )}
+                        <div>
+                          <div className="text-[9px] uppercase font-black tracking-wider text-[#FF6B00]">
+                            Time / Palpite Selecionado por {user.nome?.split(" ")[0]}:
+                          </div>
+                          <div className="text-sm font-black text-white">
+                            {ap.escolha === "EMPATE"
+                              ? "EMPATE NO JOGO (COLUNA DO MEIO)"
+                              : `VITÓRIA DO ${timeSelecionadoNome.toUpperCase()}`}
+                          </div>
+                          {textoResultadoOficial && (
+                            <div className="text-[10px] mt-0.5 font-bold opacity-90">
+                              Resultado Oficial da Partida: <span className="underline">{textoResultadoOficial}</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="text-right shrink-0">
+                        {acertou ? (
+                          <div className="bg-green-500 text-black font-black text-xs px-3.5 py-2 rounded-xl uppercase shadow-lg shadow-green-500/30 flex items-center justify-center gap-1.5">
+                            <span>✅</span>
+                            <span>GANHOU (+1 PT)</span>
+                          </div>
+                        ) : errou ? (
+                          <div className="bg-red-600 text-white font-black text-xs px-3.5 py-2 rounded-xl uppercase shadow-lg shadow-red-600/30 flex items-center justify-center gap-1.5">
+                            <span>❌</span>
+                            <span>PERDEU</span>
+                          </div>
+                        ) : (
+                          <span className="bg-black/80 border border-[#FF6B00]/50 text-[#FF6B00] font-black text-[10px] px-2.5 py-1.5 rounded-lg uppercase inline-block">
+                            ⏳ AGUARDANDO RESULTADO
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   // =========================================================================
   // 1. LANDING PAGE
@@ -2133,15 +2457,15 @@ export default function App() {
                             return (
                               <div
                                 key={ap.jogoId}
-                                className={`p-2 rounded-lg border text-xs flex items-center justify-between ${
+                                className={`p-2.5 rounded-lg border text-xs flex items-center justify-between gap-2 ${
                                   acertou
-                                    ? "bg-green-950/30 border-green-800/60 text-green-300"
+                                    ? "bg-green-950/40 border-green-600 text-green-200"
                                     : errou
-                                    ? "bg-red-950/30 border-red-900/60 text-red-300"
+                                    ? "bg-red-950/40 border-red-700 text-red-200"
                                     : "bg-zinc-900/60 border-zinc-800 text-zinc-300"
                                 }`}
                               >
-                                <span className="font-bold truncate max-w-[140px]">
+                                <span className="font-bold truncate max-w-[130px]">
                                   {match.casa} x {match.fora}
                                 </span>
 
@@ -2149,9 +2473,21 @@ export default function App() {
                                   <span className="font-black bg-black px-2 py-0.5 rounded text-[11px] text-[#FF6B00]">
                                     {textoEscolha}
                                   </span>
-                                  {acertou && <span className="text-green-400 font-bold" title="Acertou!">✓</span>}
-                                  {errou && <span className="text-red-400 font-bold" title="Errou">✗</span>}
-                                  {pendente && <span className="text-zinc-500 text-[10px]" title="Aguardando jogo">⏳</span>}
+                                  {acertou && (
+                                    <span className="bg-green-500 text-black font-black px-2 py-0.5 rounded text-[10px] uppercase">
+                                      ✅ GANHOU
+                                    </span>
+                                  )}
+                                  {errou && (
+                                    <span className="bg-red-600 text-white font-black px-2 py-0.5 rounded text-[10px] uppercase">
+                                      ❌ PERDEU
+                                    </span>
+                                  )}
+                                  {pendente && (
+                                    <span className="text-zinc-500 text-[10px]" title="Aguardando jogo">
+                                      ⏳
+                                    </span>
+                                  )}
                                 </div>
                               </div>
                             );
@@ -2539,7 +2875,19 @@ export default function App() {
               <h2 className="font-black text-lg text-white">{user?.nome || "Convidado"}</h2>
             </div>
           </div>
-          <div className="flex items-center gap-1.5">
+          <div className="flex flex-wrap items-center justify-end gap-1.5">
+            <button
+              type="button"
+              onClick={() => setPage("minhasApostas")}
+              className={`text-xs px-2.5 py-1.5 rounded-lg cursor-pointer font-black transition flex items-center gap-1 border ${
+                isMinhaApostaAprovada
+                  ? "bg-green-600 hover:bg-green-500 text-black border-green-400 shadow-md shadow-green-600/20"
+                  : "bg-[#FF6B00] hover:bg-[#ff7b1a] text-black border-[#FF6B00]"
+              }`}
+              title="Abrir área Minhas Apostas"
+            >
+              <span>🎫</span> Minhas Apostas ({meusPalpitesSalvos.length})
+            </button>
             <button
               type="button"
               onClick={() => setPastaComprovanteAberta(true)}
@@ -2569,7 +2917,7 @@ export default function App() {
 
         {/* NOTIFICAÇÃO OFICIAL DE PAGAMENTO APROVADO */}
         {(user?.statusPagamento === "APROVADO" && palpites.some((p) => p.jogadorEmail === user?.email && p.pago)) ? (
-          <div className="mt-4 bg-gradient-to-r from-green-950 via-zinc-900 to-black border-2 border-green-500/80 text-green-300 p-4 rounded-2xl shadow-xl flex items-center justify-between gap-3 animate-fade-in">
+          <div className="mt-4 bg-gradient-to-r from-green-950 via-zinc-900 to-black border-2 border-green-500/80 text-green-300 p-4 rounded-2xl shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fade-in">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-green-500/20 border border-green-500 flex items-center justify-center text-xl shrink-0">
                 🎉
@@ -2579,16 +2927,20 @@ export default function App() {
                   Notificação do Administrador
                 </div>
                 <div className="text-sm font-black text-white">
-                  PAGAMENTO APROVADO COM SUCESSO!
+                  PAGAMENTO E APOSTAS APROVADAS COM SUCESSO!
                 </div>
                 <p className="text-[11px] text-green-300/90 mt-0.5">
-                  Seu comprovante foi validado. Suas apostas estão 100% ativas e concorrendo aos prêmios oficiais da rodada!
+                  Suas apostas foram validadas pelo ADM! Confira abaixo seus times selecionados com seus dados de titularidade.
                 </p>
               </div>
             </div>
-            <span className="bg-green-500 text-black font-black text-[10px] px-2.5 py-1 rounded-full uppercase shrink-0">
-              CONFIRMADO
-            </span>
+            <button
+              type="button"
+              onClick={() => setPage("minhasApostas")}
+              className="bg-green-500 hover:bg-green-400 text-black font-black text-xs px-3.5 py-2 rounded-xl uppercase shrink-0 cursor-pointer transition shadow-lg flex items-center justify-center gap-1.5"
+            >
+              <span>🎫</span> VER MINHAS APOSTAS
+            </button>
           </div>
         ) : user?.statusPagamento === "EM_ANALISE" ? (
           <div className="mt-4 bg-amber-950/70 border border-amber-600/80 text-amber-200 p-3.5 rounded-2xl flex items-center justify-between gap-2 animate-fade-in">
@@ -2649,6 +3001,9 @@ export default function App() {
         {/* Contabilizador de Depósito em Tempo Real na Área do Jogador */}
         <ContabilizadorDepositosJogador mostrarBotaoDepositar={true} />
 
+        {/* Área Minhas Apostas (exibida automaticamente quando o jogador já selecionou seus times / ADM aprovou) */}
+        {meusPalpitesSalvos.length > 0 && <AreaMinhasApostas modoCompacto={true} />}
+
         {/* Status da Rodada */}
         <div className="mt-4 flex items-center justify-between bg-zinc-900/90 border border-zinc-800 px-3.5 py-2.5 rounded-xl">
           <div className="flex items-center gap-2">
@@ -2676,13 +3031,83 @@ export default function App() {
           <div className="mt-4 space-y-3">
             {jogos.map((j, idx) => {
               const escolhaAtual = escolhasTemp[j.id];
+              const ganhouJogo = Boolean(escolhaAtual && j.resultadoOficial && j.resultadoOficial === escolhaAtual);
+              const perdeuJogo = Boolean(escolhaAtual && j.resultadoOficial && j.resultadoOficial !== escolhaAtual);
 
               return (
-                <div key={j.id} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 space-y-3 shadow-md">
-                  {/* Cabeçalho do Confronto */}
-                  <div className="text-[10px] text-zinc-400 text-center uppercase font-bold tracking-wider">
-                    Jogo #{idx + 1} • {j.data} • {j.estadio}
-                  </div>
+                <div
+                  key={j.id}
+                  className={`bg-zinc-900 border-2 rounded-2xl overflow-hidden shadow-md transition ${
+                    ganhouJogo
+                      ? "border-green-500"
+                      : perdeuJogo
+                      ? "border-red-600"
+                      : "border-zinc-800"
+                  }`}
+                >
+                  {/* Topo de cada aposta com os dados do jogador para comprovação */}
+                  {user && (
+                    <div className="bg-zinc-950 border-b border-zinc-800 px-3.5 py-2 flex flex-wrap items-center justify-between gap-1 text-[10px]">
+                      <div className="flex flex-wrap items-center gap-1.5 text-zinc-300">
+                        <span className="bg-[#FF6B00]/20 text-[#FF6B00] border border-[#FF6B00]/40 font-black px-1.5 py-0.5 rounded uppercase">
+                          Aposta #{idx + 1}
+                        </span>
+                        <span className="font-black text-white">👤 {user.nome}</span>
+                        <span className="text-zinc-500 font-mono">({user.email})</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-zinc-400">
+                          PIX: <strong className="text-[#FF6B00] font-mono">{user.pix}</strong>
+                        </span>
+                        {ganhouJogo ? (
+                          <span className="bg-green-500 text-black px-2 py-0.5 rounded font-black uppercase text-[10px] shadow">
+                            ✅ GANHOU
+                          </span>
+                        ) : perdeuJogo ? (
+                          <span className="bg-red-600 text-white px-2 py-0.5 rounded font-black uppercase text-[10px] shadow">
+                            ❌ PERDEU
+                          </span>
+                        ) : escolhaAtual ? (
+                          <span className="bg-green-950 text-green-400 border border-green-700/80 px-1.5 py-0.5 rounded font-black uppercase text-[9px]">
+                            ✓ Selecionado
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="p-4 space-y-3">
+                    {/* Cabeçalho do Confronto */}
+                    <div className="text-[10px] text-zinc-400 text-center uppercase font-bold tracking-wider">
+                      Jogo #{idx + 1} • {j.data} • {j.estadio}
+                    </div>
+
+                    {/* Aviso de Resultado Lançado pelo ADM */}
+                    {j.resultadoOficial && escolhaAtual && (
+                      <div
+                        className={`px-3 py-2 rounded-xl border text-xs font-black flex items-center justify-between ${
+                          ganhouJogo
+                            ? "bg-green-950/70 border-green-500 text-green-300"
+                            : "bg-red-950/70 border-red-600 text-red-300"
+                        }`}
+                      >
+                        <span>
+                          Resultado Oficial:{" "}
+                          {j.resultadoOficial === "CASA"
+                            ? `Vitória ${j.casa}`
+                            : j.resultadoOficial === "FORA"
+                            ? `Vitória ${j.fora}`
+                            : "Empate"}
+                        </span>
+                        <span
+                          className={`px-2.5 py-0.5 rounded-lg text-[11px] uppercase ${
+                            ganhouJogo ? "bg-green-500 text-black" : "bg-red-600 text-white"
+                          }`}
+                        >
+                          {ganhouJogo ? "✅ SUA APOSTA GANHOU" : "❌ SUA APOSTA PERDEU"}
+                        </span>
+                      </div>
+                    )}
 
                   <div className="flex items-center justify-between gap-3 px-2">
                     {/* Mandante */}
@@ -2749,6 +3174,7 @@ export default function App() {
                         {j.fora}
                       </span>
                     </button>
+                  </div>
                   </div>
                 </div>
               );
@@ -2934,6 +3360,70 @@ export default function App() {
             </div>
           </div>
         )}
+      </div>
+    );
+  }
+
+  // =========================================================================
+  // 5.1 TELA DEDICADA: MINHAS APOSTAS (COMPROVANTE DE TITULARIDADE DO JOGADOR)
+  // =========================================================================
+  if (page === "minhasApostas") {
+    return (
+      <div className="min-h-screen bg-[#0A0A0A] text-white p-4 pb-28 max-w-xl mx-auto space-y-4">
+        <div className="flex justify-between items-center border-b border-zinc-900 pb-3">
+          <button
+            onClick={() => setPage("palpites")}
+            className="text-xs text-zinc-400 hover:text-white flex items-center gap-1 cursor-pointer font-bold"
+          >
+            ← Voltar para Jogos
+          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setPage("classificacao")}
+              className="text-xs bg-zinc-900 border border-zinc-800 text-[#FF6B00] px-2.5 py-1.5 rounded-lg cursor-pointer font-bold"
+            >
+              🏆 Ranking
+            </button>
+            <button
+              onClick={() => setPage("pagamento")}
+              className="text-xs bg-zinc-900 border border-zinc-800 text-zinc-300 px-2.5 py-1.5 rounded-lg cursor-pointer font-bold"
+            >
+              💠 PIX
+            </button>
+          </div>
+        </div>
+
+        <div className="bg-zinc-900/90 border border-zinc-800 p-4 rounded-2xl flex items-center justify-between gap-3">
+          <div>
+            <div className="text-[10px] font-black uppercase tracking-wider text-[#FF6B00]">
+              Bilhete Oficial Individual
+            </div>
+            <h2 className="text-xl font-black text-white">Minhas Apostas Registradas</h2>
+            <p className="text-xs text-zinc-400">
+              Cada aposta abaixo exibe seus dados de jogador no topo para comprovar que o palpite pertence a você.
+            </p>
+          </div>
+          <div className="text-3xl shrink-0">🎫</div>
+        </div>
+
+        <AreaMinhasApostas modoCompacto={false} />
+
+        <div className="grid grid-cols-2 gap-2 pt-2">
+          <button
+            type="button"
+            onClick={() => setPage("palpites")}
+            className="w-full bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-white font-bold py-3.5 rounded-xl cursor-pointer text-xs uppercase tracking-wider transition"
+          >
+            ⚽ Alterar / Ver Confrontos
+          </button>
+          <button
+            type="button"
+            onClick={() => setPage("classificacao")}
+            className="w-full bg-[#FF6B00] hover:bg-[#ff7b1a] text-black font-black py-3.5 rounded-xl cursor-pointer text-xs uppercase tracking-wider transition shadow-lg shadow-[#FF6B00]/20"
+          >
+            🏆 Ver Ranking Geral
+          </button>
+        </div>
       </div>
     );
   }
@@ -3250,10 +3740,16 @@ export default function App() {
 
         <div className="mt-6 space-y-2">
           <button
-            onClick={() => setPage("palpites")}
-            className="w-full bg-[#FF6B00] text-black font-black py-3.5 rounded-xl cursor-pointer hover:scale-105 transition text-sm uppercase tracking-wider"
+            onClick={() => setPage("minhasApostas")}
+            className="w-full bg-[#FF6B00] text-black font-black py-3.5 rounded-xl cursor-pointer hover:scale-105 transition text-sm uppercase tracking-wider flex items-center justify-center gap-2"
           >
-            VER MINHAS APOSTAS
+            <span>🎫</span> VER MINHAS APOSTAS OFICIAIS
+          </button>
+          <button
+            onClick={() => setPage("palpites")}
+            className="w-full bg-zinc-800 hover:bg-zinc-700 text-white font-bold py-3 rounded-xl text-xs cursor-pointer uppercase tracking-wider"
+          >
+            Voltar para Jogos da Rodada
           </button>
           <button
             onClick={() => setPage("landing")}
