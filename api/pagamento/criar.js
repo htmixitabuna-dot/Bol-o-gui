@@ -48,10 +48,11 @@ async function buscarValorBolaoNoBanco() {
       const docData = await resp.json();
       const fields = docData?.fields || {};
       const valor =
+        parseFirestoreNumber(fields.valorCota) ??
+        parseFirestoreNumber(fields.precoCota) ??
         parseFirestoreNumber(fields.valor) ??
         parseFirestoreNumber(fields.valor_aposta) ??
-        parseFirestoreNumber(fields.preco) ??
-        parseFirestoreNumber(fields.valorCota);
+        parseFirestoreNumber(fields.preco);
       if (valor !== null && valor > 0) {
         return valor;
       }
@@ -60,7 +61,7 @@ async function buscarValorBolaoNoBanco() {
     }
   }
 
-  throw new Error("Valor da aposta não encontrado no banco de dados (config/bolao_config).");
+  return 10;
 }
 
 async function salvarLinkPagamentoNoJogador(jogadorId, link) {

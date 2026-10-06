@@ -179,6 +179,19 @@
           "type": "number",
           "description": "Valor da cota do bolão em reais."
         },
+        "valorCota": {
+          "type": "number",
+          "description": "Valor da cota do bolão em reais."
+        },
+        "precoCota": {
+          "type": "number",
+          "description": "Preço da cota do bolão em reais."
+        },
+        "handle": {
+          "type": "string",
+          "description": "Handle da InfinitePay.",
+          "maxLength": 120
+        },
         "chavePix": {
           "type": "string",
           "description": "Chave PIX oficial do organizador.",
@@ -203,8 +216,7 @@
           "minLength": 1,
           "maxLength": 120
         }
-      },
-      "required": ["valor", "chavePix", "nomePix", "cidadePix", "pixAdm"]
+      }
     },
     "JogoDisponivel": {
       "title": "JogoDisponivel",

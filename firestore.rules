@@ -79,13 +79,15 @@ service cloud.firestore {
     }
 
     function isValidConfig(data) {
-      return data.keys().hasAll(['valor', 'chavePix', 'nomePix', 'cidadePix', 'pixAdm']) &&
-        data.keys().hasOnly(['valor', 'chavePix', 'nomePix', 'cidadePix', 'pixAdm']) &&
-        data.valor is number && data.valor >= 0 &&
-        data.chavePix is string && data.chavePix.size() >= 1 && data.chavePix.size() <= 120 &&
-        data.nomePix is string && data.nomePix.size() >= 1 && data.nomePix.size() <= 60 &&
-        data.cidadePix is string && data.cidadePix.size() >= 1 && data.cidadePix.size() <= 60 &&
-        data.pixAdm is string && data.pixAdm.size() >= 1 && data.pixAdm.size() <= 120;
+      return data.keys().hasOnly(['valor', 'valorCota', 'precoCota', 'handle', 'chavePix', 'nomePix', 'cidadePix', 'pixAdm']) &&
+        (!('valor' in data) || (data.valor is number && data.valor >= 0)) &&
+        (!('valorCota' in data) || (data.valorCota is number && data.valorCota >= 0)) &&
+        (!('precoCota' in data) || (data.precoCota is number && data.precoCota >= 0)) &&
+        (!('handle' in data) || (data.handle is string && data.handle.size() <= 120)) &&
+        (!('chavePix' in data) || (data.chavePix is string && data.chavePix.size() >= 1 && data.chavePix.size() <= 120)) &&
+        (!('nomePix' in data) || (data.nomePix is string && data.nomePix.size() >= 1 && data.nomePix.size() <= 60)) &&
+        (!('cidadePix' in data) || (data.cidadePix is string && data.cidadePix.size() >= 1 && data.cidadePix.size() <= 60)) &&
+        (!('pixAdm' in data) || (data.pixAdm is string && data.pixAdm.size() >= 1 && data.pixAdm.size() <= 120));
     }
 
     function isValidJogoDisponivel(data) {
@@ -164,7 +166,7 @@ service cloud.firestore {
       allow list: if request.time != null;
       allow create: if isValidId(configId) && isValidConfig(incoming());
       allow update: if isValidId(configId) && isValidConfig(incoming()) &&
-        incoming().diff(existing()).affectedKeys().hasOnly(['valor', 'chavePix', 'nomePix', 'cidadePix', 'pixAdm']);
+        incoming().diff(existing()).affectedKeys().hasOnly(['valor', 'valorCota', 'precoCota', 'handle', 'chavePix', 'nomePix', 'cidadePix', 'pixAdm']);
       allow delete: if isValidId(configId);
     }
 

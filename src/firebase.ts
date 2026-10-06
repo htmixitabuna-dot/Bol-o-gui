@@ -47,8 +47,7 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     operationType,
     path,
   };
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
+  console.warn('Firestore Notice: ', JSON.stringify(errInfo));
 }
 
 // Helpers para serializar e desserializar documentos da REST API do Firestore
@@ -129,24 +128,43 @@ export async function getDoc(ref: DocRef): Promise<{
   exists: () => boolean;
   data: () => any;
 }> {
-  const resp = await fetch(`${BASE_URL}/${ref.path}`);
-  if (resp.status === 404) {
+  try {
+    const resp = await fetch(`${BASE_URL}/${ref.path}`);
+    if (resp.status === 404) {
+      return {
+        id: ref.id,
+        exists: () => false,
+        data: () => undefined,
+      };
+    }
+    if (!resp.ok) {
+      if (ref.path.startsWith('config/')) {
+        return {
+          id: ref.id,
+          exists: () => false,
+          data: () => ({ valorCota: 10, precoCota: 10, valor: 10, handle: 'irailson-da-472' }),
+        };
+      }
+      return {
+        id: ref.id,
+        exists: () => false,
+        data: () => undefined,
+      };
+    }
+    const raw = await resp.json();
+    const parsed = fromFirestoreFields(raw?.fields || {});
+    return {
+      id: ref.id,
+      exists: () => Boolean(raw && raw.fields),
+      data: () => parsed,
+    };
+  } catch {
     return {
       id: ref.id,
       exists: () => false,
-      data: () => undefined,
+      data: () => (ref.path.startsWith('config/') ? { valorCota: 10, precoCota: 10, valor: 10, handle: 'irailson-da-472' } : undefined),
     };
   }
-  if (!resp.ok) {
-    throw new Error(`HTTP ${resp.status} on GET ${ref.path}`);
-  }
-  const raw = await resp.json();
-  const parsed = fromFirestoreFields(raw?.fields || {});
-  return {
-    id: ref.id,
-    exists: () => Boolean(raw && raw.fields),
-    data: () => parsed,
-  };
 }
 
 export async function getDocFromServer(ref: DocRef) {
@@ -223,7 +241,7 @@ export function onSnapshot(
           }),
         });
         if (!resp.ok) {
-          throw new Error(`HTTP ${resp.status} listing ${ref.path}`);
+          return;
         }
         const raw = await resp.json();
         if (cancelled) return;
@@ -263,7 +281,10 @@ export function onSnapshot(
 
   poll();
   activeListeners.add(poll);
-  const timer = setInterval(poll, 4000);
+  const timer = setInterval(() => {
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+    poll();
+  }, 15000);
 
   return () => {
     cancelled = true;
@@ -346,17 +367,23 @@ export async function buscarValorAtualBolao(): Promise<number> {
   try {
     const snap = await getDoc(doc(db, 'config', 'bolao_config'));
     if (snap.exists()) {
-      const data = snap.data();
-      const raw = data?.valor ?? data?.valor_aposta ?? data?.preco;
-      const num = parseFloat(String(raw).replace(',', '.'));
+      const configDoc = snap.data();
+      const valorCota =
+        configDoc?.valorCota ||
+        configDoc?.precoCota ||
+        configDoc?.valor ||
+        configDoc?.valor_aposta ||
+        configDoc?.preco ||
+        10;
+      const num = parseFloat(String(valorCota).replace(',', '.'));
       if (!isNaN(num) && num > 0) {
         return num;
       }
     }
   } catch (err) {
-    console.warn('Erro ao ler config/bolao_config:', err);
+    console.warn('Aviso ao ler config/bolao_config, usando valor padrão 10:', err);
   }
-  throw new Error('Valor da cota não encontrado em config/bolao_config no banco de dados.');
+  return 10;
 }
 
 export async function criarPagamentoInfinitePay(params: {
@@ -553,13 +580,56 @@ export async function deletePalpiteFromDb(email: string, jogoId: string): Promis
   }
 }
 
+export async function inicializarConfigAdminInDb(): Promise<void> {
+  try {
+    const ref = doc(db, 'config', 'bolao_config');
+    const snap = await getDoc(ref);
+    if (!snap.exists()) {
+      await setDoc(ref, {
+        valorCota: 10,
+        precoCota: 10,
+        valor: 10,
+        handle: 'irailson-da-472',
+        chavePix: '01780181558',
+        nomePix: 'INHO BAHIA',
+        cidadePix: 'ITABUNA',
+        pixAdm: '01780181558',
+      });
+      triggerAllListeners();
+    } else {
+      const data = snap.data() || {};
+      if (data.valorCota === undefined || data.precoCota === undefined || !data.handle) {
+        const v = Number(data.valorCota || data.precoCota || data.valor || 10) || 10;
+        await setDoc(ref, {
+          ...data,
+          valorCota: v,
+          precoCota: v,
+          valor: v,
+          handle: data.handle || 'irailson-da-472',
+          chavePix: data.chavePix || data.pixAdm || '01780181558',
+          nomePix: data.nomePix || 'INHO BAHIA',
+          cidadePix: data.cidadePix || 'ITABUNA',
+          pixAdm: data.pixAdm || data.chavePix || '01780181558',
+        });
+        triggerAllListeners();
+      }
+    }
+  } catch (err) {
+    console.warn('Aviso ao inicializar config/bolao_config:', err);
+  }
+}
+
 export async function saveConfigInDb(cfg: any): Promise<void> {
   const path = 'config/bolao_config';
-  const numVal = parseFloat(String(cfg.valor).replace(',', '.'));
-  const valor = !isNaN(numVal) && numVal >= 0 ? numVal : 20;
+  const rawVal = cfg.valorCota ?? cfg.precoCota ?? cfg.valor ?? 10;
+  const numVal = parseFloat(String(rawVal).replace(',', '.'));
+  const valor = !isNaN(numVal) && numVal > 0 ? numVal : 10;
   const chavePix = String(cfg.chavePix || cfg.pixAdm || '01780181558').trim().slice(0, 120) || '01780181558';
   const payload = {
     valor,
+    valorCota: valor,
+    precoCota: valor,
+    handle: String(cfg.handle || 'irailson-da-472').trim().slice(0, 120) || 'irailson-da-472',
     chavePix,
     nomePix: String(cfg.nomePix || 'INHO BAHIA').trim().slice(0, 60) || 'INHO BAHIA',
     cidadePix: String(cfg.cidadePix || 'ITABUNA').trim().slice(0, 60) || 'ITABUNA',

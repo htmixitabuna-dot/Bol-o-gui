@@ -16,6 +16,7 @@ import {
   upsertPalpiteInDb,
   deletePalpiteFromDb,
   saveConfigInDb,
+  inicializarConfigAdminInDb,
   compressImageToDataUrl,
   criarPagamentoInfinitePay,
 } from './firebase';
@@ -175,7 +176,7 @@ export default function App() {
   const [jogadores, setJogadores] = useState<any[]>([]);
   const [palpites, setPalpites] = useState<Palpite[]>([]);
   const [user, setUser] = useState<any>(null);
-  const [config, setConfig] = useState<{ valor: number | string; chavePix: string; nomePix: string; cidadePix: string; pixAdm: string }>({ valor: 10, chavePix: "01780181558", nomePix: "INHO BAHIA", cidadePix: "ITABUNA", pixAdm: "01780181558" });
+  const [config, setConfig] = useState<{ valor: number | string; valorCota?: number; precoCota?: number; handle?: string; chavePix: string; nomePix: string; cidadePix: string; pixAdm: string }>({ valor: 10, valorCota: 10, precoCota: 10, handle: "irailson-da-472", chavePix: "01780181558", nomePix: "INHO BAHIA", cidadePix: "ITABUNA", pixAdm: "01780181558" });
   const [copiadoPix, setCopiadoPix] = useState(false);
   const [copiadaChave, setCopiadaChave] = useState(false);
   const [pixSalvoAviso, setPixSalvoAviso] = useState(false);
@@ -277,10 +278,14 @@ export default function App() {
       }
       if (cfg) {
         const parsed = JSON.parse(cfg);
+        const valorCota = parsed?.valorCota || parsed?.precoCota || parsed?.valor || 10;
         setConfig((prev) => ({
           ...prev,
           ...parsed,
-          valor: parsed.valor !== undefined ? parsed.valor : prev.valor,
+          valor: valorCota,
+          valorCota: Number(valorCota) || 10,
+          precoCota: Number(valorCota) || 10,
+          handle: parsed.handle || prev.handle || "irailson-da-472",
           chavePix: parsed.chavePix || parsed.pixAdm || prev.chavePix,
           pixAdm: parsed.chavePix || parsed.pixAdm || prev.pixAdm,
           nomePix: parsed.nomePix || prev.nomePix,
@@ -384,25 +389,33 @@ export default function App() {
       doc(db, "config", "bolao_config"),
       (docSnap) => {
         setDbConectado(true);
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          setConfig((prev) => {
-            const next = {
-              ...prev,
-              ...data,
-              valor: data.valor !== undefined ? data.valor : prev.valor,
-              chavePix: data.chavePix || data.pixAdm || prev.chavePix,
-              pixAdm: data.chavePix || data.pixAdm || prev.pixAdm,
-              nomePix: data.nomePix || prev.nomePix,
-              cidadePix: data.cidadePix || prev.cidadePix,
-            };
-            localStorage.setItem("elite_config_v11", JSON.stringify(next));
-            return next;
-          });
-        }
+        const configDoc = docSnap.exists() ? docSnap.data() : null;
+        const valorCota = configDoc?.valorCota || configDoc?.precoCota || configDoc?.valor || 10;
+        setConfig((prev) => {
+          const next = {
+            ...prev,
+            ...(configDoc || {}),
+            valor: valorCota,
+            valorCota: Number(valorCota) || 10,
+            precoCota: Number(valorCota) || 10,
+            handle: configDoc?.handle || prev.handle || "irailson-da-472",
+            chavePix: configDoc?.chavePix || configDoc?.pixAdm || prev.chavePix,
+            pixAdm: configDoc?.chavePix || configDoc?.pixAdm || prev.pixAdm,
+            nomePix: configDoc?.nomePix || prev.nomePix,
+            cidadePix: configDoc?.cidadePix || prev.cidadePix,
+          };
+          localStorage.setItem("elite_config_v11", JSON.stringify(next));
+          return next;
+        });
       },
-      (error) => {
-        handleFirestoreError(error, OperationType.GET, "config/bolao_config");
+      () => {
+        setConfig((prev) => ({
+          ...prev,
+          valor: prev.valor || 10,
+          valorCota: Number(prev.valorCota || prev.valor || 10) || 10,
+          precoCota: Number(prev.precoCota || prev.valor || 10) || 10,
+          handle: prev.handle || "irailson-da-472",
+        }));
       }
     );
 
@@ -413,6 +426,13 @@ export default function App() {
       unsubConfig();
     };
   }, []);
+
+  // Inicialização automática no Admin: se config/bolao_config não existir, cria com { valorCota: 10, precoCota: 10, handle: "irailson-da-472" }
+  useEffect(() => {
+    if (page === "admin") {
+      inicializarConfigAdminInDb().catch(() => {});
+    }
+  }, [page]);
 
   // Inicializa escolhas temporárias do usuário ao carregar jogos/palpites (exceto quando estiver fazendo nova aposta)
   useEffect(() => {
@@ -893,7 +913,15 @@ export default function App() {
       return;
     }
     const chaveAtual = (config.chavePix || config.pixAdm || "01780181558").trim();
-    saveConfig({ ...config, valor: numVal, chavePix: chaveAtual, pixAdm: chaveAtual });
+    saveConfig({
+      ...config,
+      valor: numVal,
+      valorCota: numVal,
+      precoCota: numVal,
+      handle: config.handle || "irailson-da-472",
+      chavePix: chaveAtual,
+      pixAdm: chaveAtual,
+    });
     setCotaSalvaAviso(true);
     setTimeout(() => setCotaSalvaAviso(false), 4000);
     mostrarAvisoAdm(`💾 Valor da cota (R$ ${numVal}) salvo com sucesso!`);
@@ -975,7 +1003,8 @@ export default function App() {
   const { ranking: rankingGanhadores, totalJogosEncerrados } = calcularTriagem();
 
   // Cálculos Financeiros & Contabilizador de Depósitos
-  const valorCotaNumerico = parseFloat(String(config.valor).replace(",", ".")) || 0;
+  const valorCotaPadrao = config?.valorCota || config?.precoCota || config?.valor || 10;
+  const valorCotaNumerico = parseFloat(String(valorCotaPadrao).replace(",", ".")) || 10;
   const jogadoresPagosLista = jogadores.filter(
     (jg: any) =>
       jg.status_pagamento === "pago" ||
@@ -989,10 +1018,35 @@ export default function App() {
       !jogadoresPagosLista.some((ap: any) => ap.email === jg.email)
   );
 
-  const pagos = jogadoresPagosLista.length;
-  const emAnaliseCount = jogadoresEmAnaliseLista.length;
-  const total = pagos * valorCotaNumerico;
-  const totalSendoDepositado = emAnaliseCount * valorCotaNumerico;
+  // Lista de depósitos recentes (Confirmados + Sendo Depositados) para o Contabilizador do Jogador
+  const movDepositos = [
+    ...jogadoresEmAnaliseLista.map((jg: any) => ({
+      nome: jg.nome || "Jogador",
+      email: jg.email,
+      pix: jg.pix,
+      status: "EM_ANALISE" as const,
+      valor: Number(jg.valorDeposito || jg.valorPago || jg.valor || valorCotaNumerico) || 10,
+      horario: jg.dataEnvioComprovante || "Agora mesmo",
+      ordem: jg.timestampComprovante || Date.now(),
+    })),
+    ...jogadoresPagosLista.map((jg: any) => ({
+      nome: jg.nome || "Jogador",
+      email: jg.email,
+      pix: jg.pix,
+      status: "APROVADO" as const,
+      valor: Number(jg.valorDeposito || jg.valorPago || jg.valor || valorCotaNumerico) || 10,
+      horario: jg.dataAprovacao ? `Aprovado às ${jg.dataAprovacao}` : jg.dataEnvioComprovante || "Confirmado",
+      ordem: (jg.timestampComprovante || 0) + 1,
+    })),
+  ].sort((a, b) => b.ordem - a.ordem);
+
+  const depositosConfirmadosLista = movDepositos.filter((dep) => dep.status === "APROVADO");
+  const depositosEmAnaliseMovLista = movDepositos.filter((dep) => dep.status === "EM_ANALISE");
+
+  const pagos = depositosConfirmadosLista.length;
+  const emAnaliseCount = depositosEmAnaliseMovLista.length;
+  const total = depositosConfirmadosLista.reduce((acc, dep) => acc + (Number(dep.valor) || 10), 0);
+  const totalSendoDepositado = depositosEmAnaliseMovLista.reduce((acc, dep) => acc + (Number(dep.valor) || 10), 0);
   const totalGeralDepositos = total + totalSendoDepositado;
   const banca20 = total * 0.2;
   const premio80 = total * 0.8;
@@ -1002,36 +1056,57 @@ export default function App() {
   const premio2 = premio80 * 0.3;
   const premio3 = premio80 * 0.2;
 
-  // Lista de depósitos recentes (Confirmados + Sendo Depositados) para o Contabilizador do Jogador
-  const movDepositos = [
-    ...jogadoresEmAnaliseLista.map((jg: any) => ({
-      nome: jg.nome || "Jogador",
-      email: jg.email,
-      status: "EM_ANALISE" as const,
-      valor: valorCotaNumerico,
-      horario: jg.dataEnvioComprovante || "Agora mesmo",
-      ordem: jg.timestampComprovante || Date.now(),
-    })),
-    ...jogadoresPagosLista.map((jg: any) => ({
-      nome: jg.nome || "Jogador",
-      email: jg.email,
-      status: "APROVADO" as const,
-      valor: valorCotaNumerico,
-      horario: jg.dataAprovacao ? `Aprovado às ${jg.dataAprovacao}` : jg.dataEnvioComprovante || "Confirmado",
-      ordem: (jg.timestampComprovante || 0) + 1,
-    })),
-  ].sort((a, b) => b.ordem - a.ordem);
+  // Soma os valores CONFIRMADO da Movimentação de Depósitos para "Seu Depósito (...)"
+  const depositosConfirmadosDoUsuario = user
+    ? depositosConfirmadosLista.filter((dep) => {
+        const emailUser = (user.email || "").trim().toLowerCase();
+        const emailDep = (dep.email || "").trim().toLowerCase();
+        if (emailUser && emailDep && emailUser === emailDep) return true;
+
+        const pixUser = (user.pix || "").trim().toLowerCase();
+        const pixDep = (dep.pix || "").trim().toLowerCase();
+        if (pixUser && pixUser !== "-" && pixDep && pixDep !== "-" && pixUser === pixDep) return true;
+
+        const nomeUser = (user.nome || "").trim().toLowerCase();
+        const nomeDep = (dep.nome || "").trim().toLowerCase();
+        const primeiroNomeUser = nomeUser.split(" ")[0];
+        const primeiroNomeDep = nomeDep.split(" ")[0];
+        if (nomeUser && nomeDep && (nomeUser === nomeDep || (primeiroNomeUser.length >= 3 && primeiroNomeUser === primeiroNomeDep))) {
+          return true;
+        }
+        return false;
+      })
+    : [];
+
+  const somaConfirmadosUsuario = depositosConfirmadosDoUsuario.reduce(
+    (acc, dep) => acc + (Number(dep.valor) || 10),
+    0
+  );
+  const somaConfirmadosMovimentacao = depositosConfirmadosLista.reduce(
+    (acc, dep) => acc + (Number(dep.valor) || 10),
+    0
+  );
+  const valorDepositoConfirmadoSoma =
+    somaConfirmadosUsuario > 0 ? somaConfirmadosUsuario : somaConfirmadosMovimentacao;
 
   const meuStatusDeposito = user
-    ? user.status_pagamento === "pago" ||
+    ? valorDepositoConfirmadoSoma > 0 ||
+      user.status_pagamento === "pago" ||
       user.aprovado === true ||
       user.statusPagamento === "APROVADO" ||
-      palpites.some((p: any) => p.jogadorEmail === user.email && p.pago)
+      palpites.some((p: any) => (p.jogadorEmail || "").toLowerCase() === (user.email || "").toLowerCase() && p.pago)
       ? "APROVADO"
       : user.statusPagamento === "EM_ANALISE"
       ? "EM_ANALISE"
       : "PENDENTE"
     : "PENDENTE";
+
+  const valorMeuDepositoExibido =
+    valorDepositoConfirmadoSoma > 0
+      ? valorDepositoConfirmadoSoma
+      : meuStatusDeposito === "APROVADO" || meuStatusDeposito === "EM_ANALISE"
+      ? valorCotaNumerico
+      : 0;
 
   const ContabilizadorDepositosJogador = ({ mostrarBotaoDepositar = true }: { mostrarBotaoDepositar?: boolean }) => (
     <div className="mt-4 bg-zinc-900 border border-zinc-800 rounded-2xl p-4 space-y-3.5 shadow-xl">
@@ -1139,11 +1214,11 @@ export default function App() {
                 Seu Depósito ({user.nome?.split(" ")[0]}):{" "}
                 <span className="text-[#FF6B00]">
                   {meuStatusDeposito === "APROVADO"
-                    ? `R$ ${valorCotaNumerico.toFixed(2)} (Confirmado)`
+                    ? `R$ ${valorMeuDepositoExibido.toFixed(2).replace(".", ",")} (Confirmado)`
                     : meuStatusDeposito === "EM_ANALISE"
-                    ? `R$ ${valorCotaNumerico.toFixed(2)} (Sendo contabilizado / Em análise)`
+                    ? `R$ ${valorMeuDepositoExibido.toFixed(2).replace(".", ",")} (Sendo contabilizado / Em análise)`
                     : palpites.some((p) => (p.jogadorEmail || "").toLowerCase() === (user.email || "").toLowerCase())
-                    ? `R$ 0,00 (Aguardando pagamento da aposta: R$ ${valorCotaNumerico.toFixed(2)})`
+                    ? `R$ 0,00 (Aguardando pagamento da aposta: R$ ${valorCotaNumerico.toFixed(2).replace(".", ",")})`
                     : "R$ 0,00 (Selecione seus palpites abaixo para fazer sua aposta)"}
                 </span>
               </div>
@@ -2009,6 +2084,7 @@ export default function App() {
               const emailInput = String(fd.get("email") || "").trim().toLowerCase();
               const senhaInput = String(fd.get("senha") || "").trim();
               if (emailInput === "inhobahia29@gmail.com" && senhaInput === "040608") {
+                inicializarConfigAdminInDb().catch(() => {});
                 setPage("admin");
               } else {
                 alert("Acesso negado");
@@ -3574,11 +3650,16 @@ export default function App() {
                 }
 
                 // Se for uma nova aposta ou ainda não estiver paga, prepara o usuário e gera o novo PIX InfinitePay
+                const jaTinhaDepositoConfirmado = Boolean(
+                  user.status_pagamento === "pago" ||
+                    user.aprovado === true ||
+                    user.statusPagamento === "APROVADO"
+                );
                 const userParaPix = {
                   ...user,
-                  statusPagamento: "PENDENTE",
-                  status_pagamento: "pendente",
-                  aprovado: false,
+                  statusPagamento: jaTinhaDepositoConfirmado ? "APROVADO" : "PENDENTE",
+                  status_pagamento: jaTinhaDepositoConfirmado ? "pago" : "pendente",
+                  aprovado: jaTinhaDepositoConfirmado,
                 };
                 setUser(userParaPix);
                 localStorage.setItem("elite_user_v11", JSON.stringify(userParaPix));
@@ -3967,7 +4048,7 @@ export default function App() {
   // =========================================================================
   // 7. TELA DE PAGAMENTO PIX AUTOMÁTICO (INFINITEPAY)
   // =========================================================================
-  const valorDinamico = config.valor;
+  const valorDinamico = config?.valorCota || config?.precoCota || config?.valor || 10;
   const linkCheckoutAtivo = linkPixGerado || user?.link_pagamento || "";
 
   return (
