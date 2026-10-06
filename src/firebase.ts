@@ -425,7 +425,7 @@ export function onSnapshot(
             return {
               id: docId,
               exists: () => true,
-              data: () => parsed,
+              data: () => ({ ...parsed, _docId: docId }),
             };
           });
         const hash = JSON.stringify(docs.map((x: any) => ({ id: x.id, d: x.data() })));
@@ -476,10 +476,76 @@ export function getPalpiteDocId(email: string, jogoId: string): string {
   return `${getJogadorDocId(email)}_${jId}`;
 }
 
-export async function upsertJogadorInDb(jg: any): Promise<void> {
+function getDeletedSet(): Set<string> {
+  if (typeof window === 'undefined') return new Set();
+  try {
+    const raw = localStorage.getItem('elite_deleted_jogadores_v11');
+    if (raw) {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) return new Set(arr.map((x) => String(x).toLowerCase()));
+    }
+  } catch {
+    // ignore
+  }
+  return new Set();
+}
+
+function saveDeletedSet(set: Set<string>) {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem('elite_deleted_jogadores_v11', JSON.stringify(Array.from(set)));
+  } catch {
+    // ignore
+  }
+}
+
+export function markJogadorDeletedLocal(email?: string, docId?: string) {
+  const s = getDeletedSet();
+  if (email) {
+    const eNorm = email.trim().toLowerCase();
+    if (eNorm) {
+      s.add(eNorm);
+      s.add(getJogadorDocId(eNorm));
+    }
+  }
+  if (docId) {
+    s.add(docId.trim().toLowerCase());
+  }
+  saveDeletedSet(s);
+}
+
+export function clearJogadorDeletedLocal(email?: string, docId?: string) {
+  const s = getDeletedSet();
+  if (email) {
+    const eNorm = email.trim().toLowerCase();
+    s.delete(eNorm);
+    s.delete(getJogadorDocId(eNorm));
+  }
+  if (docId) {
+    s.delete(docId.trim().toLowerCase());
+  }
+  saveDeletedSet(s);
+}
+
+export function isJogadorDeletedLocal(email?: string, docId?: string): boolean {
+  const s = getDeletedSet();
+  if (email) {
+    const eNorm = email.trim().toLowerCase();
+    if (s.has(eNorm) || s.has(getJogadorDocId(eNorm))) return true;
+  }
+  if (docId && s.has(docId.trim().toLowerCase())) return true;
+  return false;
+}
+
+export async function upsertJogadorInDb(jg: any, isNovoCadastro = false): Promise<void> {
   const email = String(jg.email || '').trim().toLowerCase().slice(0, 120);
   if (!email || email.length < 3) return;
   const docId = getJogadorDocId(email);
+  if (isNovoCadastro) {
+    clearJogadorDeletedLocal(email, docId);
+  } else if (isJogadorDeletedLocal(email, docId)) {
+    return;
+  }
   const path = `jogadores/${docId}`;
 
   const payload: Record<string, any> = {
@@ -580,14 +646,120 @@ export async function registrarDepositoConfirmadoInDb(userObj?: any, valorPago?:
   return payload as any;
 }
 
-export async function deleteJogadorFromDb(email: string): Promise<void> {
-  const docId = getJogadorDocId(email);
-  const path = `jogadores/${docId}`;
+export async function deleteJogadorFromDb(
+  email: string,
+  extraDocIds: string[] = [],
+  nome?: string
+): Promise<void> {
+  const emailNorm = String(email || '').trim().toLowerCase();
+  const primaryDocId = getJogadorDocId(emailNorm || nome || '');
+  markJogadorDeletedLocal(emailNorm, primaryDocId);
+  for (const exId of extraDocIds) {
+    if (exId) markJogadorDeletedLocal(undefined, exId);
+  }
+
+  const candidateIds = new Set<string>();
+  if (primaryDocId && primaryDocId !== 'jogador_anonimo') candidateIds.add(primaryDocId);
+  extraDocIds.forEach((id) => {
+    const clean = String(id || '').trim();
+    if (clean) candidateIds.add(clean);
+  });
+
   try {
-    await deleteDoc(doc(db, 'jogadores', docId));
+    // 1. Deleta diretamente pelos IDs conhecidos em jogadores e depositos
+    for (const cid of Array.from(candidateIds)) {
+      await deleteDoc(doc(db, 'jogadores', cid)).catch(() => {});
+      await deleteDoc(doc(db, 'depositos', cid)).catch(() => {});
+    }
+
+    // 2. Busca e remove quaisquer documentos remanescentes em 'jogadores' com o mesmo e-mail ou ID
+    const respJogadores = await fetch(`${BASE_URL}:runQuery`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        structuredQuery: { from: [{ collectionId: 'jogadores' }] },
+      }),
+    }).catch(() => null);
+
+    if (respJogadores && respJogadores.ok) {
+      const rows = await respJogadores.json().catch(() => []);
+      if (Array.isArray(rows)) {
+        for (const r of rows) {
+          if (!r?.document) continue;
+          const nameParts = String(r.document.name || '').split('/');
+          const dId = nameParts[nameParts.length - 1] || '';
+          const data = fromFirestoreFields(r.document.fields || {});
+          const docEmail = String(data.email || '').trim().toLowerCase();
+          if (
+            (emailNorm && docEmail === emailNorm) ||
+            candidateIds.has(dId) ||
+            (!emailNorm && nome && String(data.nome || '').trim().toLowerCase() === nome.trim().toLowerCase())
+          ) {
+            markJogadorDeletedLocal(docEmail, dId);
+            await deleteDoc(doc(db, 'jogadores', dId)).catch(() => {});
+          }
+        }
+      }
+    }
+
+    // 3. Busca e remove todos os palpites desse jogador na coleção 'palpites'
+    const respPalpites = await fetch(`${BASE_URL}:runQuery`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        structuredQuery: { from: [{ collectionId: 'palpites' }] },
+      }),
+    }).catch(() => null);
+
+    if (respPalpites && respPalpites.ok) {
+      const rows = await respPalpites.json().catch(() => []);
+      if (Array.isArray(rows)) {
+        for (const r of rows) {
+          if (!r?.document) continue;
+          const nameParts = String(r.document.name || '').split('/');
+          const pId = nameParts[nameParts.length - 1] || '';
+          const data = fromFirestoreFields(r.document.fields || {});
+          const pEmail = String(data.jogadorEmail || '').trim().toLowerCase();
+          if ((emailNorm && pEmail === emailNorm) || (primaryDocId && pId.startsWith(`${primaryDocId}_`))) {
+            await deleteDoc(doc(db, 'palpites', pId)).catch(() => {});
+          }
+        }
+      }
+    }
+
+    // 4. Busca e remove todos os depósitos desse jogador na coleção 'depositos'
+    const respDepositos = await fetch(`${BASE_URL}:runQuery`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        structuredQuery: { from: [{ collectionId: 'depositos' }] },
+      }),
+    }).catch(() => null);
+
+    if (respDepositos && respDepositos.ok) {
+      const rows = await respDepositos.json().catch(() => []);
+      if (Array.isArray(rows)) {
+        for (const r of rows) {
+          if (!r?.document) continue;
+          const nameParts = String(r.document.name || '').split('/');
+          const depId = nameParts[nameParts.length - 1] || '';
+          const data = fromFirestoreFields(r.document.fields || {});
+          const depEmail = String(data.email || '').trim().toLowerCase();
+          const depUserId = String(data.userId || '').trim();
+          if (
+            (emailNorm && depEmail === emailNorm) ||
+            candidateIds.has(depId) ||
+            candidateIds.has(depUserId)
+          ) {
+            await deleteDoc(doc(db, 'depositos', depId)).catch(() => {});
+          }
+        }
+      }
+    }
+
     triggerAllListeners();
   } catch (error) {
-    handleFirestoreError(error, OperationType.DELETE, path);
+    handleFirestoreError(error, OperationType.DELETE, `jogadores/${primaryDocId}`);
   }
 }
 

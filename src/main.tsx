@@ -39,7 +39,13 @@ function RootRouter() {
     }
     const checkAdminPanel = () => {
       const text = document.body?.innerText || '';
-      setEmPainelAdm(text.includes('GERENCIAR CONFRONTOS') || text.includes('Adicionar Confronto'));
+      setEmPainelAdm(
+        text.includes('ADM - BOLÕES ELITE') ||
+          text.includes('GERENCIAR CONFRONTOS') ||
+          text.includes('Gerenciar Confrontos') ||
+          text.includes('Cadastrar Novo Bolão') ||
+          text.includes('Adicionar Confronto')
+      );
     };
     checkAdminPanel();
     const observer = new MutationObserver(checkAdminPanel);
@@ -54,7 +60,8 @@ function RootRouter() {
       <ImportarJogosAdmin
         onVoltar={() => {
           if (typeof window !== 'undefined' && window.history?.pushState) {
-            window.history.pushState({}, '', '/');
+            window.history.pushState({}, '', '/admin');
+            window.dispatchEvent(new PopStateEvent('popstate'));
           }
           setMostrarImportador(false);
         }}

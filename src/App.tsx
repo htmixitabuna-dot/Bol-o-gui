@@ -20,6 +20,8 @@ import {
   getJogadorDocId,
   upsertJogadorInDb,
   deleteJogadorFromDb,
+  clearJogadorDeletedLocal,
+  isJogadorDeletedLocal,
   upsertJogoInDb,
   deleteJogoFromDb,
   upsertPalpiteInDb,
@@ -283,33 +285,29 @@ export default function App() {
       if (jd) {
         const parsedJd = JSON.parse(jd);
         let alterouJd = false;
-        const limposJd = parsedJd.map((jg: any) => {
-          if (jg.timestampComprovante && agora - jg.timestampComprovante > TRES_DIAS_MS) {
-            alterouJd = true;
-            return {
-              ...jg,
-              comprovante: undefined,
-              timestampComprovante: undefined,
-              dataEnvioComprovante: undefined,
-            };
-          }
-          return jg;
-        });
+        const limposJd = parsedJd
+          .filter((jg: any) => !isJogadorDeletedLocal(jg.email, jg._docId || jg.id))
+          .map((jg: any) => {
+            if (jg.timestampComprovante && agora - jg.timestampComprovante > TRES_DIAS_MS) {
+              alterouJd = true;
+              return {
+                ...jg,
+                comprovante: undefined,
+                timestampComprovante: undefined,
+                dataEnvioComprovante: undefined,
+              };
+            }
+            return jg;
+          });
         setJogadores(limposJd);
         if (alterouJd) {
           localStorage.setItem("elite_jogadores_v11", JSON.stringify(limposJd));
         }
-        limposJd.forEach((jg: any) => {
-          upsertJogadorInDb(jg).catch(() => {});
-        });
       }
 
       if (p) {
-        const parsedP = JSON.parse(p);
+        const parsedP = JSON.parse(p).filter((palp: any) => !isJogadorDeletedLocal(palp.jogadorEmail));
         setPalpites(parsedP);
-        parsedP.forEach((palp: any) => {
-          upsertPalpiteInDb(palp).catch(() => {});
-        });
       }
       if (cfg) {
         const parsed = JSON.parse(cfg);
@@ -334,15 +332,20 @@ export default function App() {
 
       if (u) {
         const parsedU = JSON.parse(u);
-        if (parsedU.timestampComprovante && agora - parsedU.timestampComprovante > TRES_DIAS_MS) {
-          parsedU.comprovante = undefined;
-          parsedU.timestampComprovante = undefined;
-          parsedU.dataEnvioComprovante = undefined;
-          localStorage.setItem("elite_user_v11", JSON.stringify(parsedU));
+        if (isJogadorDeletedLocal(parsedU.email, parsedU._docId || parsedU.id)) {
+          localStorage.removeItem("elite_user_v11");
+          localStorage.removeItem("elite_pix_confirmado_v11");
+          setUser(null);
+        } else {
+          if (parsedU.timestampComprovante && agora - parsedU.timestampComprovante > TRES_DIAS_MS) {
+            parsedU.comprovante = undefined;
+            parsedU.timestampComprovante = undefined;
+            parsedU.dataEnvioComprovante = undefined;
+            localStorage.setItem("elite_user_v11", JSON.stringify(parsedU));
+          }
+          setUser(parsedU);
+          syncAuthCurrentUser(parsedU);
         }
-        setUser(parsedU);
-        syncAuthCurrentUser(parsedU);
-        upsertJogadorInDb(parsedU).catch(() => {});
       }
       if (l) setLogoBolao(l);
     } catch {
@@ -359,9 +362,13 @@ export default function App() {
         const listaDb: any[] = [];
         snapshot.forEach((docSnap) => {
           const data = docSnap.data();
+          if (isJogadorDeletedLocal(data.email, docSnap.id)) {
+            return;
+          }
           if (data.timestampComprovante && agoraMs - data.timestampComprovante > TRES_DIAS_MS) {
             const limpo = {
               ...data,
+              _docId: docSnap.id,
               comprovante: undefined,
               timestampComprovante: undefined,
               dataEnvioComprovante: undefined,
@@ -369,7 +376,7 @@ export default function App() {
             listaDb.push(limpo);
             upsertJogadorInDb(limpo).catch(() => {});
           } else {
-            listaDb.push(data);
+            listaDb.push({ ...data, _docId: docSnap.id });
           }
         });
         setJogadores(listaDb);
@@ -384,7 +391,12 @@ export default function App() {
             localStorage.setItem("elite_user_v11", JSON.stringify(atualizado));
             return atualizado;
           }
-          return prevUser;
+          // Se o jogador não existe mais no banco de dados (foi excluído pelo ADM), encerra a sessão dele:
+          // ele só poderá voltar se realizar um Novo Cadastro.
+          localStorage.removeItem("elite_user_v11");
+          localStorage.removeItem("elite_pix_confirmado_v11");
+          setPagamentoConfirmadoLocal(false);
+          return null;
         });
       },
       (error) => {
@@ -776,14 +788,16 @@ export default function App() {
         });
       }
 
-      const usuarioAtivo = user || {
-        id: auth.currentUser?.uid || "inho_jogador",
-        nome: auth.currentUser?.displayName || "Jogador",
-        email: auth.currentUser?.email || "inhobahia29@gmail.com",
-        pix: "-",
-        pontos: 0,
-      };
-      const emailJogador = (usuarioAtivo.email || "inhobahia29@gmail.com").trim().toLowerCase();
+      if (!user || !jogadores.some((jg: any) => (jg.email || "").toLowerCase() === (user.email || "").toLowerCase())) {
+        alert("Seu cadastro não foi encontrado no banco de dados. Faça um Novo Cadastro para participar!");
+        setUser(null);
+        localStorage.removeItem("elite_user_v11");
+        setAbaLoginJogador("cadastro");
+        setPage("loginJogador");
+        return;
+      }
+      const usuarioAtivo = user;
+      const emailJogador = (usuarioAtivo.email || "").trim().toLowerCase();
       const nomeJogador = (usuarioAtivo.nome || "Jogador").trim();
       const jogadorId = usuarioAtivo.id || getJogadorDocId(emailJogador);
 
@@ -821,13 +835,16 @@ export default function App() {
       const docSnap = await getDoc(doc(db, "config", "bolao"));
       const valorConfirmado = Number(docSnap.data()?.valorCota) || Number(valorPixAtual) || Number(config.valor) || 10;
 
-      const usuarioAtivo = user || {
-        id: auth.currentUser?.uid || "inho_jogador",
-        nome: auth.currentUser?.displayName || "Inho",
-        email: auth.currentUser?.email || "inhobahia29@gmail.com",
-        pix: CHAVE_PIX_ALEATORIA,
-        pontos: 0,
-      };
+      if (!user || !jogadores.some((jg: any) => (jg.email || "").toLowerCase() === (user.email || "").toLowerCase())) {
+        alert("Seu cadastro não foi encontrado no banco de dados. Faça um Novo Cadastro para participar!");
+        setUser(null);
+        localStorage.removeItem("elite_user_v11");
+        setModalPixAberto(false);
+        setAbaLoginJogador("cadastro");
+        setPage("loginJogador");
+        return;
+      }
+      const usuarioAtivo = user;
       syncAuthCurrentUser(usuarioAtivo);
 
       const uid = auth.currentUser.uid;
@@ -1231,20 +1248,11 @@ export default function App() {
     const dataHoraFormatada = `${new Date().toLocaleDateString("pt-BR")} às ${horaEnvio}`;
 
     const existeNaLista = jogadores.some((jg: any) => (jg.email || "").toLowerCase() === email.toLowerCase());
-    const baseLista = existeNaLista
-      ? jogadores
-      : [
-          ...jogadores,
-          {
-            id: getJogadorDocId(email),
-            nome: user?.nome || auth.currentUser?.displayName || "Jogador",
-            email,
-            pix: user?.pix || "-",
-            pontos: user?.pontos || 0,
-          },
-        ];
+    if (!existeNaLista) {
+      return;
+    }
 
-    const jogadoresAtualizados = baseLista.map((jg: any) => {
+    const jogadoresAtualizados = jogadores.map((jg: any) => {
       if ((jg.email || "").toLowerCase() === email.toLowerCase()) {
         const nextJg = {
           ...jg,
@@ -1343,12 +1351,38 @@ export default function App() {
     mostrarAvisoAdm("🗑️ Todos os comprovantes de pagamento foram excluídos!");
   };
 
-  const excluirApostadorAdm = (email: string, nome: string) => {
+  const excluirApostadorAdm = (email: string, nome: string, docIdExtra?: string) => {
     const emailNorm = (email || "").trim().toLowerCase();
-    const novaLista = jogadores.filter((jg) => (jg.email || "").trim().toLowerCase() !== emailNorm);
+    const docIdPadrao = getJogadorDocId(emailNorm || nome || "");
+
+    // Coleta todos os IDs de documento relacionados a esse jogador para exclusão total no Firestore
+    const idsParaDeletar: string[] = [];
+    if (docIdExtra) idsParaDeletar.push(docIdExtra);
+    if (docIdPadrao && docIdPadrao !== "jogador_anonimo") idsParaDeletar.push(docIdPadrao);
+
+    jogadores.forEach((jg: any) => {
+      const jgEmail = (jg.email || "").trim().toLowerCase();
+      const mesmoEmail = emailNorm && jgEmail === emailNorm;
+      const mesmoDocId = docIdExtra && (jg._docId === docIdExtra || jg.id === docIdExtra);
+      const mesmoNomeSemEmail = !emailNorm && !jgEmail && (jg.nome || "").trim().toLowerCase() === (nome || "").trim().toLowerCase();
+      if (mesmoEmail || mesmoDocId || mesmoNomeSemEmail) {
+        if (jg._docId) idsParaDeletar.push(jg._docId);
+        if (jg.id) idsParaDeletar.push(jg.id);
+      }
+    });
+
+    const novaLista = jogadores.filter((jg: any) => {
+      const jgEmail = (jg.email || "").trim().toLowerCase();
+      if (emailNorm && jgEmail === emailNorm) return false;
+      if (docIdExtra && (jg._docId === docIdExtra || jg.id === docIdExtra)) return false;
+      if (!emailNorm && !jgEmail && (jg.nome || "").trim().toLowerCase() === (nome || "").trim().toLowerCase()) return false;
+      return true;
+    });
     setJogadores(novaLista);
     localStorage.setItem("elite_jogadores_v11", JSON.stringify(novaLista));
-    deleteJogadorFromDb(emailNorm).catch(() => {});
+
+    // Remove do banco de dados Firestore (jogadores, palpites e depositos)
+    deleteJogadorFromDb(emailNorm, idsParaDeletar, nome).catch(() => {});
 
     const palpitesDoJogador = palpites.filter((p) => (p.jogadorEmail || "").trim().toLowerCase() === emailNorm);
     palpitesDoJogador.forEach((p) => {
@@ -1358,12 +1392,28 @@ export default function App() {
     setPalpites(novosPalpites);
     localStorage.setItem("elite_palpites_v11", JSON.stringify(novosPalpites));
 
-    if (user && (user.email || "").trim().toLowerCase() === emailNorm) {
+    const novosDepositos = depositos.filter((d: any) => {
+      const dEmail = (d.email || "").trim().toLowerCase();
+      const dUserId = String(d.userId || d.id || "").trim();
+      if (emailNorm && dEmail === emailNorm) return false;
+      if (idsParaDeletar.includes(dUserId)) return false;
+      return true;
+    });
+    setDepositos(novosDepositos);
+    localStorage.setItem("elite_depositos_v11", JSON.stringify(novosDepositos));
+
+    if (user && ((user.email || "").trim().toLowerCase() === emailNorm || (docIdExtra && (user._docId === docIdExtra || user.id === docIdExtra)))) {
       setUser(null);
+      setPagamentoConfirmadoLocal(false);
       localStorage.removeItem("elite_user_v11");
+      localStorage.removeItem("elite_pix_confirmado_v11");
     }
 
-    mostrarAvisoAdm(`🗑️ Jogador "${nome}" e suas apostas foram excluídos do banco de dados!`);
+    if (modalComprovante && (modalComprovante.email || "").trim().toLowerCase() === emailNorm) {
+      setModalComprovante(null);
+    }
+
+    mostrarAvisoAdm(`🗑️ Jogador "${nome}" foi excluído do banco de dados! Só voltará se fizer um novo cadastro.`);
   };
 
   const salvarValorCota = async () => {
@@ -2693,9 +2743,10 @@ export default function App() {
                     timestampCadastro: agora,
                   };
 
+              clearJogadorDeletedLocal(email, docId);
               const lista = [...jogadores.filter((x: any) => (x.email || "").toLowerCase() !== email), novo];
               saveJogadores(lista);
-              await upsertJogadorInDb(novo).catch(() => {});
+              await upsertJogadorInDb(novo, true).catch(() => {});
               setUser(novo);
               localStorage.setItem("elite_user_v11", JSON.stringify(novo));
 
@@ -2885,7 +2936,17 @@ export default function App() {
               <div className="text-[11px] text-zinc-400">InhoBahia29@gmail.com</div>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                window.history.pushState({}, "", "/admin/importar-jogos");
+                window.dispatchEvent(new PopStateEvent("popstate"));
+              }}
+              className="text-xs bg-[#FF6B00] hover:bg-[#ff7b1a] text-black px-3.5 py-1.5 rounded-lg cursor-pointer font-black uppercase tracking-wider shadow-md shadow-[#FF6B00]/20 flex items-center gap-1.5 transition"
+            >
+              <span>⚡</span> JOGOS DO DIA
+            </button>
             <button
               onClick={() => setPage("palpites")}
               className="text-xs bg-[#FF6B00]/10 border border-[#FF6B00]/40 text-[#FF6B00] px-3 py-1.5 rounded cursor-pointer font-bold hover:bg-[#FF6B00]/20"
@@ -3045,7 +3106,7 @@ export default function App() {
                         )}
                         <button
                           type="button"
-                          onClick={() => excluirApostadorAdm(jg.email, jg.nome)}
+                          onClick={() => excluirApostadorAdm(jg.email, jg.nome, jg._docId || jg.id)}
                           className="text-[10px] bg-red-950/70 hover:bg-red-900 text-red-300 border border-red-800/80 px-2.5 py-1.5 rounded-lg cursor-pointer font-bold transition"
                           title="Excluir jogador do banco de dados"
                         >
@@ -3278,7 +3339,7 @@ export default function App() {
 
                         <button
                           type="button"
-                          onClick={() => excluirApostadorAdm(jg.email, jg.nome)}
+                          onClick={() => excluirApostadorAdm(jg.email, jg.nome, jg._docId || jg.id)}
                           className="text-[10px] bg-red-950/70 hover:bg-red-900 text-red-300 border border-red-800/80 px-2.5 py-1.5 rounded-lg cursor-pointer font-bold transition"
                           title="Excluir jogador"
                         >
@@ -3402,7 +3463,7 @@ export default function App() {
 
                         <button
                           type="button"
-                          onClick={() => excluirApostadorAdm(jg.email, jg.nome)}
+                          onClick={() => excluirApostadorAdm(jg.email, jg.nome, jg._docId || jg.id)}
                           className="text-xs bg-red-950/70 hover:bg-red-900 text-red-300 border border-red-800 px-2.5 py-1.5 rounded-lg cursor-pointer font-bold transition flex items-center gap-1"
                           title="Excluir jogador e suas apostas"
                         >
@@ -3670,19 +3731,31 @@ export default function App() {
                 </span>
               </div>
               <h3 className="font-black text-base text-white mt-1">
-                Cadastrar Novo Bolão (Deixar Pronto e Salvo)
+                Cadastrar Novo Bolão (Deixar Pronto e Salvo) • Gerenciar Confrontos ({jogos.length}/10)
               </h3>
               <p className="text-[11px] text-zinc-400">
-                Monte os confrontos do próximo bolão e deixe salvo no banco. Os jogadores só verão quando você publicar!
+                Monte os confrontos do próximo bolão (ou busque em Jogos do Dia) e deixe salvo no banco. Os jogadores só verão quando você publicar!
               </p>
             </div>
-            <button
-              type="button"
-              onClick={iniciarNovoBolaoRascunho}
-              className="bg-zinc-800 hover:bg-zinc-700 border border-[#FF6B00]/50 text-[#FF6B00] font-black px-3.5 py-2 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition shrink-0 flex items-center gap-1.5"
-            >
-              <span>➕</span> Criar Outro Novo Bolão
-            </button>
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  window.history.pushState({}, "", "/admin/importar-jogos");
+                  window.dispatchEvent(new PopStateEvent("popstate"));
+                }}
+                className="bg-[#FF6B00] hover:bg-[#ff7b1a] text-black font-black px-4 py-2.5 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition shadow-lg shadow-[#FF6B00]/25 shrink-0 flex items-center gap-1.5"
+              >
+                <span>⚡</span> JOGOS DO DIA
+              </button>
+              <button
+                type="button"
+                onClick={iniciarNovoBolaoRascunho}
+                className="bg-zinc-800 hover:bg-zinc-700 border border-[#FF6B00]/50 text-[#FF6B00] font-black px-3.5 py-2.5 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition shrink-0 flex items-center gap-1.5"
+              >
+                <span>➕</span> Criar Outro Novo Bolão
+              </button>
+            </div>
           </div>
 
           {/* Identificação do Novo Bolão que está sendo preparado */}
