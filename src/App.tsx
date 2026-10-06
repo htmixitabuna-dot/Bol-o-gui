@@ -1142,7 +1142,9 @@ export default function App() {
                     ? `R$ ${valorCotaNumerico.toFixed(2)} (Confirmado)`
                     : meuStatusDeposito === "EM_ANALISE"
                     ? `R$ ${valorCotaNumerico.toFixed(2)} (Sendo contabilizado / Em análise)`
-                    : `R$ 0,00 (Aguardando depósito de R$ ${valorCotaNumerico.toFixed(2)})`}
+                    : palpites.some((p) => (p.jogadorEmail || "").toLowerCase() === (user.email || "").toLowerCase())
+                    ? `R$ 0,00 (Aguardando pagamento da aposta: R$ ${valorCotaNumerico.toFixed(2)})`
+                    : "R$ 0,00 (Selecione seus palpites abaixo para fazer sua aposta)"}
                 </span>
               </div>
               <div className="text-[10px] opacity-80">
@@ -1150,7 +1152,9 @@ export default function App() {
                   ? "Seu depósito já está somado no caixa oficial da rodada!"
                   : meuStatusDeposito === "EM_ANALISE"
                   ? "Você enviou o comprovante e seu depósito está sendo validado pelo ADM."
-                  : "Faça o PIX da cota e envie o comprovante para seu depósito entrar no contabilizador."}
+                  : palpites.some((p) => (p.jogadorEmail || "").toLowerCase() === (user.email || "").toLowerCase())
+                  ? "Conclua o PIX da sua aposta realizada para confirmar sua participação na rodada."
+                  : "Você só é cobrado após escolher os times e salvar sua aposta nos jogos da rodada."}
               </div>
             </div>
           </div>
@@ -1158,10 +1162,27 @@ export default function App() {
           {mostrarBotaoDepositar && meuStatusDeposito !== "APROVADO" && (
             <button
               type="button"
-              onClick={() => setPage("pagamento")}
+              onClick={() => {
+                const temAposta = palpites.some(
+                  (p) => (p.jogadorEmail || "").toLowerCase() === (user.email || "").toLowerCase()
+                );
+                if (!temAposta) {
+                  setPage("palpites");
+                  setTimeout(() => {
+                    const el = document.getElementById("secao-jogos-rodada");
+                    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+                  }, 100);
+                  return;
+                }
+                setPage("pagamento");
+              }}
               className="bg-[#FF6B00] hover:bg-[#ff7b1a] text-black font-black px-3 py-1.5 rounded-lg text-[10px] uppercase tracking-wider cursor-pointer shrink-0 transition shadow"
             >
-              {meuStatusDeposito === "EM_ANALISE" ? "Ver Meu Depósito" : "Depositar PIX"}
+              {meuStatusDeposito === "EM_ANALISE"
+                ? "Ver Meu Depósito"
+                : palpites.some((p) => (p.jogadorEmail || "").toLowerCase() === (user.email || "").toLowerCase())
+                ? "Pagar Minha Aposta"
+                : "⚽ Fazer Aposta"}
             </button>
           )}
         </div>
@@ -1861,8 +1882,8 @@ export default function App() {
               setUser(novo);
               localStorage.setItem("elite_user_v11", JSON.stringify(novo));
 
-              // Chama /api/pagamento/criar e redireciona o usuário para a URL do PIX da InfinitePay
-              await iniciarPagamentoInfinitePay(novo);
+              // Vai direto para a tela de palpites (o jogador só é cobrado após fazer suas apostas)
+              setPage("palpites");
             }}
             className="mt-6 space-y-4"
           >
@@ -1921,12 +1942,10 @@ export default function App() {
 
             <button
               type="submit"
-              disabled={!aceitouTermos || gerandoPixInfinite}
+              disabled={!aceitouTermos}
               className="w-full bg-[#FF6B00] disabled:bg-zinc-800 disabled:text-zinc-500 disabled:cursor-not-allowed text-black font-black py-4 rounded-xl cursor-pointer hover:scale-[1.01] transition shadow-lg shadow-[#FF6B00]/20 text-sm uppercase tracking-wider"
             >
-              {gerandoPixInfinite
-                ? "⏳ GERANDO PIX INFINITEPAY..."
-                : `CADASTRAR E PAGAR PIX (R$ ${config.valor})`}
+              CADASTRAR E IR PARA AS APOSTAS
             </button>
           </form>
         )}
@@ -3507,6 +3526,13 @@ export default function App() {
                   return;
                 }
 
+                // Garante que o jogador selecionou pelo menos 1 palpite antes de cobrar
+                const jogosComPalpite = jogos.filter((j) => escolhasTemp[j.id]);
+                if (jogosComPalpite.length === 0) {
+                  alert("Selecione seus palpites nos jogos da rodada antes de finalizar a aposta!");
+                  return;
+                }
+
                 // Verifica se preencheu todos os confrontos
                 const naoPreenchidos = jogos.filter((j) => !escolhasTemp[j.id]);
                 if (naoPreenchidos.length > 0) {
@@ -3983,10 +4009,15 @@ export default function App() {
 
           <button
             type="button"
-            disabled={gerandoPixInfinite}
+            disabled={gerandoPixInfinite || meusPalpitesSalvos.length === 0}
             onClick={() => {
               if (!user) {
                 setPage("loginJogador");
+                return;
+              }
+              if (meusPalpitesSalvos.length === 0) {
+                alert("Faça sua aposta nos jogos da rodada antes de realizar o pagamento!");
+                setPage("palpites");
                 return;
               }
               iniciarPagamentoInfinitePay(user);
@@ -3997,7 +4028,9 @@ export default function App() {
             <span>
               {gerandoPixInfinite
                 ? "GERANDO PIX AUTOMÁTICO..."
-                : `PAGAR PIX AGORA (R$ ${valorDinamico})`}
+                : meusPalpitesSalvos.length === 0
+                ? "FAÇA SUA APOSTA PRIMEIRO PARA PAGAR"
+                : `PAGAR MINHA APOSTA VIA PIX (R$ ${valorDinamico})`}
             </span>
           </button>
 
