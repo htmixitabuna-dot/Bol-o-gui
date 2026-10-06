@@ -779,9 +779,24 @@ export default function App() {
 
   const { ranking: rankingGanhadores, totalJogosEncerrados } = calcularTriagem();
 
-  // Cálculos Financeiros
-  const pagos = jogadores.filter((jg: any) => jg.statusPagamento === "APROVADO" || palpites.some((p: any) => p.jogadorEmail === jg.email && p.pago)).length;
-  const total = pagos * (parseFloat(String(config.valor)) || 0);
+  // Cálculos Financeiros & Contabilizador de Depósitos
+  const valorCotaNumerico = parseFloat(String(config.valor).replace(",", ".")) || 0;
+  const jogadoresPagosLista = jogadores.filter(
+    (jg: any) =>
+      jg.statusPagamento === "APROVADO" ||
+      palpites.some((p: any) => p.jogadorEmail === jg.email && p.pago)
+  );
+  const jogadoresEmAnaliseLista = jogadores.filter(
+    (jg: any) =>
+      jg.statusPagamento === "EM_ANALISE" &&
+      !jogadoresPagosLista.some((ap: any) => ap.email === jg.email)
+  );
+
+  const pagos = jogadoresPagosLista.length;
+  const emAnaliseCount = jogadoresEmAnaliseLista.length;
+  const total = pagos * valorCotaNumerico;
+  const totalSendoDepositado = emAnaliseCount * valorCotaNumerico;
+  const totalGeralDepositos = total + totalSendoDepositado;
   const banca20 = total * 0.2;
   const premio80 = total * 0.8;
 
@@ -789,6 +804,221 @@ export default function App() {
   const premio1 = premio80 * 0.5;
   const premio2 = premio80 * 0.3;
   const premio3 = premio80 * 0.2;
+
+  // Lista de depósitos recentes (Confirmados + Sendo Depositados) para o Contabilizador do Jogador
+  const movDepositos = [
+    ...jogadoresEmAnaliseLista.map((jg: any) => ({
+      nome: jg.nome || "Jogador",
+      email: jg.email,
+      status: "EM_ANALISE" as const,
+      valor: valorCotaNumerico,
+      horario: jg.dataEnvioComprovante || "Agora mesmo",
+      ordem: jg.timestampComprovante || Date.now(),
+    })),
+    ...jogadoresPagosLista.map((jg: any) => ({
+      nome: jg.nome || "Jogador",
+      email: jg.email,
+      status: "APROVADO" as const,
+      valor: valorCotaNumerico,
+      horario: jg.dataAprovacao ? `Aprovado às ${jg.dataAprovacao}` : jg.dataEnvioComprovante || "Confirmado",
+      ordem: (jg.timestampComprovante || 0) + 1,
+    })),
+  ].sort((a, b) => b.ordem - a.ordem);
+
+  const meuStatusDeposito = user
+    ? user.statusPagamento === "APROVADO" || palpites.some((p: any) => p.jogadorEmail === user.email && p.pago)
+      ? "APROVADO"
+      : user.statusPagamento === "EM_ANALISE"
+      ? "EM_ANALISE"
+      : "PENDENTE"
+    : "PENDENTE";
+
+  const ContabilizadorDepositosJogador = ({ mostrarBotaoDepositar = true }: { mostrarBotaoDepositar?: boolean }) => (
+    <div className="mt-4 bg-zinc-900 border border-zinc-800 rounded-2xl p-4 space-y-3.5 shadow-xl">
+      {/* Cabeçalho do Contabilizador */}
+      <div className="flex items-center justify-between border-b border-zinc-800 pb-2.5">
+        <div className="flex items-center gap-2">
+          <span className="w-8 h-8 rounded-xl bg-[#FF6B00]/15 border border-[#FF6B00]/40 flex items-center justify-center text-base">
+            💰
+          </span>
+          <div>
+            <h3 className="text-xs sm:text-sm font-black text-white uppercase tracking-wider flex items-center gap-1.5">
+              Contabilizador de Depósitos
+              <span className="inline-flex items-center gap-1 text-[9px] bg-green-950 text-green-400 border border-green-700/80 px-2 py-0.5 rounded-full font-bold">
+                <span className="h-1.5 w-1.5 rounded-full bg-green-400 animate-pulse"></span>
+                AO VIVO
+              </span>
+            </h3>
+            <p className="text-[10px] text-zinc-400">
+              Acompanhe em tempo real quanto está sendo depositado na rodada
+            </p>
+          </div>
+        </div>
+        <div className="text-right">
+          <div className="text-[9px] text-zinc-500 uppercase font-bold">Valor da Cota</div>
+          <div className="text-sm font-black text-[#FF6B00]">R$ {valorCotaNumerico.toFixed(2)}</div>
+        </div>
+      </div>
+
+      {/* Cards Principais de Valores Depositados */}
+      <div className="grid grid-cols-3 gap-2">
+        <div className="bg-black/80 border border-green-800/60 p-3 rounded-xl">
+          <div className="text-[9px] text-green-400 uppercase font-black flex items-center gap-1">
+            <span>✅</span> Depositado
+          </div>
+          <div className="text-base sm:text-lg font-black text-white mt-0.5">
+            R$ {total.toFixed(2)}
+          </div>
+          <div className="text-[10px] text-zinc-400 font-bold">
+            {pagos} {pagos === 1 ? "cota paga" : "cotas pagas"}
+          </div>
+        </div>
+
+        <div className="bg-black/80 border border-amber-700/60 p-3 rounded-xl">
+          <div className="text-[9px] text-amber-400 uppercase font-black flex items-center gap-1">
+            <span className="animate-pulse">⏳</span> Entrando Agora
+          </div>
+          <div className="text-base sm:text-lg font-black text-amber-300 mt-0.5">
+            R$ {totalSendoDepositado.toFixed(2)}
+          </div>
+          <div className="text-[10px] text-zinc-400 font-bold">
+            {emAnaliseCount} em análise
+          </div>
+        </div>
+
+        <div className="bg-gradient-to-br from-[#FF6B00]/20 via-black to-black border border-[#FF6B00]/50 p-3 rounded-xl">
+          <div className="text-[9px] text-[#FF6B00] uppercase font-black flex items-center gap-1">
+            <span>🏆</span> Prêmio (80%)
+          </div>
+          <div className="text-base sm:text-lg font-black text-[#FF6B00] mt-0.5">
+            R$ {premio80.toFixed(2)}
+          </div>
+          <div className="text-[10px] text-zinc-400 font-bold">
+            Total: R$ {totalGeralDepositos.toFixed(2)}
+          </div>
+        </div>
+      </div>
+
+      {/* Rateio Acumulado de Prêmios em Tempo Real */}
+      <div className="bg-black/60 border border-zinc-800/90 rounded-xl p-2.5 grid grid-cols-3 gap-2 text-center">
+        <div>
+          <div className="text-[9px] text-zinc-400 font-bold uppercase">🥇 1º Lugar (50%)</div>
+          <div className="text-xs sm:text-sm font-black text-amber-400">R$ {premio1.toFixed(2)}</div>
+        </div>
+        <div className="border-x border-zinc-800">
+          <div className="text-[9px] text-zinc-400 font-bold uppercase">🥈 2º Lugar (30%)</div>
+          <div className="text-xs sm:text-sm font-black text-zinc-200">R$ {premio2.toFixed(2)}</div>
+        </div>
+        <div>
+          <div className="text-[9px] text-zinc-400 font-bold uppercase">🥉 3º Lugar (20%)</div>
+          <div className="text-xs sm:text-sm font-black text-amber-600">R$ {premio3.toFixed(2)}</div>
+        </div>
+      </div>
+
+      {/* Status do Depósito Individual do Jogador Conectado */}
+      {user && (
+        <div
+          className={`p-3 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs ${
+            meuStatusDeposito === "APROVADO"
+              ? "bg-green-950/40 border-green-700/70 text-green-200"
+              : meuStatusDeposito === "EM_ANALISE"
+              ? "bg-amber-950/40 border-amber-700/70 text-amber-200"
+              : "bg-black/60 border-zinc-800 text-zinc-300"
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            <span className="text-base">
+              {meuStatusDeposito === "APROVADO"
+                ? "✅"
+                : meuStatusDeposito === "EM_ANALISE"
+                ? "⏳"
+                : "💳"}
+            </span>
+            <div>
+              <div className="font-black text-white">
+                Seu Depósito ({user.nome?.split(" ")[0]}):{" "}
+                <span className="text-[#FF6B00]">
+                  {meuStatusDeposito === "APROVADO"
+                    ? `R$ ${valorCotaNumerico.toFixed(2)} (Confirmado)`
+                    : meuStatusDeposito === "EM_ANALISE"
+                    ? `R$ ${valorCotaNumerico.toFixed(2)} (Sendo contabilizado / Em análise)`
+                    : `R$ 0,00 (Aguardando depósito de R$ ${valorCotaNumerico.toFixed(2)})`}
+                </span>
+              </div>
+              <div className="text-[10px] opacity-80">
+                {meuStatusDeposito === "APROVADO"
+                  ? "Seu depósito já está somado no caixa oficial da rodada!"
+                  : meuStatusDeposito === "EM_ANALISE"
+                  ? "Você enviou o comprovante e seu depósito está sendo validado pelo ADM."
+                  : "Faça o PIX da cota e envie o comprovante para seu depósito entrar no contabilizador."}
+              </div>
+            </div>
+          </div>
+
+          {mostrarBotaoDepositar && meuStatusDeposito !== "APROVADO" && (
+            <button
+              type="button"
+              onClick={() => setPage("pagamento")}
+              className="bg-[#FF6B00] hover:bg-[#ff7b1a] text-black font-black px-3 py-1.5 rounded-lg text-[10px] uppercase tracking-wider cursor-pointer shrink-0 transition shadow"
+            >
+              {meuStatusDeposito === "EM_ANALISE" ? "Ver Meu Depósito" : "Depositar PIX"}
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Movimentação de Depósitos Recentes */}
+      <div className="space-y-1.5 pt-1">
+        <div className="flex items-center justify-between text-[10px] text-zinc-400 font-bold uppercase">
+          <span>📊 Movimentação de Depósitos ({movDepositos.length})</span>
+          <span>Atualização Automática</span>
+        </div>
+
+        {movDepositos.length === 0 ? (
+          <div className="bg-black/50 border border-dashed border-zinc-800 rounded-xl p-2.5 text-center text-[11px] text-zinc-500">
+            Nenhum depósito contabilizado ainda nesta rodada. Seja o primeiro a depositar!
+          </div>
+        ) : (
+          <div className="max-h-36 overflow-y-auto space-y-1.5 pr-1">
+            {movDepositos.map((dep, i) => (
+              <div
+                key={`${dep.email}-${i}`}
+                className="bg-black/70 border border-zinc-800/90 px-3 py-2 rounded-lg flex items-center justify-between text-xs"
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-xs">
+                    {dep.status === "APROVADO" ? "🟢" : "🟡"}
+                  </span>
+                  <div className="truncate">
+                    <span className="font-bold text-white">{dep.nome}</span>
+                    {user?.email === dep.email && (
+                      <span className="ml-1.5 text-[9px] bg-[#FF6B00] text-black font-black px-1.5 py-0.5 rounded">
+                        VOCÊ
+                      </span>
+                    )}
+                    <div className="text-[10px] text-zinc-500">{dep.horario}</div>
+                  </div>
+                </div>
+
+                <div className="text-right shrink-0 ml-2">
+                  <div
+                    className={`font-black text-xs ${
+                      dep.status === "APROVADO" ? "text-green-400" : "text-amber-300"
+                    }`}
+                  >
+                    + R$ {dep.valor.toFixed(2)}
+                  </div>
+                  <div className="text-[9px] uppercase font-bold text-zinc-400">
+                    {dep.status === "APROVADO" ? "Confirmado" : "Depositando..."}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 
   // =========================================================================
   // 1. LANDING PAGE
@@ -2416,6 +2646,9 @@ export default function App() {
           </div>
         </div>
 
+        {/* Contabilizador de Depósito em Tempo Real na Área do Jogador */}
+        <ContabilizadorDepositosJogador mostrarBotaoDepositar={true} />
+
         {/* Status da Rodada */}
         <div className="mt-4 flex items-center justify-between bg-zinc-900/90 border border-zinc-800 px-3.5 py-2.5 rounded-xl">
           <div className="flex items-center gap-2">
@@ -2732,6 +2965,9 @@ export default function App() {
           </div>
         </div>
 
+        {/* Contabilizador de Depósito também visível no Ranking */}
+        <ContabilizadorDepositosJogador mostrarBotaoDepositar={true} />
+
         <div className="space-y-2.5">
           {rankingGanhadores.length === 0 ? (
             <p className="text-zinc-500 text-xs py-8 text-center bg-zinc-900/60 rounded-xl border border-zinc-800">
@@ -2836,6 +3072,11 @@ export default function App() {
         <p className="text-zinc-400 text-xs sm:text-sm mt-2">
           Transfira a taxa da rodada para confirmar seus palpites:
         </p>
+
+        {/* Contabilizador de Depósito na Tela de Pagamento */}
+        <div className="text-left">
+          <ContabilizadorDepositosJogador mostrarBotaoDepositar={false} />
+        </div>
 
         {/* CARD DINÂMICO DE PAGAMENTO PIX */}
         <div className="mt-6 bg-black p-4 rounded-xl border border-zinc-800 text-left space-y-4">
