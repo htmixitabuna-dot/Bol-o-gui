@@ -1,166 +1,42 @@
-const INFINITEPAY_HANDLE = "irailson-da-472";
-const INFINITEPAY_ENDPOINT = "https://api.infinitepay.io/invoices/public/checkout/links";
-const DEFAULT_SITE_URL = "https://bol-o-gui-d57d-eight.vercel.app";
+const CHAVE_PIX_ALEATORIA = "f0e74d2a-d610-4b76-842e-8b7e1a08047d";
 
-const PROJECT_ID = "gen-lang-client-0929605804";
-const DATABASE_ID = "ai-studio-bologui-41191dbc-bc23-4859-bc28-074d5c8a833c";
-const FIRESTORE_BASE_URL = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/${DATABASE_ID}/documents`;
-
-function sanitizeDocId(raw) {
-  return (
-    String(raw || "")
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-zA-Z0-9_-]/g, "_")
-      .slice(0, 90) || "jogador_anonimo"
-  );
-}
-
-function parseFirestoreNumber(field) {
-  if (!field) return null;
-  if (field.integerValue !== undefined) {
-    const n = Number(field.integerValue);
-    return !isNaN(n) && n > 0 ? n : null;
-  }
-  if (field.doubleValue !== undefined) {
-    const n = Number(field.doubleValue);
-    return !isNaN(n) && n > 0 ? n : null;
-  }
-  if (field.stringValue !== undefined) {
-    const n = parseFloat(String(field.stringValue).replace(",", "."));
-    return !isNaN(n) && n > 0 ? n : null;
-  }
-  return null;
-}
-
-async function buscarValorBolaoNoBanco() {
-  const candidatos = [
-    `${FIRESTORE_BASE_URL}/config/bolao_config`,
-    `${FIRESTORE_BASE_URL}/settings/bolao_config`,
-    `${FIRESTORE_BASE_URL}/settings/default`,
-    `${FIRESTORE_BASE_URL}/valores/bolao_config`,
-  ];
-
-  for (const url of candidatos) {
-    try {
-      const resp = await fetch(url);
-      if (!resp.ok) continue;
-      const docData = await resp.json();
-      const fields = docData?.fields || {};
-      const valor =
-        parseFirestoreNumber(fields.valorCota) ??
-        parseFirestoreNumber(fields.precoCota) ??
-        parseFirestoreNumber(fields.valor) ??
-        parseFirestoreNumber(fields.valor_aposta) ??
-        parseFirestoreNumber(fields.preco);
-      if (valor !== null && valor > 0) {
-        return valor;
-      }
-    } catch {
-      // continua
+function gerarPayloadPix(chave, valor, merchant, city) {
+  const formatar = (id, val) => id + String(val.length).padStart(2, '0') + val;
+  const gui = formatar("00", "BR.GOV.BCB.PIX");
+  const chavePix = formatar("01", chave);
+  const merchantAccount = formatar("26", gui + chavePix);
+  const valorStr = Number(valor || 10).toFixed(2);
+  let payload =
+    "000201" +
+    merchantAccount +
+    "52040000" +
+    "5303986" +
+    formatar("54", valorStr) +
+    "5802BR" +
+    formatar("59", merchant) +
+    formatar("60", city) +
+    formatar("62", formatar("05", "BOLAO10")) +
+    "6304";
+  // Calcula CRC16
+  let crc = 0xFFFF;
+  for (let i = 0; i < payload.length; i++) {
+    crc ^= payload.charCodeAt(i) << 8;
+    for (let j = 0; j < 8; j++) {
+      crc = crc & 0x8000 ? ((crc << 1) ^ 0x1021) : (crc << 1);
+      crc &= 0xFFFF;
     }
   }
-
-  return 10;
-}
-
-async function salvarLinkPagamentoNoJogador(jogadorId, link) {
-  const docId = sanitizeDocId(jogadorId);
-  const docUrl = `${FIRESTORE_BASE_URL}/jogadores/${docId}`;
-  try {
-    const getResp = await fetch(docUrl);
-    if (!getResp.ok) return;
-    const existingDoc = await getResp.json();
-    if (!existingDoc?.fields) return;
-
-    const updatedFields = {
-      ...existingDoc.fields,
-      id: { stringValue: docId },
-      link_pagamento: { stringValue: String(link).slice(0, 2000) },
-    };
-
-    await fetch(docUrl, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ fields: updatedFields }),
-    });
-  } catch (err) {
-    console.error("Aviso ao salvar link_pagamento:", err);
-  }
+  const crcHex = crc.toString(16).toUpperCase().padStart(4, '0');
+  return payload + crcHex;
 }
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    res.status(405).json({ error: "Method Not Allowed. Use POST." });
-    return;
-  }
-
-  try {
-    const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body || {};
-    const { jogador_id, nome, redirect_origin } = body;
-
-    if (!jogador_id || !nome) {
-      res.status(400).json({ error: "Os campos jogador_id e nome são obrigatórios." });
-      return;
-    }
-
-    const valorReais = await buscarValorBolaoNoBanco();
-    const valorCentavos = Math.round(valorReais * 100);
-
-    const baseSite = String(redirect_origin || DEFAULT_SITE_URL).replace(/\/+$/, "");
-    const redirectUrl = `${baseSite}/pagamento-sucesso?jogador_id=${encodeURIComponent(String(jogador_id))}`;
-
-    const itemPayload = [
-      {
-        quantity: 1,
-        price: valorCentavos,
-        description: "Bolao - Participacao",
-      },
-    ];
-
-    const infinitePayBody = {
-      handle: INFINITEPAY_HANDLE,
-      items: itemPayload,
-      itens: itemPayload,
-      order_nsu: String(jogador_id),
-      redirect_url: redirectUrl,
-      customer: {
-        name: String(nome).trim(),
-      },
-    };
-
-    const ipResponse = await fetch(INFINITEPAY_ENDPOINT, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify(infinitePayBody),
-    });
-
-    const ipData = await ipResponse.json().catch(() => ({}));
-    const link = ipData?.url || ipData?.invoice_url || ipData?.checkout_url;
-
-    if (!ipResponse.ok || !link) {
-      res.status(ipResponse.status || 500).json({
-        error: ipData?.message || "Erro ao gerar link PIX na InfinitePay.",
-        details: ipData,
-      });
-      return;
-    }
-
-    await salvarLinkPagamentoNoJogador(String(jogador_id), link);
-
-    res.status(200).json({
-      url: link,
-      invoice_url: link,
-      valor: valorReais,
-      price: valorCentavos,
-      redirect_url: redirectUrl,
-    });
-  } catch (error) {
-    res.status(500).json({
-      error: error?.message || "Erro interno ao criar pagamento PIX.",
-    });
-  }
+  const valorAtual = Number(req?.body?.valor) || 10;
+  const payload = gerarPayloadPix(CHAVE_PIX_ALEATORIA, valorAtual, "IRAILSON DA SILVA", "ITABUNA");
+  return res.status(200).json({
+    url: payload,
+    payload,
+    chaveDestino: CHAVE_PIX_ALEATORIA,
+    valor: valorAtual,
+  });
 }

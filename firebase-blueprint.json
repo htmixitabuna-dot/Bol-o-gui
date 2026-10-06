@@ -215,6 +215,11 @@
           "description": "Chave PIX exibida aos jogadores.",
           "minLength": 1,
           "maxLength": 120
+        },
+        "linkPagamentoInfinitePay": {
+          "type": "string",
+          "description": "Link de pagamento da InfinitePay configurado pelo ADM.",
+          "maxLength": 2000
         }
       }
     },
@@ -265,6 +270,50 @@
         }
       },
       "required": ["id", "time_casa", "time_fora", "campeonato", "horario", "data", "adicionado_ao_bolao"]
+    },
+    "Deposito": {
+      "title": "Deposito",
+      "description": "Depósito PIX direto confirmado pelo jogador.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "UID do jogador que realizou o depósito.",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "valor": {
+          "type": "number",
+          "description": "Valor do depósito em reais (fixo 10)."
+        },
+        "status": {
+          "type": "string",
+          "description": "Status do depósito PIX.",
+          "enum": ["CONFIRMADO", "APROVADO", "PENDENTE"]
+        },
+        "chaveDestino": {
+          "type": "string",
+          "description": "Chave PIX aleatória de destino da InfinitePay.",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Data/hora de criação do depósito.",
+          "maxLength": 100
+        },
+        "nome": {
+          "type": "string",
+          "description": "Nome do jogador.",
+          "maxLength": 100
+        },
+        "email": {
+          "type": "string",
+          "description": "E-mail do jogador.",
+          "maxLength": 120
+        }
+      },
+      "required": ["userId", "valor", "status", "chaveDestino", "createdAt"]
     }
   },
   "firestore": {
@@ -287,6 +336,10 @@
     "/jogos_disponiveis/{jogoDisponivelId}": {
       "schema": "JogoDisponivel",
       "description": "Coleção isolada de jogos do dia disponíveis para importação rápida."
+    },
+    "/depositos/{depositoId}": {
+      "schema": "Deposito",
+      "description": "Coleção de depósitos PIX diretos confirmados."
     }
   }
 }

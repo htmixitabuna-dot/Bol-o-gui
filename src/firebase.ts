@@ -4,8 +4,132 @@ const PROJECT_ID = firebaseConfig.projectId || 'gen-lang-client-0929605804';
 const DATABASE_ID = firebaseConfig.firestoreDatabaseId || 'ai-studio-bologui-41191dbc-bc23-4859-bc28-074d5c8a833c';
 const BASE_URL = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/${DATABASE_ID}/documents`;
 
+export const VALOR_COTA = 10;
+export const CHAVE_PIX_ALEATORIA = 'f0e74d2a-d610-4b76-842e-8b7e1a08047d';
+
+export function gerarPayloadPix(chave: string, valor: number, merchant: string, city: string): string {
+  const formatar = (id: string, val: string) => id + String(val.length).padStart(2, '0') + val;
+  const gui = formatar("00", "BR.GOV.BCB.PIX");
+  const chavePix = formatar("01", chave);
+  const merchantAccount = formatar("26", gui + chavePix);
+  const valorNum = Number(valor) || 10;
+  const valorStr = valorNum.toFixed(2);
+  let payload =
+    "000201" +
+    merchantAccount +
+    "52040000" +
+    "5303986" +
+    formatar("54", valorStr) +
+    "5802BR" +
+    formatar("59", merchant) +
+    formatar("60", city) +
+    formatar("62", formatar("05", "BOLAO10")) +
+    "6304";
+  // Calcula CRC16
+  let crc = 0xFFFF;
+  for (let i = 0; i < payload.length; i++) {
+    crc ^= payload.charCodeAt(i) << 8;
+    for (let j = 0; j < 8; j++) {
+      crc = crc & 0x8000 ? ((crc << 1) ^ 0x1021) : (crc << 1);
+      crc &= 0xFFFF;
+    }
+  }
+  const crcHex = crc.toString(16).toUpperCase().padStart(4, '0');
+  return payload + crcHex;
+}
+
+function getCachedConfigDoc(): Record<string, any> {
+  if (typeof window !== 'undefined') {
+    try {
+      const cachedBolao = localStorage.getItem('firestore_doc_config/bolao');
+      if (cachedBolao) {
+        const parsed = JSON.parse(cachedBolao);
+        const val = Number(parsed?.valorCota ?? parsed?.valor ?? parsed?.precoCota);
+        if (!isNaN(val) && val > 0) {
+          return { ...parsed, valorCota: val, valor: val, precoCota: val };
+        }
+      }
+      const eliteCfg = localStorage.getItem('elite_config_v11');
+      if (eliteCfg) {
+        const parsed = JSON.parse(eliteCfg);
+        const val = Number(parsed?.valorCota ?? parsed?.valor ?? parsed?.precoCota);
+        if (!isNaN(val) && val > 0) {
+          return {
+            valorCota: val,
+            precoCota: val,
+            valor: val,
+            linkPagamentoInfinitePay: parsed.linkPagamentoInfinitePay || '',
+            chavePix: parsed.chavePix || CHAVE_PIX_ALEATORIA,
+            nomePix: parsed.nomePix || 'IRAILSON DA SILVA',
+            cidadePix: parsed.cidadePix || 'ITABUNA',
+            pixAdm: parsed.pixAdm || CHAVE_PIX_ALEATORIA,
+          };
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return {
+    valorCota: VALOR_COTA,
+    precoCota: VALOR_COTA,
+    valor: VALOR_COTA,
+    linkPagamentoInfinitePay: '',
+    chavePix: CHAVE_PIX_ALEATORIA,
+    nomePix: 'IRAILSON DA SILVA',
+    cidadePix: 'ITABUNA',
+    pixAdm: CHAVE_PIX_ALEATORIA,
+  };
+}
+
+function setCachedConfigDoc(data: Record<string, any>, pendingLocal = false) {
+  if (typeof window !== 'undefined') {
+    try {
+      const val = Number(data?.valorCota ?? data?.valor ?? data?.precoCota) || VALOR_COTA;
+      const normalized = {
+        ...data,
+        valorCota: val,
+        valor: val,
+        precoCota: val,
+        linkPagamentoInfinitePay: String(data?.linkPagamentoInfinitePay ?? '').trim(),
+        _pendingLocal: pendingLocal,
+      };
+      localStorage.setItem('firestore_doc_config/bolao', JSON.stringify(normalized));
+      localStorage.setItem('firestore_doc_config/bolao_config', JSON.stringify(normalized));
+    } catch {
+      // ignore
+    }
+  }
+}
+
 export const db = { projectId: PROJECT_ID, databaseId: DATABASE_ID };
-export const auth: { currentUser: any } = { currentUser: null };
+export const auth: { currentUser: { uid: string; email?: string; displayName?: string } } = {
+  currentUser: {
+    uid: 'inho_jogador',
+    email: 'inhobahia29@gmail.com',
+    displayName: 'Inho',
+  },
+};
+
+export function syncAuthCurrentUser(u: any) {
+  if (!u) return;
+  const rawId = u.uid || u.id || u.email || u.nome || 'inho_jogador';
+  const uid =
+    String(rawId)
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-zA-Z0-9_-]/g, '_')
+      .slice(0, 90) || 'inho_jogador';
+  auth.currentUser = {
+    uid,
+    email: u.email || 'inhobahia29@gmail.com',
+    displayName: u.nome || 'Inho',
+  };
+}
+
+export function serverTimestamp(): string {
+  return new Date().toISOString();
+}
 
 export enum OperationType {
   CREATE = 'create',
@@ -128,9 +252,18 @@ export async function getDoc(ref: DocRef): Promise<{
   exists: () => boolean;
   data: () => any;
 }> {
+  const isConfig = ref.path.startsWith('config/');
   try {
     const resp = await fetch(`${BASE_URL}/${ref.path}`);
     if (resp.status === 404) {
+      if (isConfig) {
+        const cached = getCachedConfigDoc();
+        return {
+          id: ref.id,
+          exists: () => true,
+          data: () => cached,
+        };
+      }
       return {
         id: ref.id,
         exists: () => false,
@@ -138,11 +271,12 @@ export async function getDoc(ref: DocRef): Promise<{
       };
     }
     if (!resp.ok) {
-      if (ref.path.startsWith('config/')) {
+      if (isConfig) {
+        const cached = getCachedConfigDoc();
         return {
           id: ref.id,
-          exists: () => false,
-          data: () => ({ valorCota: 10, precoCota: 10, valor: 10, handle: 'irailson-da-472' }),
+          exists: () => true,
+          data: () => cached,
         };
       }
       return {
@@ -153,16 +287,45 @@ export async function getDoc(ref: DocRef): Promise<{
     }
     const raw = await resp.json();
     const parsed = fromFirestoreFields(raw?.fields || {});
+    if (isConfig) {
+      const cached = getCachedConfigDoc();
+      if (cached._pendingLocal) {
+        return {
+          id: ref.id,
+          exists: () => true,
+          data: () => cached,
+        };
+      }
+      const serverVal = Number(parsed?.valorCota ?? parsed?.valor ?? parsed?.precoCota);
+      const finalData =
+        !isNaN(serverVal) && serverVal > 0
+          ? { ...cached, ...parsed, valorCota: serverVal, valor: serverVal, precoCota: serverVal }
+          : cached;
+      setCachedConfigDoc(finalData, false);
+      return {
+        id: ref.id,
+        exists: () => true,
+        data: () => finalData,
+      };
+    }
     return {
       id: ref.id,
       exists: () => Boolean(raw && raw.fields),
       data: () => parsed,
     };
   } catch {
+    if (isConfig) {
+      const cached = getCachedConfigDoc();
+      return {
+        id: ref.id,
+        exists: () => true,
+        data: () => cached,
+      };
+    }
     return {
       id: ref.id,
       exists: () => false,
-      data: () => (ref.path.startsWith('config/') ? { valorCota: 10, precoCota: 10, valor: 10, handle: 'irailson-da-472' } : undefined),
+      data: () => undefined,
     };
   }
 }
@@ -172,9 +335,12 @@ export async function getDocFromServer(ref: DocRef) {
 }
 
 export async function setDoc(ref: DocRef, data: Record<string, any>): Promise<void> {
+  if (ref.path.startsWith('config/')) {
+    setCachedConfigDoc(data, true);
+  }
   const fields: Record<string, any> = {};
   for (const [k, v] of Object.entries(data)) {
-    if (v !== undefined) {
+    if (v !== undefined && !k.startsWith('_')) {
       fields[k] = toFirestoreValue(v);
     }
   }
@@ -186,6 +352,9 @@ export async function setDoc(ref: DocRef, data: Record<string, any>): Promise<vo
   if (!resp.ok) {
     const txt = await resp.text().catch(() => '');
     throw new Error(`Firestore PATCH ${ref.path} failed (${resp.status}): ${txt}`);
+  }
+  if (ref.path.startsWith('config/')) {
+    setCachedConfigDoc(data, false);
   }
 }
 
@@ -365,94 +534,50 @@ export async function upsertJogadorInDb(jg: any): Promise<void> {
 
 export async function buscarValorAtualBolao(): Promise<number> {
   try {
-    const snap = await getDoc(doc(db, 'config', 'bolao_config'));
-    if (snap.exists()) {
-      const configDoc = snap.data();
-      const valorCota =
-        configDoc?.valorCota ||
-        configDoc?.precoCota ||
-        configDoc?.valor ||
-        configDoc?.valor_aposta ||
-        configDoc?.preco ||
-        10;
-      const num = parseFloat(String(valorCota).replace(',', '.'));
-      if (!isNaN(num) && num > 0) {
-        return num;
-      }
-    }
-  } catch (err) {
-    console.warn('Aviso ao ler config/bolao_config, usando valor padrão 10:', err);
+    const docSnap = await getDoc(doc(db, 'config', 'bolao'));
+    const valorAtual = Number(docSnap.data()?.valorCota) || 10;
+    return valorAtual;
+  } catch {
+    return getCachedConfigDoc().valorCota || 10;
   }
-  return 10;
 }
 
-export async function criarPagamentoInfinitePay(params: {
-  jogador_id: string;
-  nome: string;
-  jogadorObj?: any;
-}): Promise<{ url: string; valor?: number; price?: number }> {
-  const jogador_id = getJogadorDocId(params.jogador_id);
-  const nome = String(params.nome || 'Jogador').trim();
-  const redirect_origin =
-    typeof window !== 'undefined' && window.location?.origin
-      ? window.location.origin
-      : 'https://bol-o-gui-d57d-eight.vercel.app';
-
-  let urlRetornada = '';
-  let valorReais = 0;
-  let valorCentavos = 0;
+export async function registrarDepositoConfirmadoInDb(userObj?: any, valorPago?: number): Promise<{
+  userId: string;
+  valor: number;
+  status: string;
+  chaveDestino: string;
+  createdAt: string;
+  nome?: string;
+  email?: string;
+}> {
+  if (userObj) {
+    syncAuthCurrentUser(userObj);
+  }
+  const uid = auth.currentUser?.uid || getJogadorDocId(userObj?.email || userObj?.nome || 'inho_jogador');
+  const valorFinal = Number(valorPago) || getCachedConfigDoc().valorCota || 10;
+  const payload: Record<string, any> = {
+    userId: uid,
+    valor: valorFinal,
+    status: 'CONFIRMADO',
+    chaveDestino: CHAVE_PIX_ALEATORIA,
+    createdAt: serverTimestamp(),
+  };
+  if (userObj?.nome) {
+    payload.nome = String(userObj.nome).trim().slice(0, 100);
+  }
+  if (userObj?.email) {
+    payload.email = String(userObj.email).trim().toLowerCase().slice(0, 120);
+  }
 
   try {
-    const resp = await fetch('/api/pagamento/criar', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ jogador_id, nome, redirect_origin }),
-    });
-    if (resp.ok) {
-      const data = await resp.json();
-      urlRetornada = data?.url || data?.invoice_url || '';
-      valorReais = Number(data?.valor) || 0;
-      valorCentavos = Number(data?.price) || 0;
-    }
-  } catch {
-    // Fallback direto caso a rota serverless não esteja acessível
+    await setDoc(doc(db, 'depositos', uid), payload);
+    triggerAllListeners();
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `depositos/${uid}`);
   }
 
-  if (!urlRetornada) {
-    valorReais = await buscarValorAtualBolao();
-    valorCentavos = Math.round(valorReais * 100);
-    const redirectUrl = `${redirect_origin.replace(/\/+$/, '')}/?pagamento=sucesso&jogador_id=${encodeURIComponent(jogador_id)}`;
-    const itemPayload = [{ quantity: 1, price: valorCentavos, description: 'Bolao - Participacao' }];
-
-    const ipResp = await fetch('https://api.infinitepay.io/invoices/public/checkout/links', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        handle: 'irailson-da-472',
-        items: itemPayload,
-        itens: itemPayload,
-        order_nsu: jogador_id,
-        redirect_url: redirectUrl,
-        customer: { name: nome },
-      }),
-    });
-    const ipData = await ipResp.json();
-    urlRetornada = ipData?.url || ipData?.invoice_url || '';
-  }
-
-  if (!urlRetornada) {
-    throw new Error('Não foi possível gerar o link PIX da InfinitePay.');
-  }
-
-  if (params.jogadorObj) {
-    await upsertJogadorInDb({
-      ...params.jogadorObj,
-      id: jogador_id,
-      link_pagamento: urlRetornada,
-    }).catch(() => {});
-  }
-
-  return { url: urlRetornada, valor: valorReais, price: valorCentavos };
+  return payload as any;
 }
 
 export async function deleteJogadorFromDb(email: string): Promise<void> {
@@ -582,61 +707,48 @@ export async function deletePalpiteFromDb(email: string, jogoId: string): Promis
 
 export async function inicializarConfigAdminInDb(): Promise<void> {
   try {
-    const ref = doc(db, 'config', 'bolao_config');
+    const ref = doc(db, 'config', 'bolao');
     const snap = await getDoc(ref);
-    if (!snap.exists()) {
-      await setDoc(ref, {
-        valorCota: 10,
-        precoCota: 10,
-        valor: 10,
-        handle: 'irailson-da-472',
-        chavePix: '01780181558',
-        nomePix: 'INHO BAHIA',
+    const valAtual = Number(snap.data()?.valorCota) || getCachedConfigDoc().valorCota || VALOR_COTA;
+    if (!snap.exists() || !snap.data()?.valorCota) {
+      const initPayload = {
+        valorCota: valAtual,
+        precoCota: valAtual,
+        valor: valAtual,
+        chavePix: CHAVE_PIX_ALEATORIA,
+        nomePix: 'IRAILSON DA SILVA',
         cidadePix: 'ITABUNA',
-        pixAdm: '01780181558',
-      });
+        pixAdm: CHAVE_PIX_ALEATORIA,
+      };
+      await setDoc(doc(db, 'config', 'bolao'), initPayload);
+      await setDoc(doc(db, 'config', 'bolao_config'), initPayload).catch(() => {});
       triggerAllListeners();
-    } else {
-      const data = snap.data() || {};
-      if (data.valorCota === undefined || data.precoCota === undefined || !data.handle) {
-        const v = Number(data.valorCota || data.precoCota || data.valor || 10) || 10;
-        await setDoc(ref, {
-          ...data,
-          valorCota: v,
-          precoCota: v,
-          valor: v,
-          handle: data.handle || 'irailson-da-472',
-          chavePix: data.chavePix || data.pixAdm || '01780181558',
-          nomePix: data.nomePix || 'INHO BAHIA',
-          cidadePix: data.cidadePix || 'ITABUNA',
-          pixAdm: data.pixAdm || data.chavePix || '01780181558',
-        });
-        triggerAllListeners();
-      }
     }
-  } catch (err) {
-    console.warn('Aviso ao inicializar config/bolao_config:', err);
+  } catch {
+    // silencioso
   }
 }
 
 export async function saveConfigInDb(cfg: any): Promise<void> {
-  const path = 'config/bolao_config';
-  const rawVal = cfg.valorCota ?? cfg.precoCota ?? cfg.valor ?? 10;
-  const numVal = parseFloat(String(rawVal).replace(',', '.'));
-  const valor = !isNaN(numVal) && numVal > 0 ? numVal : 10;
-  const chavePix = String(cfg.chavePix || cfg.pixAdm || '01780181558').trim().slice(0, 120) || '01780181558';
+  const path = 'config/bolao';
+  const rawVal = parseFloat(String(cfg.valorCota ?? cfg.valor ?? cfg.precoCota ?? VALOR_COTA).replace(',', '.'));
+  const valorNumerico = !isNaN(rawVal) && rawVal > 0 ? rawVal : VALOR_COTA;
+  const chavePix = String(cfg.chavePix || cfg.pixAdm || CHAVE_PIX_ALEATORIA).trim().slice(0, 120) || CHAVE_PIX_ALEATORIA;
+  const linkPagamentoInfinitePay = String(cfg.linkPagamentoInfinitePay ?? getCachedConfigDoc().linkPagamentoInfinitePay ?? '').trim().slice(0, 2000);
   const payload = {
-    valor,
-    valorCota: valor,
-    precoCota: valor,
-    handle: String(cfg.handle || 'irailson-da-472').trim().slice(0, 120) || 'irailson-da-472',
+    valor: valorNumerico,
+    valorCota: valorNumerico,
+    precoCota: valorNumerico,
+    linkPagamentoInfinitePay,
     chavePix,
-    nomePix: String(cfg.nomePix || 'INHO BAHIA').trim().slice(0, 60) || 'INHO BAHIA',
+    nomePix: String(cfg.nomePix || 'IRAILSON DA SILVA').trim().slice(0, 60) || 'IRAILSON DA SILVA',
     cidadePix: String(cfg.cidadePix || 'ITABUNA').trim().slice(0, 60) || 'ITABUNA',
     pixAdm: String(cfg.pixAdm || chavePix).trim().slice(0, 120) || chavePix,
   };
+  setCachedConfigDoc(payload);
   try {
-    await setDoc(doc(db, 'config', 'bolao_config'), payload);
+    await setDoc(doc(db, 'config', 'bolao'), payload);
+    await setDoc(doc(db, 'config', 'bolao_config'), payload).catch(() => {});
     triggerAllListeners();
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);

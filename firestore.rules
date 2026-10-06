@@ -79,7 +79,7 @@ service cloud.firestore {
     }
 
     function isValidConfig(data) {
-      return data.keys().hasOnly(['valor', 'valorCota', 'precoCota', 'handle', 'chavePix', 'nomePix', 'cidadePix', 'pixAdm']) &&
+      return data.keys().hasOnly(['valor', 'valorCota', 'precoCota', 'handle', 'chavePix', 'nomePix', 'cidadePix', 'pixAdm', 'linkPagamentoInfinitePay']) &&
         (!('valor' in data) || (data.valor is number && data.valor >= 0)) &&
         (!('valorCota' in data) || (data.valorCota is number && data.valorCota >= 0)) &&
         (!('precoCota' in data) || (data.precoCota is number && data.precoCota >= 0)) &&
@@ -87,7 +87,8 @@ service cloud.firestore {
         (!('chavePix' in data) || (data.chavePix is string && data.chavePix.size() >= 1 && data.chavePix.size() <= 120)) &&
         (!('nomePix' in data) || (data.nomePix is string && data.nomePix.size() >= 1 && data.nomePix.size() <= 60)) &&
         (!('cidadePix' in data) || (data.cidadePix is string && data.cidadePix.size() >= 1 && data.cidadePix.size() <= 60)) &&
-        (!('pixAdm' in data) || (data.pixAdm is string && data.pixAdm.size() >= 1 && data.pixAdm.size() <= 120));
+        (!('pixAdm' in data) || (data.pixAdm is string && data.pixAdm.size() >= 1 && data.pixAdm.size() <= 120)) &&
+        (!('linkPagamentoInfinitePay' in data) || (data.linkPagamentoInfinitePay is string && data.linkPagamentoInfinitePay.size() <= 2000));
     }
 
     function isValidJogoDisponivel(data) {
@@ -100,6 +101,19 @@ service cloud.firestore {
         data.horario is string && data.horario.size() >= 1 && data.horario.size() <= 60 &&
         data.data is string && data.data.size() >= 1 && data.data.size() <= 40 &&
         data.adicionado_ao_bolao is bool;
+    }
+
+    function isValidDeposito(data) {
+      return data.keys().hasAll(['userId', 'valor', 'status', 'chaveDestino', 'createdAt']) &&
+        data.keys().hasOnly(['userId', 'valor', 'status', 'chaveDestino', 'createdAt', 'nome', 'email', 'id']) &&
+        data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+        data.valor is number && data.valor >= 0 &&
+        data.status is string && data.status in ['CONFIRMADO', 'APROVADO', 'PENDENTE'] &&
+        data.chaveDestino is string && data.chaveDestino.size() >= 1 && data.chaveDestino.size() <= 120 &&
+        (data.createdAt is string || data.createdAt is timestamp || data.createdAt is number) &&
+        (!('nome' in data) || (data.nome is string && data.nome.size() <= 100)) &&
+        (!('email' in data) || (data.email is string && data.email.size() <= 120)) &&
+        (!('id' in data) || (data.id is string && data.id.size() <= 128));
     }
 
     match /test/{docId} {
@@ -166,7 +180,7 @@ service cloud.firestore {
       allow list: if request.time != null;
       allow create: if isValidId(configId) && isValidConfig(incoming());
       allow update: if isValidId(configId) && isValidConfig(incoming()) &&
-        incoming().diff(existing()).affectedKeys().hasOnly(['valor', 'valorCota', 'precoCota', 'handle', 'chavePix', 'nomePix', 'cidadePix', 'pixAdm']);
+        incoming().diff(existing()).affectedKeys().hasOnly(['valor', 'valorCota', 'precoCota', 'handle', 'chavePix', 'nomePix', 'cidadePix', 'pixAdm', 'linkPagamentoInfinitePay']);
       allow delete: if isValidId(configId);
     }
 
@@ -185,6 +199,24 @@ service cloud.firestore {
           'adicionado_ao_bolao'
         ]);
       allow delete: if isValidId(jogoDisponivelId);
+    }
+
+    match /depositos/{depositoId} {
+      allow get: if isValidId(depositoId);
+      allow list: if request.time != null;
+      allow create: if isValidId(depositoId) && isValidDeposito(incoming());
+      allow update: if isValidId(depositoId) && isValidDeposito(incoming()) &&
+        incoming().userId == existing().userId &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'valor',
+          'status',
+          'chaveDestino',
+          'createdAt',
+          'nome',
+          'email',
+          'id'
+        ]);
+      allow delete: if isValidId(depositoId);
     }
   }
 }
