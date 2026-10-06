@@ -1,11 +1,11 @@
 {
   "rewrites": [
     {
-      "source": "/api/(.*)",
-      "destination": "/api/$1"
+      "source": "/pagamento-sucesso",
+      "destination": "/index.html"
     },
     {
-      "source": "/((?!api/).*)",
+      "source": "/admin/importar-jogos",
       "destination": "/index.html"
     }
   ]
