@@ -3,6 +3,7 @@ import { getAuth } from 'firebase/auth';
 import {
   getFirestore,
   doc,
+  getDoc,
   getDocFromServer,
   collection,
   onSnapshot,
@@ -111,12 +112,111 @@ export async function upsertJogadorInDb(jg: any): Promise<void> {
   if (typeof jg.timestampCadastro === 'number') {
     payload.timestampCadastro = jg.timestampCadastro;
   }
+  payload.id = String(jg.id || docId).slice(0, 120);
+  if (jg.link_pagamento && typeof jg.link_pagamento === 'string') {
+    payload.link_pagamento = jg.link_pagamento.slice(0, 2000);
+  }
+  if (jg.status_pagamento && typeof jg.status_pagamento === 'string') {
+    payload.status_pagamento = jg.status_pagamento.slice(0, 40);
+  }
+  if (typeof jg.aprovado === 'boolean') {
+    payload.aprovado = jg.aprovado;
+  }
+  if (jg.aprovado_em && typeof jg.aprovado_em === 'string') {
+    payload.aprovado_em = jg.aprovado_em.slice(0, 100);
+  }
 
   try {
     await setDoc(doc(db, 'jogadores', docId), payload);
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
+}
+
+export async function buscarValorAtualBolao(): Promise<number> {
+  try {
+    const snap = await getDoc(doc(db, 'config', 'bolao_config'));
+    if (snap.exists()) {
+      const data = snap.data();
+      const raw = data?.valor ?? data?.valor_aposta ?? data?.preco;
+      const num = parseFloat(String(raw).replace(',', '.'));
+      if (!isNaN(num) && num > 0) {
+        return num;
+      }
+    }
+  } catch (err) {
+    console.warn('Erro ao ler config/bolao_config via SDK:', err);
+  }
+  throw new Error('Valor da cota não encontrado em config/bolao_config no banco de dados.');
+}
+
+export async function criarPagamentoInfinitePay(params: {
+  jogador_id: string;
+  nome: string;
+  jogadorObj?: any;
+}): Promise<{ url: string; valor?: number; price?: number }> {
+  const jogador_id = getJogadorDocId(params.jogador_id);
+  const nome = String(params.nome || 'Jogador').trim();
+  const redirect_origin =
+    typeof window !== 'undefined' && window.location?.origin
+      ? window.location.origin
+      : 'https://bol-o-gui-d57d-eight.vercel.app';
+
+  let urlRetornada = '';
+  let valorReais = 0;
+  let valorCentavos = 0;
+
+  try {
+    const resp = await fetch('/api/pagamento/criar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jogador_id, nome, redirect_origin }),
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      urlRetornada = data?.url || data?.invoice_url || '';
+      valorReais = Number(data?.valor) || 0;
+      valorCentavos = Number(data?.price) || 0;
+    }
+  } catch {
+    // Fallback direto caso a rota serverless não esteja acessível
+  }
+
+  if (!urlRetornada) {
+    valorReais = await buscarValorAtualBolao();
+    valorCentavos = Math.round(valorReais * 100);
+    const redirectUrl = `${redirect_origin.replace(/\/+$/, '')}/pagamento-sucesso?jogador_id=${encodeURIComponent(jogador_id)}`;
+    const itemPayload = [{ quantity: 1, price: valorCentavos, description: 'Bolao - Participacao' }];
+
+    const ipResp = await fetch('https://api.infinitepay.io/invoices/public/checkout/links', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        handle: 'irailson-da-472',
+        items: itemPayload,
+        itens: itemPayload,
+        order_nsu: jogador_id,
+        redirect_url: redirectUrl,
+        customer: { name: nome },
+      }),
+    });
+    const ipData = await ipResp.json();
+    urlRetornada = ipData?.url || ipData?.invoice_url || '';
+  }
+
+  if (!urlRetornada) {
+    throw new Error('Não foi possível gerar o link PIX da InfinitePay.');
+  }
+
+  if (params.jogadorObj) {
+    await upsertJogadorInDb({
+      ...params.jogadorObj,
+      id: jogador_id,
+      link_pagamento: urlRetornada,
+    }).catch(() => {});
+  }
+
+  return { url: urlRetornada, valor: valorReais, price: valorCentavos };
 }
 
 export async function deleteJogadorFromDb(email: string): Promise<void> {
@@ -158,6 +258,51 @@ export async function deleteJogoFromDb(jogoId: string): Promise<void> {
   const path = `jogos/${id}`;
   try {
     await deleteDoc(doc(db, 'jogos', id));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
+  }
+}
+
+export interface JogoDisponivelItem {
+  id: string;
+  time_casa: string;
+  time_fora: string;
+  campeonato: string;
+  horario: string;
+  data: string;
+  adicionado_ao_bolao: boolean;
+}
+
+export async function upsertJogoDisponivelInDb(item: JogoDisponivelItem): Promise<void> {
+  const id = String(item.id || '')
+    .replace(/[^a-zA-Z0-9_-]/g, '_')
+    .slice(0, 120);
+  if (!id) return;
+  const path = `jogos_disponiveis/${id}`;
+  const payload: JogoDisponivelItem = {
+    id,
+    time_casa: String(item.time_casa || 'Time Casa').trim().slice(0, 100) || 'Time Casa',
+    time_fora: String(item.time_fora || 'Time Fora').trim().slice(0, 100) || 'Time Fora',
+    campeonato: String(item.campeonato || 'Futebol').trim().slice(0, 120) || 'Futebol',
+    horario: String(item.horario || '16:00').trim().slice(0, 60) || '16:00',
+    data: String(item.data || new Date().toISOString().slice(0, 10)).trim().slice(0, 40) || new Date().toISOString().slice(0, 10),
+    adicionado_ao_bolao: Boolean(item.adicionado_ao_bolao),
+  };
+  try {
+    await setDoc(doc(db, 'jogos_disponiveis', id), payload);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+export async function deleteJogoDisponivelFromDb(itemId: string): Promise<void> {
+  const id = String(itemId || '')
+    .replace(/[^a-zA-Z0-9_-]/g, '_')
+    .slice(0, 120);
+  if (!id) return;
+  const path = `jogos_disponiveis/${id}`;
+  try {
+    await deleteDoc(doc(db, 'jogos_disponiveis', id));
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
   }
@@ -248,7 +393,7 @@ export function compressImageToDataUrl(file: File, maxDim = 900, quality = 0.72)
   });
 }
 
-export { collection, doc, onSnapshot };
+export { collection, doc, getDoc, onSnapshot };
 
 async function testConnection() {
   try {

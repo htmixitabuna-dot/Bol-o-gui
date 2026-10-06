@@ -31,7 +31,12 @@ service cloud.firestore {
           'dataEnvioComprovante',
           'dataAprovacao',
           'dataCadastro',
-          'timestampCadastro'
+          'timestampCadastro',
+          'id',
+          'link_pagamento',
+          'status_pagamento',
+          'aprovado',
+          'aprovado_em'
         ]) &&
         data.email is string && data.email.size() >= 3 && data.email.size() <= 120 &&
         data.nome is string && data.nome.size() >= 1 && data.nome.size() <= 100 &&
@@ -43,7 +48,12 @@ service cloud.firestore {
         (!('dataEnvioComprovante' in data) || (data.dataEnvioComprovante is string && data.dataEnvioComprovante.size() <= 60)) &&
         (!('dataAprovacao' in data) || (data.dataAprovacao is string && data.dataAprovacao.size() <= 60)) &&
         (!('dataCadastro' in data) || (data.dataCadastro is string && data.dataCadastro.size() <= 60)) &&
-        (!('timestampCadastro' in data) || data.timestampCadastro is number);
+        (!('timestampCadastro' in data) || data.timestampCadastro is number) &&
+        (!('id' in data) || (data.id is string && data.id.size() <= 120)) &&
+        (!('link_pagamento' in data) || (data.link_pagamento is string && data.link_pagamento.size() <= 2000)) &&
+        (!('status_pagamento' in data) || (data.status_pagamento is string && data.status_pagamento.size() <= 40)) &&
+        (!('aprovado' in data) || data.aprovado is bool) &&
+        (!('aprovado_em' in data) || (data.aprovado_em is string && data.aprovado_em.size() <= 100));
     }
 
     function isValidJogo(data) {
@@ -78,6 +88,18 @@ service cloud.firestore {
         data.pixAdm is string && data.pixAdm.size() >= 1 && data.pixAdm.size() <= 120;
     }
 
+    function isValidJogoDisponivel(data) {
+      return data.keys().hasAll(['id', 'time_casa', 'time_fora', 'campeonato', 'horario', 'data', 'adicionado_ao_bolao']) &&
+        data.keys().hasOnly(['id', 'time_casa', 'time_fora', 'campeonato', 'horario', 'data', 'adicionado_ao_bolao']) &&
+        data.id is string && data.id.size() >= 1 && data.id.size() <= 120 &&
+        data.time_casa is string && data.time_casa.size() >= 1 && data.time_casa.size() <= 100 &&
+        data.time_fora is string && data.time_fora.size() >= 1 && data.time_fora.size() <= 100 &&
+        data.campeonato is string && data.campeonato.size() >= 1 && data.campeonato.size() <= 120 &&
+        data.horario is string && data.horario.size() >= 1 && data.horario.size() <= 60 &&
+        data.data is string && data.data.size() >= 1 && data.data.size() <= 40 &&
+        data.adicionado_ao_bolao is bool;
+    }
+
     match /test/{docId} {
       allow get: if isValidId(docId);
     }
@@ -98,7 +120,12 @@ service cloud.firestore {
           'dataEnvioComprovante',
           'dataAprovacao',
           'dataCadastro',
-          'timestampCadastro'
+          'timestampCadastro',
+          'id',
+          'link_pagamento',
+          'status_pagamento',
+          'aprovado',
+          'aprovado_em'
         ]);
       allow delete: if isValidId(jogadorId);
     }
@@ -139,6 +166,23 @@ service cloud.firestore {
       allow update: if isValidId(configId) && isValidConfig(incoming()) &&
         incoming().diff(existing()).affectedKeys().hasOnly(['valor', 'chavePix', 'nomePix', 'cidadePix', 'pixAdm']);
       allow delete: if isValidId(configId);
+    }
+
+    match /jogos_disponiveis/{jogoDisponivelId} {
+      allow get: if isValidId(jogoDisponivelId);
+      allow list: if request.time != null;
+      allow create: if isValidId(jogoDisponivelId) && isValidJogoDisponivel(incoming());
+      allow update: if isValidId(jogoDisponivelId) && isValidJogoDisponivel(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'time_casa',
+          'time_fora',
+          'campeonato',
+          'horario',
+          'data',
+          'adicionado_ao_bolao'
+        ]);
+      allow delete: if isValidId(jogoDisponivelId);
     }
   }
 }

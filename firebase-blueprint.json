@@ -60,6 +60,30 @@
         "timestampCadastro": {
           "type": "number",
           "description": "Timestamp em milissegundos do cadastro do apostador."
+        },
+        "id": {
+          "type": "string",
+          "description": "Identificador único do apostador.",
+          "maxLength": 120
+        },
+        "link_pagamento": {
+          "type": "string",
+          "description": "URL do checkout PIX gerada pela InfinitePay.",
+          "maxLength": 2000
+        },
+        "status_pagamento": {
+          "type": "string",
+          "description": "Status automático do pagamento PIX (pendente ou pago).",
+          "maxLength": 40
+        },
+        "aprovado": {
+          "type": "boolean",
+          "description": "Indica se o pagamento foi aprovado automaticamente via PIX."
+        },
+        "aprovado_em": {
+          "type": "string",
+          "description": "Data/hora ISO em que o pagamento foi confirmado.",
+          "maxLength": 100
         }
       },
       "required": ["email", "nome", "pix", "pontos"]
@@ -181,6 +205,54 @@
         }
       },
       "required": ["valor", "chavePix", "nomePix", "cidadePix", "pixAdm"]
+    },
+    "JogoDisponivel": {
+      "title": "JogoDisponivel",
+      "description": "Jogos sugeridos do dia disponíveis para importação rápida com 1 clique no bolão.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Identificador único do jogo disponível.",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "time_casa": {
+          "type": "string",
+          "description": "Nome do time mandante.",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "time_fora": {
+          "type": "string",
+          "description": "Nome do time visitante.",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "campeonato": {
+          "type": "string",
+          "description": "Nome do campeonato ou liga.",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "horario": {
+          "type": "string",
+          "description": "Horário da partida.",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "data": {
+          "type": "string",
+          "description": "Data da partida (YYYY-MM-DD).",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "adicionado_ao_bolao": {
+          "type": "boolean",
+          "description": "Indica se o jogo já foi adicionado ao bolão com 1 clique."
+        }
+      },
+      "required": ["id", "time_casa", "time_fora", "campeonato", "horario", "data", "adicionado_ao_bolao"]
     }
   },
   "firestore": {
@@ -199,6 +271,10 @@
     "/config/{configId}": {
       "schema": "Config",
       "description": "Documento de configuração financeira e PIX do bolão."
+    },
+    "/jogos_disponiveis/{jogoDisponivelId}": {
+      "schema": "JogoDisponivel",
+      "description": "Coleção isolada de jogos do dia disponíveis para importação rápida."
     }
   }
 }

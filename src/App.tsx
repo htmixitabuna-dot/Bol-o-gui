@@ -4,9 +4,11 @@ import {
   db,
   collection,
   doc,
+  getDoc,
   onSnapshot,
   OperationType,
   handleFirestoreError,
+  getJogadorDocId,
   upsertJogadorInDb,
   deleteJogadorFromDb,
   upsertJogoInDb,
@@ -15,37 +17,78 @@ import {
   deletePalpiteFromDb,
   saveConfigInDb,
   compressImageToDataUrl,
+  criarPagamentoInfinitePay,
 } from './firebase';
 
 // ============================================================================
-// TIMES SÉRIE A PADRÃO (COM CDN ESPN)
+// TIMES CAMPEONATO BRASILEIRO SÉRIE A (LISTA ATUALIZADA E ESCUDOS OFICIAIS)
 // ============================================================================
-export const TIMES_PADRAO = [
-  { nome: "Flamengo", escudo: "https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F819.png&w=100&h=100" },
-  { nome: "Palmeiras", escudo: "https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F2029.png&w=100&h=100" },
-  { nome: "Corinthians", escudo: "https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F874.png&w=100&h=100" },
-  { nome: "São Paulo", escudo: "https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F2026.png&w=100&h=100" },
-  { nome: "Bahia", escudo: "https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F19518.png&w=100&h=100" },
-  { nome: "Vitória", escudo: "https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F19536.png&w=100&h=100" },
-  { nome: "Botafogo", escudo: "https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F121.png&w=100&h=100" },
-  { nome: "Fluminense", escudo: "https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F1246.png&w=100&h=100" },
-  { nome: "Vasco", escudo: "https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F345.png&w=100&h=100" },
-  { nome: "Grêmio", escudo: "https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F12321.png&w=100&h=100" },
-  { nome: "Internacional", escudo: "https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F12332.png&w=100&h=100" },
-  { nome: "Atlético-MG", escudo: "https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F763.png&w=100&h=100" },
-  { nome: "Cruzeiro", escudo: "https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F2022.png&w=100&h=100" },
-  { nome: "Fortaleza", escudo: "https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F12327.png&w=100&h=100" },
-  { nome: "Bragantino", escudo: "https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F12326.png&w=100&h=100" },
-  { nome: "Santos", escudo: "https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F2024.png&w=100&h=100" },
-  { nome: "Athletico-PR", escudo: "https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F12333.png&w=100&h=100" },
-  { nome: "Ceará", escudo: "https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F12336.png&w=100&h=100" },
-  { nome: "Sport", escudo: "https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F12337.png&w=100&h=100" },
-  { nome: "Juventude", escudo: "https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F12329.png&w=100&h=100" },
+export interface TimeSerieA {
+  nome: string;
+  escudo: string;
+  sigla: string;
+  uf: string;
+  aliases?: string[];
+}
+
+export const TIMES_PADRAO: TimeSerieA[] = [
+  { nome: "Atlético-MG", sigla: "CAM", uf: "MG", escudo: "https://logodetimes.com/times/atletico-mineiro/logo-atletico-mineiro-256.png", aliases: ["atletico mineiro", "atletico mg", "galo"] },
+  { nome: "Athletico-PR", sigla: "CAP", uf: "PR", escudo: "https://logodetimes.com/times/atletico-paranaense/logo-atletico-paranaense-256.png", aliases: ["atletico-pr", "atletico paranaense", "athletico"] },
+  { nome: "Bahia", sigla: "BAH", uf: "BA", escudo: "https://logodetimes.com/times/bahia/logo-bahia-256.png", aliases: ["ec bahia", "esporte clube bahia"] },
+  { nome: "Botafogo", sigla: "BOT", uf: "RJ", escudo: "https://logodetimes.com/times/botafogo/logo-botafogo-256.png", aliases: ["botafogo rj"] },
+  { nome: "Ceará", sigla: "CEA", uf: "CE", escudo: "https://logodetimes.com/times/ceara/logo-ceara-256.png", aliases: ["ceara sc"] },
+  { nome: "Chapecoense", sigla: "CHA", uf: "SC", escudo: "https://logodetimes.com/times/chapecoense/logo-chapecoense-256.png", aliases: ["chape"] },
+  { nome: "Corinthians", sigla: "COR", uf: "SP", escudo: "https://logodetimes.com/times/corinthians/logo-corinthians-256.png", aliases: ["timao", "sport club corinthians paulista"] },
+  { nome: "Coritiba", sigla: "CFC", uf: "PR", escudo: "https://logodetimes.com/times/coritiba/logo-coritiba-256.png", aliases: ["coxa"] },
+  { nome: "Cruzeiro", sigla: "CRU", uf: "MG", escudo: "https://logodetimes.com/times/cruzeiro/logo-cruzeiro-256.png", aliases: ["cruzeiro ec"] },
+  { nome: "Flamengo", sigla: "FLA", uf: "RJ", escudo: "https://logodetimes.com/times/flamengo/logo-flamengo-256.png", aliases: ["cr flamengo", "mengao"] },
+  { nome: "Fluminense", sigla: "FLU", uf: "RJ", escudo: "https://logodetimes.com/times/fluminense/logo-fluminense-256.png", aliases: ["fluminense fc"] },
+  { nome: "Fortaleza", sigla: "FOR", uf: "CE", escudo: "https://logodetimes.com/times/fortaleza/logo-fortaleza-256.png", aliases: ["fortaleza ec"] },
+  { nome: "Grêmio", sigla: "GRE", uf: "RS", escudo: "https://logodetimes.com/times/gremio/logo-gremio-256.png", aliases: ["gremio fbpa"] },
+  { nome: "Internacional", sigla: "INT", uf: "RS", escudo: "https://logodetimes.com/times/internacional/logo-internacional-256.png", aliases: ["inter", "sc internacional"] },
+  { nome: "Juventude", sigla: "JUV", uf: "RS", escudo: "https://logodetimes.com/times/juventude/logo-juventude-256.png", aliases: ["ec juventude"] },
+  { nome: "Mirassol", sigla: "MIR", uf: "SP", escudo: "https://logodetimes.com/times/mirassol/logo-mirassol-256.png", aliases: ["mirassol fc"] },
+  { nome: "Palmeiras", sigla: "PAL", uf: "SP", escudo: "https://logodetimes.com/times/palmeiras/logo-palmeiras-256.png", aliases: ["se palmeiras", "verdao"] },
+  { nome: "Red Bull Bragantino", sigla: "RBB", uf: "SP", escudo: "https://logodetimes.com/times/red-bull-bragantino/logo-red-bull-bragantino-256.png", aliases: ["bragantino", "rb bragantino"] },
+  { nome: "Remo", sigla: "REM", uf: "PA", escudo: "https://logodetimes.com/times/remo/logo-remo-256.png", aliases: ["clube do remo"] },
+  { nome: "Santos", sigla: "SAN", uf: "SP", escudo: "https://logodetimes.com/times/santos/logo-santos-256.png", aliases: ["santos fc", "peixe"] },
+  { nome: "São Paulo", sigla: "SAO", uf: "SP", escudo: "https://logodetimes.com/times/sao-paulo/logo-sao-paulo-256.png", aliases: ["sao paulo fc", "spfc"] },
+  { nome: "Sport", sigla: "SPT", uf: "PE", escudo: "https://logodetimes.com/times/sport-recife/logo-sport-recife-256.png", aliases: ["sport recife"] },
+  { nome: "Vasco da Gama", sigla: "VAS", uf: "RJ", escudo: "https://logodetimes.com/times/vasco-da-gama/logo-vasco-da-gama-256.png", aliases: ["vasco", "cr vasco da gama"] },
+  { nome: "Vitória", sigla: "VIT", uf: "BA", escudo: "https://logodetimes.com/times/vitoria/logo-vitoria-256.png", aliases: ["ec vitoria", "esporte clube vitoria"] },
 ];
 
+const ESCUDOS_EXTRAS: Record<string, string> = {
+  "criciuma": "https://a.espncdn.com/i/teamlogos/soccer/500/3457.png",
+  "cuiaba": "https://logodetimes.com/times/cuiaba/logo-cuiaba-256.png",
+  "atletico-go": "https://logodetimes.com/times/atletico-goianiense/logo-atletico-goianiense-256.png",
+  "atletico goianiense": "https://logodetimes.com/times/atletico-goianiense/logo-atletico-goianiense-256.png",
+};
+
+const normalizarNomeTime = (texto: string) =>
+  (texto || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
 export const getEscudoPadrao = (nome: string) => {
-  const t = TIMES_PADRAO.find((x) => x.nome.toLowerCase() === (nome || "").toLowerCase());
-  return t ? t.escudo : "";
+  const norm = normalizarNomeTime(nome);
+  if (!norm) return "";
+  const encontrado = TIMES_PADRAO.find(
+    (x) =>
+      normalizarNomeTime(x.nome) === norm ||
+      normalizarNomeTime(x.sigla) === norm ||
+      (x.aliases && x.aliases.some((al) => normalizarNomeTime(al) === norm))
+  );
+  if (encontrado) return encontrado.escudo;
+  if (ESCUDOS_EXTRAS[norm]) return ESCUDOS_EXTRAS[norm];
+  const parcial = TIMES_PADRAO.find(
+    (x) =>
+      norm.includes(normalizarNomeTime(x.nome)) ||
+      normalizarNomeTime(x.nome).includes(norm)
+  );
+  return parcial ? parcial.escudo : "";
 };
 
 export type EscolhaResultado = "CASA" | "EMPATE" | "FORA";
@@ -118,12 +161,21 @@ export function geraPixPayload(chave: string, nome: string, cidade: string, valo
 }
 
 export default function App() {
-  const [page, setPage] = useState<"landing" | "loginJogador" | "adminLogin" | "admin" | "palpites" | "minhasApostas" | "pagamento" | "classificacao">("landing");
+  const [page, setPage] = useState<"landing" | "loginJogador" | "adminLogin" | "admin" | "palpites" | "minhasApostas" | "pagamento" | "pagamentoSucesso" | "classificacao">(() => {
+    if (typeof window !== "undefined") {
+      const path = window.location.pathname || "";
+      const params = new URLSearchParams(window.location.search);
+      if (path.includes("/pagamento-sucesso") || params.get("jogador_id")) {
+        return "pagamentoSucesso";
+      }
+    }
+    return "landing";
+  });
   const [jogos, setJogos] = useState<Jogo[]>([]);
   const [jogadores, setJogadores] = useState<any[]>([]);
   const [palpites, setPalpites] = useState<Palpite[]>([]);
   const [user, setUser] = useState<any>(null);
-  const [config, setConfig] = useState<{ valor: number | string; chavePix: string; nomePix: string; cidadePix: string; pixAdm: string }>({ valor: 20, chavePix: "01780181558", nomePix: "INHO BAHIA", cidadePix: "ITABUNA", pixAdm: "01780181558" });
+  const [config, setConfig] = useState<{ valor: number | string; chavePix: string; nomePix: string; cidadePix: string; pixAdm: string }>({ valor: 10, chavePix: "01780181558", nomePix: "INHO BAHIA", cidadePix: "ITABUNA", pixAdm: "01780181558" });
   const [copiadoPix, setCopiadoPix] = useState(false);
   const [copiadaChave, setCopiadaChave] = useState(false);
   const [pixSalvoAviso, setPixSalvoAviso] = useState(false);
@@ -132,6 +184,18 @@ export default function App() {
   const [modalComprovante, setModalComprovante] = useState<{ url: string; nome: string; email: string; timestamp?: number } | null>(null);
   const [pastaComprovanteAberta, setPastaComprovanteAberta] = useState(false);
   const [tempComprovante, setTempComprovante] = useState<string>("");
+  const [gerandoPixInfinite, setGerandoPixInfinite] = useState(false);
+  const [erroPixInfinite, setErroPixInfinite] = useState("");
+  const [linkPixGerado, setLinkPixGerado] = useState("");
+  const [confirmandoSucesso, setConfirmandoSucesso] = useState(false);
+  const [modoNovaAposta, setModoNovaAposta] = useState(false);
+  const [jogadorIdSucesso, setJogadorIdSucesso] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      return params.get("jogador_id") || params.get("order_nsu") || "";
+    }
+    return "";
+  });
 
   // Logo Oficial do Bolões Elite
   const [logoBolao, setLogoBolao] = useState<string>(logoOficial);
@@ -139,8 +203,8 @@ export default function App() {
   // Confronto Form
   const [nomeTime1, setNomeTime1] = useState("Palmeiras");
   const [nomeTime2, setNomeTime2] = useState("Grêmio");
-  const [escudoTime1, setEscudoTime1] = useState(TIMES_PADRAO[1].escudo);
-  const [escudoTime2, setEscudoTime2] = useState(TIMES_PADRAO[9].escudo);
+  const [escudoTime1, setEscudoTime1] = useState(() => getEscudoPadrao("Palmeiras"));
+  const [escudoTime2, setEscudoTime2] = useState(() => getEscudoPadrao("Grêmio"));
   const [dataJ, setDataJ] = useState("16:00");
   const [estadio, setEstadio] = useState("Maracanã");
 
@@ -350,8 +414,9 @@ export default function App() {
     };
   }, []);
 
-  // Inicializa escolhas temporárias do usuário ao carregar jogos/palpites
+  // Inicializa escolhas temporárias do usuário ao carregar jogos/palpites (exceto quando estiver fazendo nova aposta)
   useEffect(() => {
+    if (modoNovaAposta) return;
     if (user && palpites.length > 0) {
       const userP = palpites.filter((p) => p.jogadorEmail === user.email);
       const map: Record<string, EscolhaResultado> = {};
@@ -360,7 +425,122 @@ export default function App() {
       });
       setEscolhasTemp(map);
     }
-  }, [user, palpites]);
+  }, [user, palpites, modoNovaAposta]);
+
+  const iniciarNovaAposta = () => {
+    if (!user) {
+      setPage("loginJogador");
+      return;
+    }
+    setModoNovaAposta(true);
+    setEscolhasTemp({});
+    setErroPixInfinite("");
+    setPage("palpites");
+    setTimeout(() => {
+      const el = document.getElementById("secao-jogos-rodada");
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "start" });
+      } else {
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+    }, 100);
+  };
+
+  // Confirmação automática ao retornar da InfinitePay (/pagamento-sucesso?jogador_id=XXX)
+  useEffect(() => {
+    if (page !== "pagamentoSucesso") return;
+    const params = new URLSearchParams(window.location.search);
+    const idParam = params.get("jogador_id") || params.get("order_nsu") || jogadorIdSucesso || user?.id || user?.email;
+    if (!idParam) return;
+
+    let cancelado = false;
+    const confirmarNoBanco = async () => {
+      setConfirmandoSucesso(true);
+      try {
+        const docId = getJogadorDocId(idParam);
+        const snap = await getDoc(doc(db, "jogadores", docId));
+        const agoraIso = new Date().toISOString();
+        const horaFormatada = new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+
+        let dadosJogador: any = snap.exists() ? snap.data() : null;
+        if (!dadosJogador) {
+          dadosJogador = jogadores.find(
+            (x: any) =>
+              getJogadorDocId(x.id || x.email || "") === docId ||
+              (x.email || "").toLowerCase() === String(idParam).toLowerCase()
+          );
+        }
+        if (!dadosJogador && user) {
+          dadosJogador = user;
+        }
+
+        if (dadosJogador && !cancelado) {
+          const jgConfirmado = {
+            ...dadosJogador,
+            id: docId,
+            status_pagamento: "pago",
+            aprovado: true,
+            aprovado_em: agoraIso,
+            statusPagamento: "APROVADO",
+            dataAprovacao: horaFormatada,
+          };
+          await upsertJogadorInDb(jgConfirmado);
+          setUser(jgConfirmado);
+          localStorage.setItem("elite_user_v11", JSON.stringify(jgConfirmado));
+
+          // Marca automaticamente os palpites desse jogador como pagos
+          const emailAlvo = (jgConfirmado.email || "").toLowerCase();
+          palpites.forEach((p) => {
+            if ((p.jogadorEmail || "").toLowerCase() === emailAlvo && !p.pago) {
+              upsertPalpiteInDb({ ...p, pago: true }).catch(() => {});
+            }
+          });
+        }
+      } catch (err) {
+        console.error("Erro ao confirmar pagamento no retorno do PIX:", err);
+      } finally {
+        if (!cancelado) setConfirmandoSucesso(false);
+      }
+    };
+
+    confirmarNoBanco();
+    return () => {
+      cancelado = true;
+    };
+  }, [page, jogadorIdSucesso]);
+
+  const iniciarPagamentoInfinitePay = async (jogadorAlvo: any) => {
+    if (!jogadorAlvo) return;
+    setGerandoPixInfinite(true);
+    setErroPixInfinite("");
+    try {
+      const jogadorId = getJogadorDocId(jogadorAlvo.id || jogadorAlvo.email);
+      const resultado = await criarPagamentoInfinitePay({
+        jogador_id: jogadorId,
+        nome: jogadorAlvo.nome || "Jogador",
+        jogadorObj: jogadorAlvo,
+      });
+
+      if (resultado.url) {
+        setLinkPixGerado(resultado.url);
+        const atualizado = {
+          ...jogadorAlvo,
+          id: jogadorId,
+          link_pagamento: resultado.url,
+        };
+        setUser(atualizado);
+        localStorage.setItem("elite_user_v11", JSON.stringify(atualizado));
+
+        // Redireciona o usuário para a URL do PIX da InfinitePay
+        window.location.href = resultado.url;
+      }
+    } catch (err: any) {
+      setErroPixInfinite(err?.message || "Erro ao gerar link de pagamento PIX na InfinitePay.");
+      setPage("pagamento");
+    } finally {
+      setGerandoPixInfinite(false);
+    }
+  };
 
   const saveJogos = (j: Jogo[]) => {
     const idsNovos = new Set(j.map((x) => x.id));
@@ -411,31 +591,42 @@ export default function App() {
   };
 
   const Escudo = ({ src, nome, size = 36 }: { src?: string; nome: string; size?: number }) => {
-    if (!src) {
+    const escudoPadraoTime = getEscudoPadrao(nome);
+    const isLegacyUrl =
+      src &&
+      !src.startsWith("data:") &&
+      (src.includes("espncdn.com/combiner") || src.includes("upload.wikimedia.org"));
+    const resolvedSrc = (!src || isLegacyUrl) ? (escudoPadraoTime || src) : src;
+
+    if (!resolvedSrc) {
       return (
         <div
           style={{ width: size, height: size }}
           className="bg-[#FF6B00] text-black font-black text-[10px] rounded-full flex items-center justify-center shrink-0 shadow select-none"
         >
-          {nome.substring(0, 3).toUpperCase()}
+          {(nome || "TIM").substring(0, 3).toUpperCase()}
         </div>
       );
     }
     return (
       <div
         style={{ width: size, height: size }}
-        className="bg-white rounded-full p-1 flex items-center justify-center shrink-0 overflow-hidden shadow-sm"
+        className="bg-white rounded-full p-1 flex items-center justify-center shrink-0 overflow-hidden shadow-sm border border-zinc-200/30"
       >
         <img
-          src={src}
+          src={resolvedSrc}
           alt={nome}
           className="w-full h-full object-contain"
           onError={(e: any) => {
-            e.currentTarget.style.display = 'none';
+            if (escudoPadraoTime && e.currentTarget.src !== escudoPadraoTime) {
+              e.currentTarget.src = escudoPadraoTime;
+              return;
+            }
+            e.currentTarget.style.display = "none";
             if (e.currentTarget.parentElement) {
               e.currentTarget.parentElement.className =
                 "bg-[#FF6B00] text-black font-black text-[10px] rounded-full flex items-center justify-center shrink-0 shadow";
-              e.currentTarget.parentElement.innerHTML = nome.substring(0, 3).toUpperCase();
+              e.currentTarget.parentElement.innerHTML = (nome || "TIM").substring(0, 3).toUpperCase();
             }
           }}
         />
@@ -743,7 +934,11 @@ export default function App() {
 
     const ranking = jogadores.map((jg) => {
       const apostasJogador = palpites.filter((p) => p.jogadorEmail === jg.email);
-      const isPago = jg.statusPagamento === "APROVADO" || apostasJogador.some((p) => p.pago);
+      const isPago =
+        jg.status_pagamento === "pago" ||
+        jg.aprovado === true ||
+        jg.statusPagamento === "APROVADO" ||
+        apostasJogador.some((p) => p.pago);
 
       let pontos = 0;
       let totalApostas = apostasJogador.length;
@@ -783,6 +978,8 @@ export default function App() {
   const valorCotaNumerico = parseFloat(String(config.valor).replace(",", ".")) || 0;
   const jogadoresPagosLista = jogadores.filter(
     (jg: any) =>
+      jg.status_pagamento === "pago" ||
+      jg.aprovado === true ||
       jg.statusPagamento === "APROVADO" ||
       palpites.some((p: any) => p.jogadorEmail === jg.email && p.pago)
   );
@@ -826,7 +1023,10 @@ export default function App() {
   ].sort((a, b) => b.ordem - a.ordem);
 
   const meuStatusDeposito = user
-    ? user.statusPagamento === "APROVADO" || palpites.some((p: any) => p.jogadorEmail === user.email && p.pago)
+    ? user.status_pagamento === "pago" ||
+      user.aprovado === true ||
+      user.statusPagamento === "APROVADO" ||
+      palpites.some((p: any) => p.jogadorEmail === user.email && p.pago)
       ? "APROVADO"
       : user.statusPagamento === "EM_ANALISE"
       ? "EM_ANALISE"
@@ -1026,7 +1226,9 @@ export default function App() {
     : [];
   const isMinhaApostaAprovada = Boolean(
     user &&
-      (user.statusPagamento === "APROVADO" ||
+      (user.status_pagamento === "pago" ||
+        user.aprovado === true ||
+        user.statusPagamento === "APROVADO" ||
         meusPalpitesSalvos.some((p) => p.pago))
   );
   const codigoAutenticidadeJogador = user
@@ -1153,19 +1355,28 @@ export default function App() {
           </div>
         ) : (
           <div className="space-y-3">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="text-xs font-black uppercase text-[#FF6B00] tracking-wider">
                 📌 Seus Times Selecionados ({meusPalpitesSalvos.length} Apostas)
               </span>
-              {modoCompacto && (
+              <div className="flex flex-wrap items-center gap-1.5">
                 <button
                   type="button"
-                  onClick={() => setPage("minhasApostas")}
-                  className="text-[11px] bg-[#FF6B00] hover:bg-[#ff7b1a] text-black font-black px-3 py-1 rounded-lg cursor-pointer transition"
+                  onClick={iniciarNovaAposta}
+                  className="text-[11px] bg-green-600 hover:bg-green-500 text-black font-black px-3 py-1 rounded-lg cursor-pointer transition shadow-md flex items-center gap-1"
                 >
-                  🔍 Abrir Tela Cheia p/ Print
+                  <span>➕</span> Fazer Nova Aposta
                 </button>
-              )}
+                {modoCompacto && (
+                  <button
+                    type="button"
+                    onClick={() => setPage("minhasApostas")}
+                    className="text-[11px] bg-[#FF6B00] hover:bg-[#ff7b1a] text-black font-black px-3 py-1 rounded-lg cursor-pointer transition"
+                  >
+                    🔍 Abrir Tela Cheia p/ Print
+                  </button>
+                )}
+              </div>
             </div>
 
             {meusPalpitesSalvos.map((ap, idx) => {
@@ -1600,7 +1811,7 @@ export default function App() {
           </form>
         ) : (
           <form
-            onSubmit={(e) => {
+            onSubmit={async (e) => {
               e.preventDefault();
               if (!aceitouTermos) {
                 alert("Você deve aceitar os Termos e Políticas do bolão!");
@@ -1613,6 +1824,7 @@ export default function App() {
 
               if (!nome || !email || !pix) return alert("Preencha todos os campos!");
 
+              const docId = getJogadorDocId(email);
               const existente = jogadores.find((x: any) => (x.email || "").toLowerCase() === email);
               const agora = Date.now();
               const dataHoraCadastro = `${new Date().toLocaleDateString("pt-BR")} às ${new Date().toLocaleTimeString("pt-BR", {
@@ -1623,6 +1835,7 @@ export default function App() {
               const novo = existente
                 ? {
                     ...existente,
+                    id: docId,
                     nome,
                     email,
                     pix,
@@ -1630,21 +1843,26 @@ export default function App() {
                     timestampCadastro: existente.timestampCadastro || agora,
                   }
                 : {
+                    id: docId,
                     nome,
                     email,
                     pix,
                     pontos: 0,
                     statusPagamento: "PENDENTE",
+                    status_pagamento: "pendente",
+                    aprovado: false,
                     dataCadastro: dataHoraCadastro,
                     timestampCadastro: agora,
                   };
 
               const lista = [...jogadores.filter((x: any) => (x.email || "").toLowerCase() !== email), novo];
               saveJogadores(lista);
-              upsertJogadorInDb(novo).catch(() => {});
+              await upsertJogadorInDb(novo).catch(() => {});
               setUser(novo);
               localStorage.setItem("elite_user_v11", JSON.stringify(novo));
-              setPage("palpites");
+
+              // Chama /api/pagamento/criar e redireciona o usuário para a URL do PIX da InfinitePay
+              await iniciarPagamentoInfinitePay(novo);
             }}
             className="mt-6 space-y-4"
           >
@@ -1703,10 +1921,12 @@ export default function App() {
 
             <button
               type="submit"
-              disabled={!aceitouTermos}
+              disabled={!aceitouTermos || gerandoPixInfinite}
               className="w-full bg-[#FF6B00] disabled:bg-zinc-800 disabled:text-zinc-500 disabled:cursor-not-allowed text-black font-black py-4 rounded-xl cursor-pointer hover:scale-[1.01] transition shadow-lg shadow-[#FF6B00]/20 text-sm uppercase tracking-wider"
             >
-              CADASTRAR E FAZER APOSTAS
+              {gerandoPixInfinite
+                ? "⏳ GERANDO PIX INFINITEPAY..."
+                : `CADASTRAR E PAGAR PIX (R$ ${config.valor})`}
             </button>
           </form>
         )}
@@ -1925,7 +2145,11 @@ export default function App() {
                 })
                 .map((jg, idx) => {
                   const palpitesJg = palpites.filter((p) => p.jogadorEmail === jg.email);
-                  const isPagoJg = jg.statusPagamento === "APROVADO" || palpitesJg.some((p) => p.pago);
+                  const isPagoJg =
+                    jg.status_pagamento === "pago" ||
+                    jg.aprovado === true ||
+                    jg.statusPagamento === "APROVADO" ||
+                    palpitesJg.some((p) => p.pago);
                   return (
                     <div
                       key={jg.email || idx}
@@ -1939,16 +2163,10 @@ export default function App() {
                             className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${
                               isPagoJg
                                 ? "bg-green-950 text-green-400 border-green-700"
-                                : jg.statusPagamento === "EM_ANALISE"
-                                ? "bg-amber-950 text-amber-300 border-amber-700"
-                                : "bg-zinc-900 text-zinc-400 border-zinc-700"
+                                : "bg-amber-950 text-amber-300 border-amber-700"
                             }`}
                           >
-                            {isPagoJg
-                              ? "PAGO"
-                              : jg.statusPagamento === "EM_ANALISE"
-                              ? "COMPROVANTE ENVIADO"
-                              : "CADASTRADO"}
+                            {isPagoJg ? "✅ PAGO (AUTOMÁTICO PIX)" : "⏳ AGUARDANDO PIX INFINITEPAY"}
                           </span>
                           <span className="text-[10px] bg-zinc-900 border border-zinc-800 text-[#FF6B00] px-2 py-0.5 rounded font-bold">
                             {palpitesJg.length} palpite(s)
@@ -1964,19 +2182,20 @@ export default function App() {
                           {jg.dataCadastro && (
                             <span className="text-zinc-500">Cadastro: {jg.dataCadastro}</span>
                           )}
+                          {jg.link_pagamento && (
+                            <a
+                              href={jg.link_pagamento}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[#FF6B00] underline font-bold"
+                            >
+                              🔗 Link PIX InfinitePay
+                            </a>
+                          )}
                         </div>
                       </div>
 
                       <div className="flex flex-wrap items-center gap-1.5 shrink-0">
-                        {!isPagoJg && (
-                          <button
-                            type="button"
-                            onClick={() => aprovarPagamento(jg.email)}
-                            className="text-[10px] bg-green-600 hover:bg-green-500 text-black font-black px-2.5 py-1.5 rounded-lg cursor-pointer transition"
-                          >
-                            ✓ Aprovar
-                          </button>
-                        )}
                         {jg.comprovante && (
                           <button
                             type="button"
@@ -2045,14 +2264,17 @@ export default function App() {
                   <div className="grid grid-cols-3 gap-1.5 flex-1 max-w-md">
                     <button
                       onClick={() => definirResultadoJogo(j.id, "CASA")}
-                      className={`py-2 px-2 rounded-lg text-xs font-bold transition cursor-pointer flex items-center justify-center gap-1 ${
+                      className={`py-2 px-2 rounded-lg text-xs font-bold transition cursor-pointer flex items-center justify-center gap-1.5 ${
                         j.resultadoOficial === "CASA"
                           ? "bg-green-600 text-black shadow-md font-black"
                           : "bg-zinc-900 text-zinc-300 hover:bg-zinc-800 border border-zinc-800"
                       }`}
                     >
-                      {j.resultadoOficial === "CASA" && "✓ "}
-                      {j.casa}
+                      <Escudo src={j.escudoCasa} nome={j.casa} size={20} />
+                      <span className="truncate">
+                        {j.resultadoOficial === "CASA" && "✓ "}
+                        {j.casa}
+                      </span>
                     </button>
 
                     <button
@@ -2069,14 +2291,17 @@ export default function App() {
 
                     <button
                       onClick={() => definirResultadoJogo(j.id, "FORA")}
-                      className={`py-2 px-2 rounded-lg text-xs font-bold transition cursor-pointer flex items-center justify-center gap-1 ${
+                      className={`py-2 px-2 rounded-lg text-xs font-bold transition cursor-pointer flex items-center justify-center gap-1.5 ${
                         j.resultadoOficial === "FORA"
                           ? "bg-green-600 text-black shadow-md font-black"
                           : "bg-zinc-900 text-zinc-300 hover:bg-zinc-800 border border-zinc-800"
                       }`}
                     >
-                      {j.resultadoOficial === "FORA" && "✓ "}
-                      {j.fora}
+                      <Escudo src={j.escudoFora} nome={j.fora} size={20} />
+                      <span className="truncate">
+                        {j.resultadoOficial === "FORA" && "✓ "}
+                        {j.fora}
+                      </span>
                     </button>
                   </div>
                 </div>
@@ -2316,38 +2541,15 @@ export default function App() {
                       </div>
 
                       <div className="flex flex-wrap items-center gap-1.5">
-                        {/* Botões de Ação de Pagamento */}
-                        {jg.isPago || jg.statusPagamento === "APROVADO" ? (
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-xs bg-green-950 text-green-400 border border-green-700 px-3 py-1.5 rounded-lg font-bold flex items-center gap-1">
-                              <span>✅</span> PAGAMENTO APROVADO
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => recusarPagamento(jg.email)}
-                              className="text-[10px] text-zinc-500 hover:text-red-400 border border-zinc-800 hover:border-red-900 px-2 py-1.5 rounded-lg cursor-pointer transition"
-                              title="Desmarcar ou revogar aprovação"
-                            >
-                              Revogar
-                            </button>
-                          </div>
+                        {/* Status Automático do Pagamento PIX InfinitePay */}
+                        {jg.isPago || jg.status_pagamento === "pago" || jg.aprovado === true || jg.statusPagamento === "APROVADO" ? (
+                          <span className="text-xs bg-green-950 text-green-400 border border-green-700 px-3 py-1.5 rounded-lg font-black flex items-center gap-1.5">
+                            <span>✅</span> PAGO AUTOMÁTICO (INFINITEPAY)
+                          </span>
                         ) : (
-                          <div className="flex items-center gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => aprovarPagamento(jg.email)}
-                              className="text-xs bg-green-600 hover:bg-green-500 text-black font-black px-3.5 py-1.5 rounded-lg cursor-pointer shadow-md shadow-green-600/30 transition flex items-center gap-1"
-                            >
-                              <span>✅</span> APROVAR PAGAMENTO
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => recusarPagamento(jg.email)}
-                              className="text-xs bg-red-950 hover:bg-red-900 text-red-300 border border-red-800 px-2.5 py-1.5 rounded-lg cursor-pointer transition"
-                            >
-                              Recusar
-                            </button>
-                          </div>
+                          <span className="text-xs bg-amber-950/80 text-amber-300 border border-amber-700/80 px-3 py-1.5 rounded-lg font-bold flex items-center gap-1.5">
+                            <span>⏳</span> AGUARDANDO RETORNO DO PIX
+                          </span>
                         )}
 
                         {jg.comprovante && (
@@ -2622,10 +2824,16 @@ export default function App() {
                 />
               </div>
 
-              <div>
-                <span className="text-[9px] text-zinc-500 uppercase font-bold block mb-1">Ou escolha time pronto:</span>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[9px] text-zinc-400 uppercase font-black">
+                    🏆 Times da Série A • Brasileirão ({TIMES_PADRAO.length} clubes c/ escudos):
+                  </span>
+                </div>
                 <select
+                  value={TIMES_PADRAO.some((t) => t.nome === nomeTime1) ? nomeTime1 : ""}
                   onChange={(e) => {
+                    if (!e.target.value) return;
                     setNomeTime1(e.target.value);
                     setEscudoTime1(getEscudoPadrao(e.target.value));
                   }}
@@ -2634,10 +2842,37 @@ export default function App() {
                   <option value="">-- Escolher Série A --</option>
                   {TIMES_PADRAO.map((t) => (
                     <option key={t.nome} value={t.nome}>
-                      {t.nome}
+                      {t.nome} ({t.uf})
                     </option>
                   ))}
                 </select>
+
+                {/* Grade visual com os escudos dos times listados da Série A */}
+                <div className="grid grid-cols-3 sm:grid-cols-4 gap-1.5 max-h-48 overflow-y-auto p-1.5 bg-zinc-950/90 border border-zinc-800/90 rounded-xl">
+                  {TIMES_PADRAO.map((t) => {
+                    const selecionado = normalizarNomeTime(nomeTime1) === normalizarNomeTime(t.nome);
+                    return (
+                      <button
+                        key={t.nome}
+                        type="button"
+                        onClick={() => {
+                          setNomeTime1(t.nome);
+                          setEscudoTime1(t.escudo);
+                        }}
+                        className={`flex flex-col items-center justify-center gap-1 p-1.5 rounded-lg border text-center transition cursor-pointer ${
+                          selecionado
+                            ? "bg-[#FF6B00]/20 border-[#FF6B00] text-white shadow-md"
+                            : "bg-zinc-900/70 hover:bg-zinc-800 border-zinc-800 text-zinc-300"
+                        }`}
+                      >
+                        <Escudo src={t.escudo} nome={t.nome} size={28} />
+                        <span className="text-[9px] font-bold leading-tight truncate w-full">
+                          {t.nome}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             </div>
 
@@ -2672,10 +2907,16 @@ export default function App() {
                 />
               </div>
 
-              <div>
-                <span className="text-[9px] text-zinc-500 uppercase font-bold block mb-1">Ou escolha time pronto:</span>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[9px] text-zinc-400 uppercase font-black">
+                    🏆 Times da Série A • Brasileirão ({TIMES_PADRAO.length} clubes c/ escudos):
+                  </span>
+                </div>
                 <select
+                  value={TIMES_PADRAO.some((t) => t.nome === nomeTime2) ? nomeTime2 : ""}
                   onChange={(e) => {
+                    if (!e.target.value) return;
                     setNomeTime2(e.target.value);
                     setEscudoTime2(getEscudoPadrao(e.target.value));
                   }}
@@ -2684,10 +2925,37 @@ export default function App() {
                   <option value="">-- Escolher Série A --</option>
                   {TIMES_PADRAO.map((t) => (
                     <option key={t.nome} value={t.nome}>
-                      {t.nome}
+                      {t.nome} ({t.uf})
                     </option>
                   ))}
                 </select>
+
+                {/* Grade visual com os escudos dos times listados da Série A */}
+                <div className="grid grid-cols-3 sm:grid-cols-4 gap-1.5 max-h-48 overflow-y-auto p-1.5 bg-zinc-950/90 border border-zinc-800/90 rounded-xl">
+                  {TIMES_PADRAO.map((t) => {
+                    const selecionado = normalizarNomeTime(nomeTime2) === normalizarNomeTime(t.nome);
+                    return (
+                      <button
+                        key={t.nome}
+                        type="button"
+                        onClick={() => {
+                          setNomeTime2(t.nome);
+                          setEscudoTime2(t.escudo);
+                        }}
+                        className={`flex flex-col items-center justify-center gap-1 p-1.5 rounded-lg border text-center transition cursor-pointer ${
+                          selecionado
+                            ? "bg-[#FF6B00]/20 border-[#FF6B00] text-white shadow-md"
+                            : "bg-zinc-900/70 hover:bg-zinc-800 border-zinc-800 text-zinc-300"
+                        }`}
+                      >
+                        <Escudo src={t.escudo} nome={t.nome} size={28} />
+                        <span className="text-[9px] font-bold leading-tight truncate w-full">
+                          {t.nome}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             </div>
           </div>
@@ -2878,6 +3146,14 @@ export default function App() {
           <div className="flex flex-wrap items-center justify-end gap-1.5">
             <button
               type="button"
+              onClick={iniciarNovaAposta}
+              className="text-xs bg-green-600 hover:bg-green-500 text-black px-2.5 py-1.5 rounded-lg cursor-pointer font-black transition flex items-center gap-1 border border-green-400 shadow-md shadow-green-600/20"
+              title="Limpar seleção e fazer uma nova aposta"
+            >
+              <span>➕</span> Fazer Nova Aposta
+            </button>
+            <button
+              type="button"
               onClick={() => setPage("minhasApostas")}
               className={`text-xs px-2.5 py-1.5 rounded-lg cursor-pointer font-black transition flex items-center gap-1 border ${
                 isMinhaApostaAprovada
@@ -3002,10 +3278,44 @@ export default function App() {
         <ContabilizadorDepositosJogador mostrarBotaoDepositar={true} />
 
         {/* Área Minhas Apostas (exibida automaticamente quando o jogador já selecionou seus times / ADM aprovou) */}
-        {meusPalpitesSalvos.length > 0 && <AreaMinhasApostas modoCompacto={true} />}
+        {meusPalpitesSalvos.length > 0 && !modoNovaAposta && <AreaMinhasApostas modoCompacto={true} />}
+
+        {/* Banner de Modo Nova Aposta */}
+        {modoNovaAposta && (
+          <div className="mt-4 bg-gradient-to-r from-[#FF6B00]/25 via-zinc-900 to-black border-2 border-[#FF6B00] p-4 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xl">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-[#FF6B00] text-black font-black flex items-center justify-center text-xl shrink-0">
+                ➕
+              </div>
+              <div>
+                <div className="text-[10px] font-black uppercase tracking-wider text-[#FF6B00]">
+                  Nova Aposta Iniciada
+                </div>
+                <div className="text-sm font-black text-white">
+                  Selecione seus times nos confrontos abaixo!
+                </div>
+                <p className="text-[11px] text-zinc-300">
+                  As marcações foram limpas para você montar sua nova aposta e confirmar no PIX.
+                </p>
+              </div>
+            </div>
+            {meusPalpitesSalvos.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setModoNovaAposta(false)}
+                className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold px-3 py-2 rounded-xl cursor-pointer shrink-0 border border-zinc-700 transition"
+              >
+                Cancelar / Manter Anterior
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Status da Rodada */}
-        <div className="mt-4 flex items-center justify-between bg-zinc-900/90 border border-zinc-800 px-3.5 py-2.5 rounded-xl">
+        <div
+          id="secao-jogos-rodada"
+          className="mt-4 flex flex-wrap items-center justify-between gap-2 bg-zinc-900/90 border border-zinc-800 px-3.5 py-2.5 rounded-xl"
+        >
           <div className="flex items-center gap-2">
             <span className={`h-2 w-2 rounded-full ${jogos.length > 0 ? "bg-green-500 animate-pulse" : "bg-amber-500"}`}></span>
             <span className="text-xs font-bold text-white">
@@ -3014,9 +3324,18 @@ export default function App() {
                 : "Aguardando Publicação pelo ADM"}
             </span>
           </div>
-          <span className="text-[10px] bg-black text-[#FF6B00] font-black px-2 py-0.5 rounded border border-zinc-800">
-            {Object.keys(escolhasTemp).length}/{jogos.length} APOSTADOS
-          </span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={iniciarNovaAposta}
+              className="text-[10px] bg-green-600 hover:bg-green-500 text-black font-black px-2.5 py-1 rounded-lg cursor-pointer transition flex items-center gap-1"
+            >
+              <span>➕</span> Fazer Nova Aposta
+            </button>
+            <span className="text-[10px] bg-black text-[#FF6B00] font-black px-2 py-0.5 rounded border border-zinc-800">
+              {Object.keys(escolhasTemp).length}/{jogos.length} APOSTADOS
+            </span>
+          </div>
         </div>
 
         {jogos.length === 0 ? (
@@ -3181,7 +3500,8 @@ export default function App() {
             })}
 
             <button
-              onClick={() => {
+              disabled={gerandoPixInfinite}
+              onClick={async () => {
                 if (!user) {
                   setPage("loginJogador");
                   return;
@@ -3196,60 +3516,74 @@ export default function App() {
                   if (!confirma) return;
                 }
 
+                const jaPago =
+                  !modoNovaAposta &&
+                  Boolean(
+                    user.status_pagamento === "pago" ||
+                      user.aprovado === true ||
+                      user.statusPagamento === "APROVADO"
+                  );
+
                 const novosPalpites: Palpite[] = jogos
                   .filter((j) => escolhasTemp[j.id])
                   .map((j) => ({
                     jogadorEmail: user!.email,
                     jogoId: j.id,
                     escolha: escolhasTemp[j.id],
-                    pago: false, // Nova aposta requer nova aprovação do ADM
+                    pago: jaPago,
                   }));
 
                 const outros = palpites.filter((p) => p.jogadorEmail !== user!.email);
                 const todos = [...outros, ...novosPalpites];
                 setPalpites(todos);
                 localStorage.setItem("elite_palpites_v11", JSON.stringify(todos));
-                novosPalpites.forEach((np) => {
-                  upsertPalpiteInDb(np).catch(() => {});
-                });
+                for (const np of novosPalpites) {
+                  await upsertPalpiteInDb(np).catch(() => {});
+                }
 
-                // Reseta o status de pagamento para PENDENTE e limpa comprovante anterior para a nova aposta
-                const userAtualizado = {
+                if (jaPago) {
+                  setModoNovaAposta(false);
+                  setPage("minhasApostas");
+                  return;
+                }
+
+                // Se for uma nova aposta ou ainda não estiver paga, prepara o usuário e gera o novo PIX InfinitePay
+                const userParaPix = {
                   ...user,
                   statusPagamento: "PENDENTE",
-                  comprovante: undefined,
-                  dataEnvioComprovante: undefined,
-                  dataAprovacao: undefined,
+                  status_pagamento: "pendente",
+                  aprovado: false,
                 };
-                setUser(userAtualizado);
-                localStorage.setItem("elite_user_v11", JSON.stringify(userAtualizado));
-                upsertJogadorInDb(userAtualizado).catch(() => {});
+                setUser(userParaPix);
+                localStorage.setItem("elite_user_v11", JSON.stringify(userParaPix));
+                await upsertJogadorInDb(userParaPix).catch(() => {});
+                setModoNovaAposta(false);
 
-                const jgsAtualizados = jogadores.map((jg: any) => {
-                  if (jg.email === user!.email) {
-                    return {
-                      ...jg,
-                      statusPagamento: "PENDENTE",
-                      comprovante: undefined,
-                      dataEnvioComprovante: undefined,
-                      dataAprovacao: undefined,
-                    };
-                  }
-                  return jg;
-                });
-                setJogadores(jgsAtualizados);
-                localStorage.setItem("elite_jogadores_v11", JSON.stringify(jgsAtualizados));
-                setTempComprovante("");
-
-                alert(
-                  `Sucesso! Sua nova aposta foi enviada para o ADM. Efetue o PIX de R$ ${config.valor} e envie o comprovante para liberação.`
-                );
-                setPage("pagamento");
+                await iniciarPagamentoInfinitePay(userParaPix);
               }}
-              className="w-full bg-[#FF6B00] text-black font-black py-4 rounded-xl mt-4 cursor-pointer hover:scale-[1.02] active:scale-[0.98] transition uppercase tracking-wider text-sm shadow-lg shadow-[#FF6B00]/20 flex items-center justify-center gap-2"
+              className="w-full bg-[#FF6B00] disabled:bg-zinc-800 disabled:text-zinc-500 text-black font-black py-4 rounded-xl mt-4 cursor-pointer hover:scale-[1.02] active:scale-[0.98] transition uppercase tracking-wider text-sm shadow-lg shadow-[#FF6B00]/20 flex items-center justify-center gap-2"
             >
-              <span>💾</span> ENVIAR APOSTAS & PAGAR
+              <span>💾</span>
+              <span>
+                {gerandoPixInfinite
+                  ? "GERANDO LINK PIX INFINITEPAY..."
+                  : modoNovaAposta
+                  ? `FINALIZAR NOVA APOSTA & PAGAR PIX (R$ ${config.valor})`
+                  : isMinhaApostaAprovada
+                  ? "SALVAR MEUS PALPITES (PAGAMENTO JÁ CONFIRMADO)"
+                  : `SALVAR APOSTAS & PAGAR PIX (R$ ${config.valor})`}
+              </span>
             </button>
+
+            {meusPalpitesSalvos.length > 0 && !modoNovaAposta && (
+              <button
+                type="button"
+                onClick={iniciarNovaAposta}
+                className="w-full bg-green-600 hover:bg-green-500 text-black font-black py-3.5 rounded-xl mt-2 cursor-pointer hover:scale-[1.01] transition uppercase tracking-wider text-xs sm:text-sm shadow-lg shadow-green-600/20 flex items-center justify-center gap-2"
+              >
+                <span>➕</span> FAZER NOVA APOSTA
+              </button>
+            )}
           </div>
         )}
 
@@ -3408,21 +3742,30 @@ export default function App() {
 
         <AreaMinhasApostas modoCompacto={false} />
 
-        <div className="grid grid-cols-2 gap-2 pt-2">
+        <div className="space-y-2 pt-2">
           <button
             type="button"
-            onClick={() => setPage("palpites")}
-            className="w-full bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-white font-bold py-3.5 rounded-xl cursor-pointer text-xs uppercase tracking-wider transition"
+            onClick={iniciarNovaAposta}
+            className="w-full bg-green-600 hover:bg-green-500 text-black font-black py-4 rounded-xl cursor-pointer text-xs sm:text-sm uppercase tracking-wider transition shadow-lg shadow-green-600/20 flex items-center justify-center gap-2"
           >
-            ⚽ Alterar / Ver Confrontos
+            <span>➕</span> FAZER NOVA APOSTA
           </button>
-          <button
-            type="button"
-            onClick={() => setPage("classificacao")}
-            className="w-full bg-[#FF6B00] hover:bg-[#ff7b1a] text-black font-black py-3.5 rounded-xl cursor-pointer text-xs uppercase tracking-wider transition shadow-lg shadow-[#FF6B00]/20"
-          >
-            🏆 Ver Ranking Geral
-          </button>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => setPage("palpites")}
+              className="w-full bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-white font-bold py-3.5 rounded-xl cursor-pointer text-xs uppercase tracking-wider transition"
+            >
+              ⚽ Ver Confrontos
+            </button>
+            <button
+              type="button"
+              onClick={() => setPage("classificacao")}
+              className="w-full bg-[#FF6B00] hover:bg-[#ff7b1a] text-black font-black py-3.5 rounded-xl cursor-pointer text-xs uppercase tracking-wider transition shadow-lg shadow-[#FF6B00]/20"
+            >
+              🏆 Ver Ranking Geral
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -3537,15 +3880,69 @@ export default function App() {
   }
 
   // =========================================================================
-  // 7. TELA DE PAGAMENTO PIX
+  // 6.5 PÁGINA DE SUCESSO DO PIX INFINITEPAY (/pagamento-sucesso?jogador_id=XXX)
+  // =========================================================================
+  if (page === "pagamentoSucesso") {
+    return (
+      <div className="min-h-screen bg-[#0A0A0A] text-white p-6 flex flex-col items-center justify-center">
+        <div className="max-w-md w-full bg-zinc-900 p-7 rounded-3xl border-2 border-green-500/80 text-center shadow-2xl space-y-5">
+          <div className="w-20 h-20 rounded-full bg-green-500/20 border-2 border-green-500 flex items-center justify-center text-4xl mx-auto shadow-lg shadow-green-500/20">
+            ✅
+          </div>
+
+          <div className="inline-block bg-green-500 text-black text-xs font-black px-4 py-1.5 rounded-full uppercase tracking-wider">
+            PIX CONFIRMADO AUTOMATICAMENTE
+          </div>
+
+          <h2 className="text-2xl sm:text-3xl font-black text-white leading-tight">
+            Pagamento confirmado! Sua aposta está garantida.
+          </h2>
+
+          <p className="text-zinc-300 text-xs sm:text-sm leading-relaxed">
+            {confirmandoSucesso
+              ? "Sincronizando confirmação automática no banco de dados..."
+              : "Seu pagamento via InfinitePay PIX foi registrado automaticamente no sistema e sua participação na rodada já está 100% aprovada."}
+          </p>
+
+          {user && (
+            <div className="bg-black/80 border border-zinc-800 rounded-2xl p-4 text-left text-xs space-y-1.5">
+              <div className="flex justify-between">
+                <span className="text-zinc-400">Jogador:</span>
+                <strong className="text-white">{user.nome}</strong>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-zinc-400">E-mail:</span>
+                <strong className="text-zinc-200 font-mono">{user.email}</strong>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-zinc-400">Status do Pagamento:</span>
+                <strong className="text-green-400 uppercase">PAGO / APROVADO</strong>
+              </div>
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={() => {
+              if (typeof window !== "undefined" && window.history?.replaceState) {
+                window.history.replaceState({}, "", "/");
+              }
+              setPage("palpites");
+            }}
+            className="w-full bg-[#FF6B00] hover:bg-[#ff7b1a] text-black font-black py-4 rounded-xl cursor-pointer hover:scale-[1.02] transition text-sm uppercase tracking-wider shadow-lg shadow-[#FF6B00]/25"
+          >
+            Ver Bolão
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // =========================================================================
+  // 7. TELA DE PAGAMENTO PIX AUTOMÁTICO (INFINITEPAY)
   // =========================================================================
   const valorDinamico = config.valor;
-  const chavePixDinamica = config.chavePix || config.pixAdm || "01780181558";
-  const nomePixDinamico = config.nomePix || "INHO BAHIA";
-  const cidadePixDinamica = config.cidadePix || "ITABUNA";
-
-  const pixPayload = geraPixPayload(chavePixDinamica, nomePixDinamico, cidadePixDinamica, valorDinamico);
-  const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(pixPayload)}`;
+  const linkCheckoutAtivo = linkPixGerado || user?.link_pagamento || "";
 
   return (
     <div className="min-h-screen bg-[#0A0A0A] text-white p-6 flex flex-col items-center justify-center">
@@ -3556,11 +3953,11 @@ export default function App() {
           className="w-20 h-20 object-contain mx-auto mb-2 drop-shadow-[0_8px_16px_rgba(239,68,68,0.3)] rounded-xl"
         />
         <div className="inline-block border border-[#FF6B00]/30 bg-[#FF6B00]/10 text-[#FF6B00] text-xs font-bold px-4 py-1.5 rounded-full uppercase">
-          APOSTAS REGISTRADAS
+          PIX AUTOMÁTICO INFINITEPAY
         </div>
         <h2 className="text-3xl font-black mt-4">Pagamento PIX</h2>
         <p className="text-zinc-400 text-xs sm:text-sm mt-2">
-          Transfira a taxa da rodada para confirmar seus palpites:
+          Pague via PIX na InfinitePay e tenha sua aposta aprovada automaticamente assim que concluir:
         </p>
 
         {/* Contabilizador de Depósito na Tela de Pagamento */}
@@ -3568,180 +3965,63 @@ export default function App() {
           <ContabilizadorDepositosJogador mostrarBotaoDepositar={false} />
         </div>
 
-        {/* CARD DINÂMICO DE PAGAMENTO PIX */}
-        <div className="mt-6 bg-black p-4 rounded-xl border border-zinc-800 text-left space-y-4">
+        {/* CARD DE CHECKOUT PIX AUTOMÁTICO INFINITEPAY */}
+        <div className="mt-6 bg-black p-5 rounded-2xl border border-zinc-800 text-left space-y-4">
           <div className="flex justify-between items-center border-b border-zinc-900 pb-3">
-            <span className="text-[10px] text-zinc-500 uppercase font-bold">Valor a Pagar:</span>
-            <span className="text-2xl font-black text-[#FF6B00]">R$ {valorDinamico}</span>
+            <div>
+              <span className="text-[10px] text-zinc-500 uppercase font-bold block">Valor Atual da Cota (Banco):</span>
+              <span className="text-xs text-zinc-400">Handle: <strong className="text-white font-mono">irailson-da-472</strong></span>
+            </div>
+            <span className="text-3xl font-black text-[#FF6B00]">R$ {valorDinamico}</span>
           </div>
 
-          {/* QR CODE PIX DINÂMICO */}
-          <div className="flex flex-col items-center justify-center pt-1">
-            <div className="bg-white p-2.5 rounded-2xl shadow-xl border border-zinc-800">
-              <img
-                src={qrCodeUrl}
-                alt="QR Code PIX"
-                className="w-48 h-48 object-contain rounded-lg"
-              />
-            </div>
-            <div className="text-[10px] text-zinc-500 mt-2 text-center">
-              Abra o app do seu banco e aponte a câmera para o QR Code
-            </div>
-          </div>
-
-          {/* BOTÃO GRANDE COPIAR CÓDIGO PIX */}
-          <button
-            type="button"
-            onClick={() => {
-              navigator.clipboard.writeText(pixPayload);
-              setCopiadoPix(true);
-              setTimeout(() => setCopiadoPix(false), 3000);
-            }}
-            className="w-full bg-[#FF6B00] hover:bg-[#ff7b1a] text-black font-black py-3.5 px-4 rounded-xl cursor-pointer transition text-xs sm:text-sm uppercase tracking-wider shadow-lg shadow-[#FF6B00]/20 flex items-center justify-center gap-2"
-          >
-            <span>📋</span>
-            <span>{copiadoPix ? "✅ CÓDIGO PIX COPIADO!" : `COPIAR CÓDIGO PIX (R$ ${valorDinamico})`}</span>
-          </button>
-
-          {/* CHAVE PIX DO ORGANIZADOR COM BOTÃO SEPARADO */}
-          <div className="pt-2 border-t border-zinc-900">
-            <div className="text-[10px] text-zinc-400 uppercase font-bold mb-1">
-              Chave PIX do Organizador ({nomePixDinamico}):
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="flex-1 font-mono text-xs font-bold bg-zinc-900 p-2.5 rounded-lg text-white border border-zinc-800 truncate select-all">
-                {chavePixDinamica}
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  navigator.clipboard.writeText(chavePixDinamica);
-                  setCopiadaChave(true);
-                  setTimeout(() => setCopiadaChave(false), 3000);
-                }}
-                className="bg-zinc-800 hover:bg-zinc-700 text-white font-bold text-xs px-3.5 py-2.5 rounded-lg cursor-pointer transition shrink-0 border border-zinc-700"
-              >
-                {copiadaChave ? "✅ COPIADA" : "COPIAR CHAVE"}
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* PASTA DO JOGADOR: COMPROVANTE DE PAGAMENTO */}
-        <div className="mt-4 bg-black p-4 rounded-xl border border-zinc-800 text-left space-y-3.5">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-black text-white flex items-center gap-1.5">
-              <span>📁</span> PASTA DO JOGADOR: COMPROVANTE DE PAGAMENTO
-            </span>
-            {user?.statusPagamento === "APROVADO" && palpites.some((p) => p.jogadorEmail === user?.email && p.pago) ? (
-              <span className="text-[10px] bg-green-500 text-black font-black px-2 py-0.5 rounded-full uppercase">
-                ✅ Aprovado
-              </span>
-            ) : user?.statusPagamento === "EM_ANALISE" ? (
-              <span className="text-[10px] bg-amber-500 text-black font-black px-2 py-0.5 rounded-full uppercase">
-                ⏳ Em Análise
-              </span>
-            ) : (
-              <span className="text-[10px] bg-zinc-800 text-zinc-400 font-bold px-2 py-0.5 rounded-full uppercase">
-                Pendente
-              </span>
-            )}
-          </div>
-
-          {/* Regra de retenção de 3 dias */}
-          <div className="bg-zinc-950 p-2.5 rounded-lg border border-zinc-900 text-[11px] text-zinc-400 leading-snug">
-            ⏱️ <strong>Regra de Retenção:</strong> Este comprovante pode ser excluído pelo ADM após o término da rodada. Caso o ADM não exclua, ele fica armazenado por <strong>3 dias</strong> nesta sua pasta para conferência.
-          </div>
-
-          {user?.statusPagamento === "APROVADO" && palpites.some((p) => p.jogadorEmail === user?.email && p.pago) ? (
-            <div className="bg-green-950/70 border border-green-700/80 p-3 rounded-xl text-xs text-green-300 space-y-1 animate-fade-in">
-              <div className="font-bold flex items-center gap-1.5">
-                <span>🎉</span> Seu pagamento foi aprovado pelo ADM!
-              </div>
-              <p className="text-[11px] text-green-400">
-                Suas apostas estão 100% ativas e confirmadas para concorrer à premiação da rodada.
-              </p>
-            </div>
-          ) : user?.statusPagamento === "EM_ANALISE" ? (
-            <div className="bg-amber-950/70 border border-amber-700/80 p-3 rounded-xl text-xs text-amber-200 space-y-1">
-              <div className="font-bold flex items-center gap-1.5">
-                <span>⏳</span> Comprovante enviado com sucesso!
-              </div>
-              <p className="text-[11px] text-amber-300">
-                O administrador está analisando seu pagamento. Assim que ele aprovar, sua aposta será confirmada.
-              </p>
-            </div>
-          ) : null}
-
-          {/* Comprovante atual arquivado na pasta */}
-          {user?.comprovante && (
-            <div className="bg-zinc-900/80 p-3 rounded-xl border border-zinc-800 space-y-2">
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-zinc-300 font-bold">Comprovante Salvo na Pasta:</span>
-                <span className="text-amber-400 text-[10px] font-bold bg-amber-950/80 px-2 py-0.5 rounded border border-amber-800/80">
-                  Restam {calcularDiasRestantes(user?.timestampComprovante)} dia(s)
-                </span>
-              </div>
-              <div className="flex items-center gap-3">
-                <div className="w-16 h-16 rounded-lg overflow-hidden border border-zinc-700 bg-black shrink-0">
-                  <img src={user.comprovante} alt="Comprovante" className="w-full h-full object-cover" />
-                </div>
-                <div className="text-[11px] text-zinc-400 flex-1">
-                  Enviado em: <strong className="text-zinc-200">{user.dataEnvioComprovante || "Recente"}</strong>
-                  <div className="text-[10px] text-zinc-500 mt-1">Disponível no painel do ADM.</div>
-                </div>
-              </div>
+          {erroPixInfinite && (
+            <div className="bg-red-950/80 border border-red-700 text-red-200 p-3 rounded-xl text-xs">
+              ⚠️ {erroPixInfinite}
             </div>
           )}
 
-          {/* Campo disponível para envio ou substituição do comprovante */}
-          <div className="space-y-2.5 pt-1">
-            <p className="text-[11px] text-zinc-300 font-bold">
-              {user?.comprovante ? "Substituir ou Enviar Novo Comprovante:" : "Anexar Comprovante de Pagamento:"}
-            </p>
+          <button
+            type="button"
+            disabled={gerandoPixInfinite}
+            onClick={() => {
+              if (!user) {
+                setPage("loginJogador");
+                return;
+              }
+              iniciarPagamentoInfinitePay(user);
+            }}
+            className="w-full bg-[#FF6B00] hover:bg-[#ff7b1a] disabled:bg-zinc-800 disabled:text-zinc-500 text-black font-black py-4 px-4 rounded-xl cursor-pointer transition text-xs sm:text-sm uppercase tracking-wider shadow-lg shadow-[#FF6B00]/25 flex items-center justify-center gap-2"
+          >
+            <span>⚡</span>
+            <span>
+              {gerandoPixInfinite
+                ? "GERANDO PIX AUTOMÁTICO..."
+                : `PAGAR PIX AGORA (R$ ${valorDinamico})`}
+            </span>
+          </button>
 
-            <div>
-              <input
-                type="file"
-                accept="image/*"
-                onChange={(e) => handleFile(e.target.files?.[0], setTempComprovante)}
-                className="w-full text-xs text-zinc-400 file:mr-2 file:py-2 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-black file:bg-[#FF6B00] file:text-black cursor-pointer"
-              />
-            </div>
-
-            {tempComprovante && (
-              <div className="space-y-2 pt-1">
-                <div className="relative w-36 h-36 rounded-lg overflow-hidden border border-zinc-700 bg-zinc-900 mx-auto">
-                  <img src={tempComprovante} alt="Prévia do Comprovante" className="w-full h-full object-contain" />
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!user) {
-                      alert("Por favor, faça login como jogador primeiro!");
-                      return;
-                    }
-                    enviarComprovante(user.email, tempComprovante);
-                    setTempComprovante("");
-                    alert("Comprovante gravado na sua pasta e enviado para o ADM com sucesso!");
-                  }}
-                  className="w-full bg-green-600 hover:bg-green-500 text-black font-black py-3 rounded-xl cursor-pointer text-xs uppercase tracking-wider transition shadow-md flex items-center justify-center gap-1.5"
-                >
-                  <span>💾</span> SALVAR NA PASTA & ENVIAR P/ O ADM
-                </button>
+          {linkCheckoutAtivo && (
+            <div className="pt-2 border-t border-zinc-900 space-y-2">
+              <div className="text-[10px] text-zinc-400 uppercase font-bold">
+                Link de Pagamento PIX Gerado:
               </div>
-            )}
-          </div>
+              <a
+                href={linkCheckoutAtivo}
+                target="_top"
+                rel="noopener noreferrer"
+                className="block w-full text-center bg-green-600 hover:bg-green-500 text-black font-black py-3 rounded-xl text-xs uppercase tracking-wider transition"
+              >
+                🔗 ABRIR CHECKOUT PIX INFINITEPAY
+              </a>
+            </div>
+          )}
         </div>
-
-        <p className="text-[11px] text-zinc-500 mt-4 leading-relaxed">
-          * Conforme os Termos, apenas apostas com pagamento validado pelo ADM participam da premiação.
-        </p>
 
         <div className="mt-6 space-y-2">
           <button
             onClick={() => setPage("minhasApostas")}
-            className="w-full bg-[#FF6B00] text-black font-black py-3.5 rounded-xl cursor-pointer hover:scale-105 transition text-sm uppercase tracking-wider flex items-center justify-center gap-2"
+            className="w-full bg-zinc-800 hover:bg-zinc-700 text-[#FF6B00] font-black py-3.5 rounded-xl cursor-pointer transition text-sm uppercase tracking-wider flex items-center justify-center gap-2 border border-[#FF6B00]/40"
           >
             <span>🎫</span> VER MINHAS APOSTAS OFICIAIS
           </button>
