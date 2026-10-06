@@ -213,23 +213,34 @@ export function onSnapshot(
           onNext(snap);
         }
       } else {
-        const resp = await fetch(`${BASE_URL}/${ref.path}?pageSize=300`);
+        const resp = await fetch(`${BASE_URL}:runQuery`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            structuredQuery: {
+              from: [{ collectionId: ref.path }],
+            },
+          }),
+        });
         if (!resp.ok) {
           throw new Error(`HTTP ${resp.status} listing ${ref.path}`);
         }
         const raw = await resp.json();
         if (cancelled) return;
-        const docsRaw = Array.isArray(raw?.documents) ? raw.documents : [];
-        const docs = docsRaw.map((d: any) => {
-          const nameParts = String(d?.name || '').split('/');
-          const docId = nameParts[nameParts.length - 1] || '';
-          const parsed = fromFirestoreFields(d?.fields || {});
-          return {
-            id: docId,
-            exists: () => true,
-            data: () => parsed,
-          };
-        });
+        const rows = Array.isArray(raw) ? raw : [];
+        const docs = rows
+          .filter((r: any) => r && r.document)
+          .map((r: any) => {
+            const d = r.document;
+            const nameParts = String(d?.name || '').split('/');
+            const docId = nameParts[nameParts.length - 1] || '';
+            const parsed = fromFirestoreFields(d?.fields || {});
+            return {
+              id: docId,
+              exists: () => true,
+              data: () => parsed,
+            };
+          });
         const hash = JSON.stringify(docs.map((x: any) => ({ id: x.id, d: x.data() })));
         if (hash !== lastHash) {
           lastHash = hash;
