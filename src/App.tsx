@@ -35,6 +35,10 @@ import {
   compressImageToDataUrl,
   buscarJogosRodadaEspn,
   sincronizarTimesEJogosIniciaisNoSupabase,
+  sincronizarJogosDeHojeEspnComSupabase,
+  listarJogosDoSupabase,
+  getHojeBrasilISO,
+  limparCacheJogosLocal,
 } from './supabase';
 
 // ============================================================================
@@ -270,6 +274,7 @@ export default function App() {
   const [avisoAdm, setAvisoAdm] = useState("");
   const [jogosEspnRapido, setJogosEspnRapido] = useState<any[]>([]);
   const [carregandoEspnRapido, setCarregandoEspnRapido] = useState(false);
+  const [ultimaAtualizacaoJogos, setUltimaAtualizacaoJogos] = useState<string>("");
 
   // Área de Transparência (Comprovantes de Pagamento da Premiação enviados pelo ADM para todos os jogadores)
   const [comprovantesPremiacao, setComprovantesPremiacao] = useState<ComprovantePremiacaoItem[]>(() => {
@@ -295,8 +300,8 @@ export default function App() {
   };
 
   useEffect(() => {
+    limparCacheJogosLocal();
     try {
-      const j = localStorage.getItem("elite_jogos_v11");
       const jd = localStorage.getItem("elite_jogadores_v11");
       const p = localStorage.getItem("elite_palpites_v11");
       const cfg = localStorage.getItem("elite_config_v11");
@@ -305,8 +310,6 @@ export default function App() {
 
       const agora = Date.now();
       const TRES_DIAS_MS = 3 * 24 * 60 * 60 * 1000;
-
-      if (j) setJogos(JSON.parse(j));
 
       if (jd) {
         const parsedJd = JSON.parse(jd);
@@ -446,15 +449,14 @@ export default function App() {
         setDbConectado(true);
         const listaJogos: Jogo[] = [];
         snapshot.forEach((docSnap) => {
-          const d = docSnap.data() as Jogo;
+          const d = docSnap.data() as Jogo & { data_jogo?: string };
           listaJogos.push({
             ...d,
-            publicado: d.publicado !== undefined ? d.publicado : true,
+            publicado: true,
           });
         });
         listaJogos.sort((a, b) => String(a.id).localeCompare(String(b.id)));
         setJogos(listaJogos);
-        localStorage.setItem("elite_jogos_v11", JSON.stringify(listaJogos));
       },
       () => {}
     );
@@ -562,17 +564,51 @@ export default function App() {
     };
   }, []);
 
-  // Inicialização automática no Admin com VALOR_COTA = 10, carregamento de todos os usuários do Supabase e jogos da ESPN
+  // Busca ao vivo os jogos de hoje na ESPN ao abrir a página e sincroniza os jogos ativos do Bolão no Supabase a cada 1 minuto (60.000 ms), sem cache
+  const atualizarJogosEspnAoVivo = async () => {
+    limparCacheJogosLocal();
+    setCarregandoEspnRapido(true);
+    try {
+      const [listaHoje, jogosNoBanco] = await Promise.all([
+        sincronizarJogosDeHojeEspnComSupabase(),
+        listarJogosDoSupabase(),
+      ]);
+      setJogosEspnRapido(listaHoje || []);
+      if (Array.isArray(jogosNoBanco)) {
+        const normalizados: Jogo[] = jogosNoBanco
+          .map((d: any) => ({
+            ...d,
+            publicado: true,
+          }))
+          .sort((a: Jogo, b: Jogo) => String(a.id).localeCompare(String(b.id)));
+        setJogos(normalizados);
+      }
+      setUltimaAtualizacaoJogos(
+        new Date().toLocaleTimeString("pt-BR", {
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+        })
+      );
+    } catch {
+      setJogosEspnRapido([]);
+    } finally {
+      setCarregandoEspnRapido(false);
+    }
+  };
+
+  useEffect(() => {
+    atualizarJogosEspnAoVivo();
+    const intervalId = window.setInterval(() => {
+      atualizarJogosEspnAoVivo();
+    }, 60000);
+    return () => window.clearInterval(intervalId);
+  }, [page]);
+
+  // Inicialização automática no Admin com VALOR_COTA = 10 e carregamento de todos os usuários do Supabase
   useEffect(() => {
     if (page === "admin") {
       inicializarConfigAdminInDb().catch(() => {});
-      setCarregandoEspnRapido(true);
-      buscarJogosRodadaEspn()
-        .then((listaEspn) => {
-          setJogosEspnRapido(listaEspn || []);
-        })
-        .catch(() => {})
-        .finally(() => setCarregandoEspnRapido(false));
       listarUsuariosDoSupabase()
         .then((usuariosSupabase) => {
           if (usuariosSupabase && usuariosSupabase.length > 0) {
@@ -1017,6 +1053,7 @@ export default function App() {
   };
 
   const saveJogos = (j: Jogo[]) => {
+    limparCacheJogosLocal();
     const idsNovos = new Set(j.map((x) => x.id));
     jogos.forEach((antigo) => {
       if (!idsNovos.has(antigo.id)) {
@@ -1024,7 +1061,6 @@ export default function App() {
       }
     });
     setJogos(j);
-    localStorage.setItem("elite_jogos_v11", JSON.stringify(j));
     j.forEach((jogoItem) => {
       upsertJogoInDb(jogoItem).catch(() => {});
     });
@@ -4560,63 +4596,82 @@ export default function App() {
           <div className="bg-gradient-to-r from-[#FF6B00]/15 via-zinc-950 to-black border-2 border-[#FF6B00]/70 rounded-2xl p-4 space-y-3 shadow-lg">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-zinc-800 pb-3">
               <div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <span className="text-[10px] font-black uppercase bg-[#FF6B00] text-black px-2 py-0.5 rounded">
-                    ESPN OFICIAL • 1 CLIQUE
+                    ESPN AO VIVO • SEM CACHE
                   </span>
                   <span className="text-[10px] text-green-400 font-bold">
-                    ⚡ Sincronizado com o Banco Supabase
+                    🟢 Atualiza sozinho a cada 1 minuto
+                    {ultimaAtualizacaoJogos ? ` • Última busca: ${ultimaAtualizacaoJogos}` : ""}
                   </span>
                 </div>
                 <h4 className="font-black text-sm sm:text-base text-white mt-1">
-                  Jogos Oficiais da ESPN prontos para lançar com 1 clique ({jogosEspnRapido.length} jogos da rodada)
+                  Jogos de Hoje da ESPN ao vivo ({jogosEspnRapido.length} jogo(s) hoje • {getHojeBrasilISO()})
                 </h4>
                 <p className="text-[11px] text-zinc-400">
-                  Clique em um jogo abaixo para lançar individualmente ou lance toda a rodada da ESPN de uma só vez no bolão!
+                  Busca direto na internet na hora em que abre a página e a cada 1 minuto (sem usar memória ou jogos de ontem).
                 </p>
               </div>
 
               <div className="flex flex-wrap items-center gap-2 shrink-0">
                 <button
                   type="button"
-                  onClick={async () => {
-                    setCarregandoEspnRapido(true);
-                    try {
-                      const lista = await buscarJogosRodadaEspn();
-                      const lote = (lista || []).slice(0, 10);
-                      const novos: Jogo[] = lote.map((item: any, i: number) => ({
-                        id: item.id || `espn_${Date.now()}_${i}`,
-                        casa: item.time_casa || item.casa,
-                        fora: item.time_fora || item.fora,
-                        escudoCasa: getEscudoPadrao(item.time_casa || item.casa) || item.escudoCasaUrl || "",
-                        escudoFora: getEscudoPadrao(item.time_fora || item.fora) || item.escudoForaUrl || "",
-                        data: item.horario || "19:30",
-                        estadio: item.estadio || item.campeonato || "Brasileirão Série A",
-                        publicado: true,
-                        bolaoId: bolaoEmPreparoId,
-                        tituloBolao: "Rodada Oficial Brasileirão (ESPN)",
-                      }));
-                      saveJogos(novos);
-                      await sincronizarTimesEJogosIniciaisNoSupabase();
-                      setRodadaPublicadaAviso(true);
-                      setTimeout(() => setRodadaPublicadaAviso(false), 5000);
-                      mostrarAvisoAdm(
-                        `🚀 ${novos.length} jogos oficiais da ESPN foram lançados no bolão e salvos no Supabase com 1 clique!`
-                      );
-                    } finally {
-                      setCarregandoEspnRapido(false);
-                    }
-                  }}
-                  className="bg-[#FF6B00] hover:bg-[#ff7b1a] text-black font-black px-4 py-2.5 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition shadow-lg shadow-[#FF6B00]/30 flex items-center gap-1.5"
+                  onClick={() => atualizarJogosEspnAoVivo()}
+                  disabled={carregandoEspnRapido}
+                  className="bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-white font-bold px-3 py-2.5 rounded-xl text-xs cursor-pointer transition"
                 >
-                  <span>⚡</span> LANÇAR TODA A RODADA ESPN (1 CLIQUE)
+                  {carregandoEspnRapido ? "🔄 Buscando..." : "🔄 Atualizar Agora"}
                 </button>
+                {jogosEspnRapido.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setCarregandoEspnRapido(true);
+                      try {
+                        const lista = await buscarJogosRodadaEspn(getHojeBrasilISO());
+                        const lote = (lista || []).slice(0, 10);
+                        const novos: Jogo[] = lote.map((item: any, i: number) => ({
+                          id: item.id || `espn_${Date.now()}_${i}`,
+                          casa: item.time_casa || item.casa,
+                          fora: item.time_fora || item.fora,
+                          escudoCasa: getEscudoPadrao(item.time_casa || item.casa) || item.escudoCasaUrl || "",
+                          escudoFora: getEscudoPadrao(item.time_fora || item.fora) || item.escudoForaUrl || "",
+                          data: item.horario || "19:30",
+                          estadio: item.estadio || item.campeonato || "Brasileirão Série A",
+                          publicado: true,
+                          bolaoId: bolaoEmPreparoId,
+                          tituloBolao: "Jogos de Hoje • Brasileirão (ESPN)",
+                        }));
+                        saveJogos(novos);
+                        await sincronizarTimesEJogosIniciaisNoSupabase();
+                        setRodadaPublicadaAviso(true);
+                        setTimeout(() => setRodadaPublicadaAviso(false), 5000);
+                        mostrarAvisoAdm(
+                          `🚀 ${novos.length} jogos de hoje da ESPN foram lançados no bolão e salvos no Supabase com 1 clique!`
+                        );
+                      } finally {
+                        setCarregandoEspnRapido(false);
+                      }
+                    }}
+                    className="bg-[#FF6B00] hover:bg-[#ff7b1a] text-black font-black px-4 py-2.5 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition shadow-lg shadow-[#FF6B00]/30 flex items-center gap-1.5"
+                  >
+                    <span>⚡</span> LANÇAR JOGOS DE HOJE ESPN (1 CLIQUE)
+                  </button>
+                )}
               </div>
             </div>
 
             {carregandoEspnRapido ? (
-              <div className="text-xs text-zinc-400 py-3 text-center">
-                🔄 Carregando jogos oficiais da ESPN...
+              <div className="text-xs text-zinc-400 py-4 text-center">
+                🔄 Buscando jogos de hoje ao vivo na ESPN (sem cache)...
+              </div>
+            ) : jogosEspnRapido.length === 0 ? (
+              <div className="bg-black/70 border border-zinc-800 rounded-xl p-5 text-center space-y-1">
+                <div className="text-2xl">⚽</div>
+                <div className="text-sm font-black text-white">Nenhum jogo hoje</div>
+                <p className="text-[11px] text-zinc-400">
+                  Não há jogos do Brasileirão Série A na ESPN hoje ({getHojeBrasilISO()}). Jogos de ontem não são exibidos.
+                </p>
               </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-72 overflow-y-auto pr-1">
@@ -5106,12 +5161,12 @@ export default function App() {
           <div className="mt-4 space-y-2">
             <div className="flex justify-between items-center">
               <div className="text-[11px] uppercase font-bold text-zinc-400">
-                🟢 Confrontos Publicados na Área dos Jogadores ({jogosPublicados.length}/10)
+                🟢 JOGOS NO BOLÃO ({jogosPublicados.length}) • DISPONÍVEIS PARA OS JOGADORES
               </div>
               {jogosPublicados.length > 0 && (
                 <span className="text-[10px] text-green-400 font-bold flex items-center gap-1">
                   <span className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse"></span>
-                  Visíveis Agora p/ os Jogadores
+                  DISPONÍVEIS PARA OS JOGADORES
                 </span>
               )}
             </div>
@@ -5419,20 +5474,34 @@ export default function App() {
           </div>
         )}
 
-        {/* Status da Rodada */}
+        {/* Status da Rodada (Dinâmico • Atualiza a cada 1 minuto ao vivo da ESPN) */}
         <div
           id="secao-jogos-rodada"
           className="mt-4 flex flex-wrap items-center justify-between gap-2 bg-zinc-900/90 border border-zinc-800 px-3.5 py-2.5 rounded-xl"
         >
-          <div className="flex items-center gap-2">
-            <span className={`h-2 w-2 rounded-full ${jogosPublicados.length > 0 ? "bg-green-500 animate-pulse" : "bg-amber-500"}`}></span>
-            <span className="text-xs font-bold text-white">
-              {jogosPublicados.length > 0
-                ? `Rodada Aberta: ${jogosPublicados.length} Jogo(s) Liberado(s)`
-                : "Aguardando Publicação pelo ADM"}
+          <div className="flex flex-col gap-0.5">
+            <div className="flex items-center gap-2">
+              <span className={`h-2 w-2 rounded-full ${jogosPublicados.length > 0 ? "bg-green-500 animate-pulse" : "bg-amber-500"}`}></span>
+              <span className="text-xs font-bold text-white">
+                {jogosPublicados.length > 0
+                  ? `Escolha de Jogos: ${jogosPublicados.length} Jogo(s) Disponível(is) p/ Apostar`
+                  : "Nenhum jogo hoje"}
+              </span>
+            </div>
+            <span className="text-[10px] text-green-400 font-mono">
+              🟢 Marque 1X, X ou X2 e envie sua cartela • Atualiza a cada 1 min
+              {ultimaAtualizacaoJogos ? ` • ${ultimaAtualizacaoJogos}` : ""}
             </span>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => atualizarJogosEspnAoVivo()}
+              disabled={carregandoEspnRapido}
+              className="text-[10px] bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold px-2.5 py-1 rounded-lg cursor-pointer transition border border-zinc-700"
+            >
+              {carregandoEspnRapido ? "🔄..." : "🔄 Atualizar"}
+            </button>
             <button
               type="button"
               onClick={iniciarNovaAposta}
@@ -5448,10 +5517,10 @@ export default function App() {
 
         {jogosPublicados.length === 0 ? (
           <div className="mt-8 text-center py-12 px-4 bg-zinc-900/60 rounded-2xl border border-dashed border-zinc-800 text-zinc-400 space-y-2">
-            <div className="text-3xl">⏳</div>
-            <div className="font-bold text-sm text-white">Nenhum confronto disponível no momento</div>
-            <p className="text-xs text-zinc-500 max-w-sm mx-auto">
-              O organizador (ADM) está preparando os confrontos da rodada. Assim que ele publicar, eles aparecerão aqui instantaneamente!
+            <div className="text-3xl">⚽</div>
+            <div className="font-black text-base sm:text-lg text-white">Nenhum jogo hoje</div>
+            <p className="text-xs text-zinc-400 max-w-sm mx-auto">
+              Não há jogos do Brasileirão Série A na ESPN hoje ({getHojeBrasilISO()}). A página atualiza sozinha a cada 1 minuto e não exibe jogos de ontem.
             </p>
           </div>
         ) : (

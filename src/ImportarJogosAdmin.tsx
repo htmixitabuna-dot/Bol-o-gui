@@ -8,16 +8,12 @@ import {
   upsertJogoDisponivelInDb,
   JogoDisponivelItem,
   buscarJogosRodadaEspn,
+  getHojeBrasilISO,
+  limparCacheJogosLocal,
 } from './supabase';
 import { TIMES_PADRAO, getEscudoPadrao, Jogo } from './App';
 
-const getHojeISO = () => {
-  const d = new Date();
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}`;
-};
+const getHojeISO = () => getHojeBrasilISO();
 
 export const formatarDataParaEspn = (dataStr: string): string => {
   const limpo = (dataStr || '').trim();
@@ -139,6 +135,7 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
   const [erroApiMsg, setErroApiMsg] = useState<string>('');
   const [adicionandoId, setAdicionandoId] = useState<string>('');
   const [modoRascunho, setModoRascunho] = useState<boolean>(false);
+  const [ultimaAtualizacaoEspn, setUltimaAtualizacaoEspn] = useState<string>('');
 
   // ABA 2: Adicionar Manual Rápido (sem mock de times)
   const [manualCasa, setManualCasa] = useState<string>('');
@@ -160,30 +157,26 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
     setTimeout(() => setStatusMsg(''), 4000);
   };
 
-  // Escuta a tabela existente 'jogos' e a tabela 'jogos_disponiveis'
+  // Escuta a tabela existente 'jogos' e a tabela 'jogos_disponiveis' (sem cache local)
   useEffect(() => {
+    limparCacheJogosLocal();
+
     const unsubJogos = onSnapshot(
       collection(db, 'jogos'),
       (snap) => {
         const lista: Jogo[] = [];
         snap.forEach((docSnap) => {
-          lista.push(docSnap.data() as Jogo);
+          const d = docSnap.data() as Jogo;
+          lista.push({
+            ...d,
+            publicado: true,
+          });
         });
         lista.sort((a, b) => String(a.id).localeCompare(String(b.id)));
         setJogosBolaoAtivos(lista);
-        try {
-          localStorage.setItem('elite_jogos_v11', JSON.stringify(lista));
-        } catch {
-          // ignore storage errors
-        }
       },
       () => {
-        try {
-          const local = localStorage.getItem('elite_jogos_v11');
-          if (local) setJogosBolaoAtivos(JSON.parse(local));
-        } catch {
-          // ignore
-        }
+        setJogosBolaoAtivos([]);
       }
     );
 
@@ -205,14 +198,22 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
     };
   }, []);
 
-  // Busca os confrontos oficiais da ESPN (do dia selecionado + rodada ativa do Brasileirão Série A)
+  // Busca os confrontos oficiais da ESPN AO VIVO na hora (sem cache e sem jogos de ontem)
   const buscarJogosDoDia = async (dataAlvo: string) => {
+    limparCacheJogosLocal();
     setCarregandoApi(true);
     setErroApiMsg('');
 
     try {
       const encontrados = await buscarJogosRodadaEspn(dataAlvo);
       setJogosEspn(encontrados as JogoEspnCard[]);
+      setUltimaAtualizacaoEspn(
+        new Date().toLocaleTimeString('pt-BR', {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+        })
+      );
     } catch {
       setErroApiMsg('Erro ao consultar a API da ESPN no momento.');
     } finally {
@@ -224,6 +225,7 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
     if (jogosEspn.length === 0) return;
     setAdicionandoId('TODOS_ESPN');
     try {
+      limparCacheJogosLocal();
       const lote = jogosEspn.slice(0, 10);
       for (const antigo of jogosBolaoAtivos) {
         await deleteJogoFromDb(antigo.id).catch(() => {});
@@ -251,17 +253,19 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
         await upsertJogoInDb(novoJogo);
       }
       setJogosBolaoAtivos(novosJogos);
-      try {
-        localStorage.setItem('elite_jogos_v11', JSON.stringify(novosJogos));
-      } catch {}
       mostrarFeedback(`🚀 ${novosJogos.length} jogos da ESPN lançados no Bolão e no Supabase com 1 clique!`);
     } finally {
       setAdicionandoId('');
     }
   };
 
+  // Busca ao vivo toda vez que abrir a página e atualiza sozinha a cada 1 minuto (60.000 ms)
   useEffect(() => {
     buscarJogosDoDia(dataFiltro);
+    const intervalId = window.setInterval(() => {
+      buscarJogosDoDia(dataFiltro);
+    }, 60000);
+    return () => window.clearInterval(intervalId);
   }, [dataFiltro]);
 
   // Verifica se um jogo já está na tabela existente 'jogos' do bolão
@@ -344,7 +348,7 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
         escudoFora,
         data: horarioStr,
         estadio: campeonatoStr || 'Estádio Principal',
-        publicado: !modoRascunho,
+        publicado: true,
         bolaoId: bolaoIdSalvo,
         tituloBolao: tituloBolaoSalvo,
       };
@@ -353,11 +357,6 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
 
       const novaListaJogos = [...listaBase, novoJogoBolao];
       setJogosBolaoAtivos(novaListaJogos);
-      try {
-        localStorage.setItem('elite_jogos_v11', JSON.stringify(novaListaJogos));
-      } catch {
-        // ignore
-      }
 
       await upsertJogoDisponivelInDb({
         id: dispId,
@@ -535,8 +534,14 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
                 )}
               </div>
 
-              <div className="text-[11px] text-zinc-400 font-mono">
-                ESPN API • dates={formatarDataParaEspn(dataFiltro)}
+              <div className="flex flex-col items-end text-[11px] text-zinc-400 font-mono">
+                <span className="text-green-400 font-bold">
+                  🟢 Ao vivo da ESPN • Atualiza sozinho a cada 1 min (Sem Cache)
+                </span>
+                <span>
+                  ESPN API • dates={formatarDataParaEspn(dataFiltro)}
+                  {ultimaAtualizacaoEspn ? ` • Atualizado às ${ultimaAtualizacaoEspn}` : ''}
+                </span>
               </div>
             </div>
 
@@ -548,14 +553,17 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
 
             {carregandoApi ? (
               <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-8 text-center text-xs text-zinc-400">
-                🔄 Consultando jogos oficiais do Brasileirão na ESPN...
+                🔄 Buscando jogos ao vivo da ESPN na internet agora (sem cache)...
               </div>
             ) : jogosEspn.length === 0 ? (
               <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-8 text-center space-y-2">
                 <div className="text-3xl">⚽</div>
-                <div className="text-sm sm:text-base font-black text-white">
-                  Nenhum jogo oficial do Brasileirão hoje - Data FIFA
+                <div className="text-base sm:text-lg font-black text-white">
+                  Nenhum jogo hoje
                 </div>
+                <p className="text-xs text-zinc-400">
+                  Não há jogos do Brasileirão Série A agendados na ESPN para hoje ({dataFiltro}). Jogos de ontem não são exibidos.
+                </p>
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -832,28 +840,12 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
             <div className="flex items-center gap-2">
               <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse"></span>
               <h3 className="text-xs font-black uppercase tracking-wider text-white">
-                Confrontos Cadastrados no Bolão ({jogosBolaoAtivos.length}/10)
+                JOGOS NO BOLÃO ({jogosBolaoAtivos.length})
               </h3>
             </div>
-            {jogosBolaoAtivos.some((j) => j.publicado === false) && (
-              <button
-                type="button"
-                onClick={async () => {
-                  const atualizados = jogosBolaoAtivos.map((j) => ({ ...j, publicado: true }));
-                  setJogosBolaoAtivos(atualizados);
-                  try {
-                    localStorage.setItem('elite_jogos_v11', JSON.stringify(atualizados));
-                  } catch {
-                    // ignore
-                  }
-                  await Promise.all(atualizados.map((j) => upsertJogoInDb(j).catch(() => {})));
-                  mostrarFeedback('🚀 BOLÃO PUBLICADO! Todos os jogos salvos foram liberados para os jogadores!');
-                }}
-                className="bg-green-600 hover:bg-green-500 text-white font-black px-3.5 py-1.5 rounded-xl text-[11px] uppercase cursor-pointer transition shadow"
-              >
-                🚀 Publicar Bolão Salvo p/ Jogadores
-              </button>
-            )}
+            <span className="text-[10px] font-black uppercase px-2.5 py-1 rounded-full bg-green-500/20 text-green-300 border border-green-500/40">
+              DISPONÍVEIS PARA OS JOGADORES
+            </span>
           </div>
 
           {jogosBolaoAtivos.length === 0 ? (
@@ -891,11 +883,6 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
                       deleteJogoFromDb(j.id).catch(() => {});
                       const rest = jogosBolaoAtivos.filter((x) => x.id !== j.id);
                       setJogosBolaoAtivos(rest);
-                      try {
-                        localStorage.setItem('elite_jogos_v11', JSON.stringify(rest));
-                      } catch {
-                        // ignore
-                      }
                     }}
                     className="text-red-400 hover:text-red-300 text-[11px] font-bold px-2 py-1 rounded cursor-pointer shrink-0"
                     title="Remover confronto"
