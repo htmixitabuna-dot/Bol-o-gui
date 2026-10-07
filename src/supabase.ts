@@ -1,11 +1,18 @@
 import { createClient, SupabaseClient, RealtimeChannel } from '@supabase/supabase-js';
 
+declare const process: {
+  env: {
+    NEXT_PUBLIC_SUPABASE_URL?: string;
+    NEXT_PUBLIC_SUPABASE_ANON_KEY?: string;
+    SUPABASE_REST_URL?: string;
+    SUPABASE_SERVICE_ROLE_KEY?: string;
+    [key: string]: string | undefined;
+  };
+};
+
 const envMeta: Record<string, any> =
   typeof import.meta !== 'undefined' && (import.meta as any).env ? (import.meta as any).env : {};
-const envProc: Record<string, any> =
-  typeof process !== 'undefined' && process.env ? process.env : {};
 
-export const SUPABASE_REST_URL = 'https://slaqxbccectdgmlokjos.supabase.co/rest/v1/';
 export const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_Tqbx1xWWObM_PYo9A8Lwzg_HP4Q5M1Y';
 export const SUPABASE_SECRET_KEY = 'sb_secret_eoy7344Q4e7XqhFDPf5ayg_DI1D2iT2';
 
@@ -29,21 +36,29 @@ export function normalizeSupabaseAnonKey(raw: string): string {
   return k;
 }
 
+export let SUPABASE_REST_URL: string = normalizeSupabaseUrl(
+  process.env.SUPABASE_REST_URL ||
+    envMeta.SUPABASE_REST_URL ||
+    process.env.NEXT_PUBLIC_SUPABASE_URL ||
+    envMeta.NEXT_PUBLIC_SUPABASE_URL ||
+    'https://slaqxbccectdgmlokjos.supabase.co'
+);
+
 export let NEXT_PUBLIC_SUPABASE_URL: string = normalizeSupabaseUrl(
-  envMeta.NEXT_PUBLIC_SUPABASE_URL ||
-    envProc.NEXT_PUBLIC_SUPABASE_URL ||
+  process.env.NEXT_PUBLIC_SUPABASE_URL ||
+    envMeta.NEXT_PUBLIC_SUPABASE_URL ||
     SUPABASE_REST_URL
 );
 
 export let NEXT_PUBLIC_SUPABASE_ANON_KEY: string = normalizeSupabaseAnonKey(
-  envMeta.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-    envProc.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+    envMeta.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
     SUPABASE_PUBLISHABLE_KEY
 );
 
 export let SUPABASE_SERVICE_ROLE_KEY: string =
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||
   envMeta.SUPABASE_SERVICE_ROLE_KEY ||
-  envProc.SUPABASE_SERVICE_ROLE_KEY ||
   SUPABASE_SECRET_KEY;
 
 export let supabase: SupabaseClient = createClient(
