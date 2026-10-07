@@ -7,6 +7,7 @@ import {
   deleteJogoFromDb,
   upsertJogoDisponivelInDb,
   JogoDisponivelItem,
+  buscarJogosRodadaEspn,
 } from './supabase';
 import { TIMES_PADRAO, getEscudoPadrao, Jogo } from './App';
 
@@ -204,77 +205,58 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
     };
   }, []);
 
-  // Busca exclusivamente na API pública da ESPN (sem token, sem mocks/fallbacks)
+  // Busca os confrontos oficiais da ESPN (do dia selecionado + rodada ativa do Brasileirão Série A)
   const buscarJogosDoDia = async (dataAlvo: string) => {
     setCarregandoApi(true);
     setErroApiMsg('');
-    setJogosEspn([]);
-
-    const datesParam = formatarDataParaEspn(dataAlvo);
-    const urlEspn = `https://site.api.espn.com/apis/site/v2/sports/soccer/bra.1/scoreboard?dates=${encodeURIComponent(datesParam)}`;
 
     try {
-      const resp = await fetch(urlEspn);
-      if (!resp.ok) {
-        setJogosEspn([]);
-        return;
-      }
-
-      const data = await resp.json();
-      const events = Array.isArray(data?.events) ? data.events : [];
-
-      if (events.length === 0) {
-        setJogosEspn([]);
-        return;
-      }
-
-      const encontrados: JogoEspnCard[] = [];
-
-      for (let i = 0; i < events.length; i++) {
-        const ev = events[i];
-        const comp = ev?.competitions?.[0];
-        const competitors = comp?.competitors || [];
-
-        const casa = String(competitors[0]?.team?.displayName || '').trim();
-        const fora = String(competitors[1]?.team?.displayName || '').trim();
-        if (!casa || !fora) continue;
-
-        const rawDate = ev?.date || comp?.date || '';
-        let horarioFormatado = '';
-        if (rawDate) {
-          const dt = new Date(rawDate);
-          if (!isNaN(dt.getTime())) {
-            horarioFormatado = dt.toLocaleTimeString('pt-BR', {
-              hour: '2-digit',
-              minute: '2-digit',
-            });
-          } else {
-            horarioFormatado = String(rawDate);
-          }
-        }
-
-        const idEv = `espn_${ev?.id || `${datesParam}_${i}_${casa}_${fora}`}`.replace(/[^a-zA-Z0-9_-]/g, '_');
-
-        encontrados.push({
-          id: idEv,
-          time_casa: casa,
-          time_fora: fora,
-          campeonato: 'Brasileirão Série A',
-          horario: horarioFormatado || '16:00',
-          data: dataAlvo,
-          adicionado_ao_bolao: false,
-          escudoCasaUrl: competitors[0]?.team?.logo || getEscudoPadrao(casa),
-          escudoForaUrl: competitors[1]?.team?.logo || getEscudoPadrao(fora),
-          origem: 'espn',
-        });
-      }
-
-      setJogosEspn(encontrados);
+      const encontrados = await buscarJogosRodadaEspn(dataAlvo);
+      setJogosEspn(encontrados as JogoEspnCard[]);
     } catch {
-      setJogosEspn([]);
       setErroApiMsg('Erro ao consultar a API da ESPN no momento.');
     } finally {
       setCarregandoApi(false);
+    }
+  };
+
+  const lancarTodosJogosEspnUmClique = async () => {
+    if (jogosEspn.length === 0) return;
+    setAdicionandoId('TODOS_ESPN');
+    try {
+      const lote = jogosEspn.slice(0, 10);
+      for (const antigo of jogosBolaoAtivos) {
+        await deleteJogoFromDb(antigo.id).catch(() => {});
+      }
+      const novosJogos: Jogo[] = [];
+      for (let i = 0; i < lote.length; i++) {
+        const item = lote[i];
+        const casaLimpo = item.time_casa.trim();
+        const foraLimpo = item.time_fora.trim();
+        const escudoCasa = getEscudoPadrao(casaLimpo) || item.escudoCasaUrl || '';
+        const escudoFora = getEscudoPadrao(foraLimpo) || item.escudoForaUrl || '';
+        const novoJogo: Jogo = {
+          id: item.id || `espn_${Date.now()}_${i}`,
+          casa: casaLimpo,
+          fora: foraLimpo,
+          escudoCasa,
+          escudoFora,
+          data: item.horario || '19:30',
+          estadio: item.estadio || item.campeonato || 'Brasileirão Série A',
+          publicado: true,
+          bolaoId: 'bolao_rodada_espn',
+          tituloBolao: 'Rodada Oficial Brasileirão (ESPN)',
+        };
+        novosJogos.push(novoJogo);
+        await upsertJogoInDb(novoJogo);
+      }
+      setJogosBolaoAtivos(novosJogos);
+      try {
+        localStorage.setItem('elite_jogos_v11', JSON.stringify(novosJogos));
+      } catch {}
+      mostrarFeedback(`🚀 ${novosJogos.length} jogos da ESPN lançados no Bolão e no Supabase com 1 clique!`);
+    } finally {
+      setAdicionandoId('');
     }
   };
 
@@ -318,9 +300,13 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
       mostrarFeedback('⚠️ Escolha dois times diferentes!');
       return;
     }
-    if (jogosBolaoAtivos.length >= 10) {
-      mostrarFeedback('⚠️ O bolão já atingiu o limite máximo de 10 confrontos ativos!');
-      return;
+    let listaBase = [...jogosBolaoAtivos];
+    if (listaBase.length >= 10) {
+      const removido = listaBase[0];
+      if (removido) {
+        await deleteJogoFromDb(removido.id).catch(() => {});
+      }
+      listaBase = listaBase.slice(1);
     }
 
     const dispId = (params.id || gerarUuidSimples()).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 120);
@@ -334,7 +320,7 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
       const escudoCasa = getEscudoPadrao(casaLimpo) || params.escudoCasaUrl || '';
       const escudoFora = getEscudoPadrao(foraLimpo) || params.escudoForaUrl || '';
 
-      const novoJogoId = `${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      const novoJogoId = params.id || `${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
       const bolaoIdSalvo = (() => {
         try {
           return localStorage.getItem('elite_bolao_preparo_id') || 'bolao_1';
@@ -365,7 +351,7 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
 
       await upsertJogoInDb(novoJogoBolao);
 
-      const novaListaJogos = [...jogosBolaoAtivos, novoJogoBolao];
+      const novaListaJogos = [...listaBase, novoJogoBolao];
       setJogosBolaoAtivos(novaListaJogos);
       try {
         localStorage.setItem('elite_jogos_v11', JSON.stringify(novaListaJogos));
@@ -534,6 +520,19 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
                 >
                   {carregandoApi ? '🔄 Buscando na ESPN...' : '🔄 Atualizar Jogos da ESPN'}
                 </button>
+                {jogosEspn.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={lancarTodosJogosEspnUmClique}
+                    disabled={adicionandoId === 'TODOS_ESPN'}
+                    className="bg-[#FF6B00] hover:bg-[#ff7b1a] text-black font-black px-3.5 py-1.5 rounded-lg text-xs uppercase cursor-pointer transition shadow-md shadow-[#FF6B00]/20 flex items-center gap-1.5"
+                  >
+                    <span>⚡</span>
+                    {adicionandoId === 'TODOS_ESPN'
+                      ? 'LANÇANDO RODADA ESPN...'
+                      : `LANÇAR TODOS (${ Math.min(10, jogosEspn.length) }) NO BOLÃO COM 1 CLIQUE`}
+                  </button>
+                )}
               </div>
 
               <div className="text-[11px] text-zinc-400 font-mono">
@@ -598,13 +597,13 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
 
                       <button
                         type="button"
-                        disabled={adicionado || estaSalvando || jogosBolaoAtivos.length >= 10}
+                        disabled={adicionado || estaSalvando}
                         onClick={() =>
                           adicionarJogoAoBolao({
                             id: item.id,
                             time_casa: item.time_casa,
                             time_fora: item.time_fora,
-                            campeonato: item.campeonato,
+                            campeonato: item.estadio || item.campeonato,
                             horario: item.horario,
                             data: item.data,
                             escudoCasaUrl: item.escudoCasaUrl,
@@ -614,20 +613,18 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
                         className={`w-full py-2.5 px-4 rounded-xl font-black text-xs uppercase tracking-wider transition flex items-center justify-center gap-1.5 ${
                           adicionado
                             ? 'bg-green-600/20 text-green-300 border border-green-600/50 cursor-default'
-                            : jogosBolaoAtivos.length >= 10
-                            ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed'
                             : 'bg-[#FF6B00] hover:bg-[#ff7b1a] text-black cursor-pointer shadow-md shadow-[#FF6B00]/15'
                         }`}
                       >
                         {adicionado ? (
                           <>
-                            <span>✅</span> JÁ ADICIONADO AO BOLÃO
+                            <span>✅</span> JÁ LANÇADO NO BOLÃO
                           </>
                         ) : estaSalvando ? (
-                          <span>⏳ ADICIONANDO...</span>
+                          <span>⏳ LANÇANDO...</span>
                         ) : (
                           <>
-                            <span>➕</span> ADICIONAR AO BOLÃO (1 CLIQUE)
+                            <span>🚀</span> LANÇAR NO BOLÃO (1 CLIQUE)
                           </>
                         )}
                       </button>

@@ -33,6 +33,8 @@ import {
   saveConfigInDb,
   inicializarConfigAdminInDb,
   compressImageToDataUrl,
+  buscarJogosRodadaEspn,
+  sincronizarTimesEJogosIniciaisNoSupabase,
 } from './supabase';
 
 // ============================================================================
@@ -266,6 +268,8 @@ export default function App() {
   const [cotaSalvaAviso, setCotaSalvaAviso] = useState(false);
   const [linkSalvoAviso, setLinkSalvoAviso] = useState(false);
   const [avisoAdm, setAvisoAdm] = useState("");
+  const [jogosEspnRapido, setJogosEspnRapido] = useState<any[]>([]);
+  const [carregandoEspnRapido, setCarregandoEspnRapido] = useState(false);
 
   // Área de Transparência (Comprovantes de Pagamento da Premiação enviados pelo ADM para todos os jogadores)
   const [comprovantesPremiacao, setComprovantesPremiacao] = useState<ComprovantePremiacaoItem[]>(() => {
@@ -558,10 +562,17 @@ export default function App() {
     };
   }, []);
 
-  // Inicialização automática no Admin com VALOR_COTA = 10 e carregamento de todos os usuários do Supabase
+  // Inicialização automática no Admin com VALOR_COTA = 10, carregamento de todos os usuários do Supabase e jogos da ESPN
   useEffect(() => {
     if (page === "admin") {
       inicializarConfigAdminInDb().catch(() => {});
+      setCarregandoEspnRapido(true);
+      buscarJogosRodadaEspn()
+        .then((listaEspn) => {
+          setJogosEspnRapido(listaEspn || []);
+        })
+        .catch(() => {})
+        .finally(() => setCarregandoEspnRapido(false));
       listarUsuariosDoSupabase()
         .then((usuariosSupabase) => {
           if (usuariosSupabase && usuariosSupabase.length > 0) {
@@ -4541,6 +4552,132 @@ export default function App() {
                 <span>➕</span> Criar Outro Novo Bolão
               </button>
             </div>
+          </div>
+
+          {/* =============================================================== */}
+          {/* LANÇAMENTO RÁPIDO ESPN COM 1 CLIQUE DIRETO NO PAINEL ADM        */}
+          {/* =============================================================== */}
+          <div className="bg-gradient-to-r from-[#FF6B00]/15 via-zinc-950 to-black border-2 border-[#FF6B00]/70 rounded-2xl p-4 space-y-3 shadow-lg">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-zinc-800 pb-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-black uppercase bg-[#FF6B00] text-black px-2 py-0.5 rounded">
+                    ESPN OFICIAL • 1 CLIQUE
+                  </span>
+                  <span className="text-[10px] text-green-400 font-bold">
+                    ⚡ Sincronizado com o Banco Supabase
+                  </span>
+                </div>
+                <h4 className="font-black text-sm sm:text-base text-white mt-1">
+                  Jogos Oficiais da ESPN prontos para lançar com 1 clique ({jogosEspnRapido.length} jogos da rodada)
+                </h4>
+                <p className="text-[11px] text-zinc-400">
+                  Clique em um jogo abaixo para lançar individualmente ou lance toda a rodada da ESPN de uma só vez no bolão!
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setCarregandoEspnRapido(true);
+                    try {
+                      const lista = await buscarJogosRodadaEspn();
+                      const lote = (lista || []).slice(0, 10);
+                      const novos: Jogo[] = lote.map((item: any, i: number) => ({
+                        id: item.id || `espn_${Date.now()}_${i}`,
+                        casa: item.time_casa || item.casa,
+                        fora: item.time_fora || item.fora,
+                        escudoCasa: getEscudoPadrao(item.time_casa || item.casa) || item.escudoCasaUrl || "",
+                        escudoFora: getEscudoPadrao(item.time_fora || item.fora) || item.escudoForaUrl || "",
+                        data: item.horario || "19:30",
+                        estadio: item.estadio || item.campeonato || "Brasileirão Série A",
+                        publicado: true,
+                        bolaoId: bolaoEmPreparoId,
+                        tituloBolao: "Rodada Oficial Brasileirão (ESPN)",
+                      }));
+                      saveJogos(novos);
+                      await sincronizarTimesEJogosIniciaisNoSupabase();
+                      setRodadaPublicadaAviso(true);
+                      setTimeout(() => setRodadaPublicadaAviso(false), 5000);
+                      mostrarAvisoAdm(
+                        `🚀 ${novos.length} jogos oficiais da ESPN foram lançados no bolão e salvos no Supabase com 1 clique!`
+                      );
+                    } finally {
+                      setCarregandoEspnRapido(false);
+                    }
+                  }}
+                  className="bg-[#FF6B00] hover:bg-[#ff7b1a] text-black font-black px-4 py-2.5 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition shadow-lg shadow-[#FF6B00]/30 flex items-center gap-1.5"
+                >
+                  <span>⚡</span> LANÇAR TODA A RODADA ESPN (1 CLIQUE)
+                </button>
+              </div>
+            </div>
+
+            {carregandoEspnRapido ? (
+              <div className="text-xs text-zinc-400 py-3 text-center">
+                🔄 Carregando jogos oficiais da ESPN...
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-72 overflow-y-auto pr-1">
+                {jogosEspnRapido.map((item: any) => {
+                  const casaNome = item.time_casa || item.casa;
+                  const foraNome = item.time_fora || item.fora;
+                  const jaNoBolao = jogos.some(
+                    (j) =>
+                      j.casa.trim().toLowerCase() === String(casaNome).trim().toLowerCase() &&
+                      j.fora.trim().toLowerCase() === String(foraNome).trim().toLowerCase()
+                  );
+                  return (
+                    <div
+                      key={item.id || `${casaNome}_${foraNome}`}
+                      className={`p-2.5 rounded-xl border flex items-center justify-between gap-2 text-xs ${
+                        jaNoBolao
+                          ? "bg-green-950/30 border-green-700/60"
+                          : "bg-black/80 border-zinc-800 hover:border-[#FF6B00]/60"
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <Escudo src={getEscudoPadrao(casaNome) || item.escudoCasaUrl} nome={casaNome} size={26} />
+                        <span className="font-bold text-white truncate">{casaNome}</span>
+                        <span className="text-[#FF6B00] font-black">x</span>
+                        <span className="font-bold text-white truncate">{foraNome}</span>
+                        <Escudo src={getEscudoPadrao(foraNome) || item.escudoForaUrl} nome={foraNome} size={26} />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (jaNoBolao) return;
+                          const novo: Jogo = {
+                            id: item.id || `espn_${Date.now()}`,
+                            casa: casaNome,
+                            fora: foraNome,
+                            escudoCasa: getEscudoPadrao(casaNome) || item.escudoCasaUrl || "",
+                            escudoFora: getEscudoPadrao(foraNome) || item.escudoForaUrl || "",
+                            data: item.horario || "19:30",
+                            estadio: item.estadio || item.campeonato || "Brasileirão Série A",
+                            publicado: true,
+                            bolaoId: bolaoEmPreparoId,
+                            tituloBolao: tituloNovoBolao || "Rodada Oficial Brasileirão",
+                          };
+                          const base = jogos.length >= 10 ? jogos.slice(1) : jogos;
+                          saveJogos([...base, novo]);
+                          mostrarAvisoAdm(`🚀 "${casaNome} x ${foraNome}" lançado no bolão com 1 clique!`);
+                        }}
+                        disabled={jaNoBolao}
+                        className={`px-2.5 py-1.5 rounded-lg font-black text-[10px] uppercase shrink-0 transition ${
+                          jaNoBolao
+                            ? "bg-green-600/20 text-green-300 border border-green-600/50 cursor-default"
+                            : "bg-[#FF6B00] hover:bg-[#ff7b1a] text-black cursor-pointer shadow"
+                        }`}
+                      >
+                        {jaNoBolao ? "✅ No Bolão" : "🚀 Lançar (1 Clique)"}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {/* Identificação do Novo Bolão que está sendo preparado */}

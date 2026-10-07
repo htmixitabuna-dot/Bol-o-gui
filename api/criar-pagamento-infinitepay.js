@@ -24,7 +24,7 @@ export default async function handler(req, res) {
     const jogadorId = String(body.jogadorId || body.id || email || "jogador").trim();
     const origin =
       (req.headers && (req.headers.origin || (req.headers.host ? `https://${req.headers.host}` : ""))) ||
-      "https://bol-o-gui.vercel.app";
+      "https://bol-o-gui-d57d-eight.vercel.app";
 
     const payload = {
       handle: "irailson-da-472",

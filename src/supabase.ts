@@ -7,7 +7,7 @@ const envProc: Record<string, any> =
 
 export function normalizeSupabaseUrl(raw: string): string {
   let u = String(raw || 'https://slaqxbccectdgmlokjos.supabase.co').trim();
-  u = u.replace('slaqxbcectdgmlokjos', 'slaqxbccectdgmlokjos');
+  u = u.replace(/slaq[a-z]*lokjos\.supabase\.co/i, 'slaqxbccectdgmlokjos.supabase.co');
   if (!/^https?:\/\//i.test(u)) {
     u = `https://${u}`;
   }
@@ -120,8 +120,16 @@ export const auth: { currentUser: SupabaseCurrentUser | null } = {
   currentUser: null,
 };
 
-export function syncAuthCurrentUser(email?: string | null, nome?: string): void {
-  const cleanEmail = String(email || '').trim().toLowerCase();
+export function syncAuthCurrentUser(emailOrObj?: any, nome?: string): void {
+  const rawEmail =
+    typeof emailOrObj === 'object' && emailOrObj !== null
+      ? emailOrObj.email
+      : emailOrObj;
+  const rawNome =
+    typeof emailOrObj === 'object' && emailOrObj !== null
+      ? emailOrObj.nome || emailOrObj.displayName
+      : nome;
+  const cleanEmail = String(rawEmail || '').trim().toLowerCase();
   if (!cleanEmail) {
     auth.currentUser = null;
     try {
@@ -132,7 +140,7 @@ export function syncAuthCurrentUser(email?: string | null, nome?: string): void 
   const userObj: SupabaseCurrentUser = {
     uid: stringToUuid(cleanEmail),
     email: cleanEmail,
-    displayName: nome || cleanEmail.split('@')[0],
+    displayName: rawNome || cleanEmail.split('@')[0],
   };
   auth.currentUser = userObj;
   try {
@@ -153,6 +161,36 @@ export function serverTimestamp(): string {
 
 export const db = { supabaseUrl: NEXT_PUBLIC_SUPABASE_URL };
 
+export const TODOS_OS_TIMES_BOLAO = [
+  { nome: 'Atlético-MG', sigla: 'CAM', uf: 'MG', escudo: 'https://logodetimes.com/times/atletico-mineiro/logo-atletico-mineiro-256.png' },
+  { nome: 'Athletico-PR', sigla: 'CAP', uf: 'PR', escudo: 'https://logodetimes.com/times/atletico-paranaense/logo-atletico-paranaense-256.png' },
+  { nome: 'Bahia', sigla: 'BAH', uf: 'BA', escudo: 'https://logodetimes.com/times/bahia/logo-bahia-256.png' },
+  { nome: 'Botafogo', sigla: 'BOT', uf: 'RJ', escudo: 'https://logodetimes.com/times/botafogo/logo-botafogo-256.png' },
+  { nome: 'Ceará', sigla: 'CEA', uf: 'CE', escudo: 'https://logodetimes.com/times/ceara/logo-ceara-256.png' },
+  { nome: 'Chapecoense', sigla: 'CHA', uf: 'SC', escudo: 'https://logodetimes.com/times/chapecoense/logo-chapecoense-256.png' },
+  { nome: 'Corinthians', sigla: 'COR', uf: 'SP', escudo: 'https://logodetimes.com/times/corinthians/logo-corinthians-256.png' },
+  { nome: 'Coritiba', sigla: 'CFC', uf: 'PR', escudo: 'https://logodetimes.com/times/coritiba/logo-coritiba-256.png' },
+  { nome: 'Cruzeiro', sigla: 'CRU', uf: 'MG', escudo: 'https://logodetimes.com/times/cruzeiro/logo-cruzeiro-256.png' },
+  { nome: 'Flamengo', sigla: 'FLA', uf: 'RJ', escudo: 'https://logodetimes.com/times/flamengo/logo-flamengo-256.png' },
+  { nome: 'Fluminense', sigla: 'FLU', uf: 'RJ', escudo: 'https://logodetimes.com/times/fluminense/logo-fluminense-256.png' },
+  { nome: 'Fortaleza', sigla: 'FOR', uf: 'CE', escudo: 'https://logodetimes.com/times/fortaleza/logo-fortaleza-256.png' },
+  { nome: 'Grêmio', sigla: 'GRE', uf: 'RS', escudo: 'https://logodetimes.com/times/gremio/logo-gremio-256.png' },
+  { nome: 'Internacional', sigla: 'INT', uf: 'RS', escudo: 'https://logodetimes.com/times/internacional/logo-internacional-256.png' },
+  { nome: 'Juventude', sigla: 'JUV', uf: 'RS', escudo: 'https://logodetimes.com/times/juventude/logo-juventude-256.png' },
+  { nome: 'Mirassol', sigla: 'MIR', uf: 'SP', escudo: 'https://logodetimes.com/times/mirassol/logo-mirassol-256.png' },
+  { nome: 'Palmeiras', sigla: 'PAL', uf: 'SP', escudo: 'https://logodetimes.com/times/palmeiras/logo-palmeiras-256.png' },
+  { nome: 'Red Bull Bragantino', sigla: 'RBB', uf: 'SP', escudo: 'https://logodetimes.com/times/red-bull-bragantino/logo-red-bull-bragantino-256.png' },
+  { nome: 'Remo', sigla: 'REM', uf: 'PA', escudo: 'https://logodetimes.com/times/remo/logo-remo-256.png' },
+  { nome: 'Santos', sigla: 'SAN', uf: 'SP', escudo: 'https://logodetimes.com/times/santos/logo-santos-256.png' },
+  { nome: 'São Paulo', sigla: 'SAO', uf: 'SP', escudo: 'https://logodetimes.com/times/sao-paulo/logo-sao-paulo-256.png' },
+  { nome: 'Sport', sigla: 'SPT', uf: 'PE', escudo: 'https://logodetimes.com/times/sport-recife/logo-sport-recife-256.png' },
+  { nome: 'Vasco da Gama', sigla: 'VAS', uf: 'RJ', escudo: 'https://logodetimes.com/times/vasco-da-gama/logo-vasco-da-gama-256.png' },
+  { nome: 'Vitória', sigla: 'VIT', uf: 'BA', escudo: 'https://logodetimes.com/times/vitoria/logo-vitoria-256.png' },
+  { nome: 'Criciúma', sigla: 'CRI', uf: 'SC', escudo: 'https://logodetimes.com/times/criciuma/logo-criciuma-256.png' },
+  { nome: 'Cuiabá', sigla: 'CUI', uf: 'MT', escudo: 'https://logodetimes.com/times/cuiaba/logo-cuiaba-256.png' },
+  { nome: 'Atlético-GO', sigla: 'ACG', uf: 'GO', escudo: 'https://logodetimes.com/times/atletico-goianiense/logo-atletico-goianiense-256.png' },
+];
+
 const ESCUDOS_MAP: Record<string, string> = {
   flamengo: 'https://logodetimes.com/times/flamengo/logo-flamengo-256.png',
   palmeiras: 'https://logodetimes.com/times/palmeiras/logo-palmeiras-256.png',
@@ -170,13 +208,19 @@ const ESCUDOS_MAP: Record<string, string> = {
   vitória: 'https://logodetimes.com/times/vitoria/logo-vitoria-256.png',
   'atletico-mg': 'https://logodetimes.com/times/atletico-mineiro/logo-atletico-mineiro-256.png',
   'atlético-mg': 'https://logodetimes.com/times/atletico-mineiro/logo-atletico-mineiro-256.png',
+  'atletico mineiro': 'https://logodetimes.com/times/atletico-mineiro/logo-atletico-mineiro-256.png',
   fluminense: 'https://logodetimes.com/times/fluminense/logo-fluminense-256.png',
   gremio: 'https://logodetimes.com/times/gremio/logo-gremio-256.png',
   grêmio: 'https://logodetimes.com/times/gremio/logo-gremio-256.png',
   juventude: 'https://logodetimes.com/times/juventude/logo-juventude-256.png',
   bragantino: 'https://logodetimes.com/times/red-bull-bragantino/logo-red-bull-bragantino-256.png',
   'rb bragantino': 'https://logodetimes.com/times/red-bull-bragantino/logo-red-bull-bragantino-256.png',
-  'athletico-pr': 'https://logodetimes.com/times/athletico-paranaense/logo-athletico-paranaense-256.png',
+  'red bull bragantino': 'https://logodetimes.com/times/red-bull-bragantino/logo-red-bull-bragantino-256.png',
+  'athletico-pr': 'https://logodetimes.com/times/atletico-paranaense/logo-atletico-paranaense-256.png',
+  'atletico-pr': 'https://logodetimes.com/times/atletico-paranaense/logo-atletico-paranaense-256.png',
+  chapecoense: 'https://logodetimes.com/times/chapecoense/logo-chapecoense-256.png',
+  coritiba: 'https://logodetimes.com/times/coritiba/logo-coritiba-256.png',
+  remo: 'https://logodetimes.com/times/remo/logo-remo-256.png',
   criciuma: 'https://logodetimes.com/times/criciuma/logo-criciuma-256.png',
   criciúma: 'https://logodetimes.com/times/criciuma/logo-criciuma-256.png',
   'atletico-go': 'https://logodetimes.com/times/atletico-goianiense/logo-atletico-goianiense-256.png',
@@ -189,7 +233,7 @@ const ESCUDOS_MAP: Record<string, string> = {
   mirassol: 'https://logodetimes.com/times/mirassol/logo-mirassol-256.png',
 };
 
-function buscarEscudoPadrao(nomeTime: string): string {
+export function buscarEscudoPadrao(nomeTime: string): string {
   const key = String(nomeTime || '').trim().toLowerCase();
   return ESCUDOS_MAP[key] || '';
 }
@@ -218,32 +262,33 @@ export function getDeletedJogadoresSet(): Set<string> {
   }
 }
 
-export function markJogadorDeletedLocal(email: string): void {
+export function markJogadorDeletedLocal(email: string, docId?: string): void {
   const clean = String(email || '').trim().toLowerCase();
-  if (!clean) return;
   try {
     const set = getDeletedJogadoresSet();
-    set.add(clean);
+    if (clean) set.add(clean);
+    if (docId) set.add(String(docId).trim().toLowerCase());
     localStorage.setItem(DELETED_JOGADORES_KEY, JSON.stringify(Array.from(set)));
   } catch {}
 }
 
-export function clearJogadorDeletedLocal(email: string): void {
+export function clearJogadorDeletedLocal(email: string, docId?: string): void {
   const clean = String(email || '').trim().toLowerCase();
-  if (!clean) return;
   try {
     const set = getDeletedJogadoresSet();
-    if (set.has(clean)) {
-      set.delete(clean);
-      localStorage.setItem(DELETED_JOGADORES_KEY, JSON.stringify(Array.from(set)));
-    }
+    if (clean) set.delete(clean);
+    if (docId) set.delete(String(docId).trim().toLowerCase());
+    localStorage.setItem(DELETED_JOGADORES_KEY, JSON.stringify(Array.from(set)));
   } catch {}
 }
 
-export function isJogadorDeletedLocal(email: string): boolean {
+export function isJogadorDeletedLocal(email?: string, docId?: string, _ts?: number): boolean {
+  const set = getDeletedJogadoresSet();
   const clean = String(email || '').trim().toLowerCase();
-  if (!clean) return false;
-  return getDeletedJogadoresSet().has(clean);
+  if (clean && set.has(clean)) return true;
+  const cleanDoc = String(docId || '').trim().toLowerCase();
+  if (cleanDoc && set.has(cleanDoc)) return true;
+  return false;
 }
 
 // ============================================================================
@@ -284,36 +329,54 @@ export function normalizarLinhaUsuarioSupabase(rowProfile: any, rowJogador?: any
   const telefone = String(
     rowProfile?.telefone ||
       extra.telefone ||
+      extra.pix ||
+      extra.chavePix ||
       (rowJogador?.whatsapp && !String(rowJogador.whatsapp).includes('@') ? rowJogador.whatsapp : '') ||
       ''
   )
     .trim()
-    .slice(0, 30);
+    .slice(0, 80);
+
+  const pix = String(extra.pix || extra.chavePix || telefone || finalEmail).trim().slice(0, 120);
 
   const pagou = Boolean(
-    rowJogador?.pagou !== undefined ? rowJogador.pagou : extra.pagou !== undefined ? extra.pagou : false
+    rowJogador?.pagou !== undefined
+      ? rowJogador.pagou
+      : extra.aprovado ||
+        extra.status_pagamento === 'pago' ||
+        extra.statusPagamento === 'APROVADO' ||
+        extra.pagou
   );
 
   const statusPagamento =
     extra.statusPagamento ||
-    (pagou ? 'aprovado' : extra.comprovante ? 'pendente' : 'nenhum');
+    (pagou ? 'APROVADO' : extra.comprovante ? 'EM_ANALISE' : 'PENDENTE');
 
   return {
+    ...extra,
     uid: id,
     id,
+    _docId: extra._docId || getJogadorDocId(finalEmail),
     nome,
     email: finalEmail,
     telefone,
+    pix,
+    chavePix: pix,
     cpf: String(extra.cpf || '').trim().slice(0, 20),
-    chavePix: String(extra.chavePix || telefone || '').trim().slice(0, 120),
     saldo: Number(extra.saldo) || 0,
     pontos: Number(extra.pontos) || 0,
     acertos: Number(extra.acertos) || 0,
     pagou,
+    aprovado: pagou,
+    status_pagamento: pagou ? 'pago' : 'pendente',
     statusPagamento,
-    comprovante: String(extra.comprovante || ''),
-    palpitesExtras: Number(extra.palpitesExtras) || 0,
-    senha: String(extra.senha || '123456').slice(0, 60),
+    comprovante: extra.comprovante || undefined,
+    timestampComprovante: extra.timestampComprovante || undefined,
+    dataEnvioComprovante: extra.dataEnvioComprovante || undefined,
+    dataCadastro: extra.dataCadastro || undefined,
+    timestampCadastro: extra.timestampCadastro || undefined,
+    role: finalEmail === 'inhobahia29@gmail.com' ? 'admin' : extra.role || 'player',
+    is_admin: finalEmail === 'inhobahia29@gmail.com' ? true : Boolean(extra.is_admin),
     updatedAt: String(extra.updatedAt || rowProfile?.created_at || rowJogador?.created_at || new Date().toISOString()),
   };
 }
@@ -377,19 +440,27 @@ export async function listarUsuariosDoSupabase(): Promise<any[]> {
   return Array.from(mapaUsuarios.values());
 }
 
-export async function buscarUsuarioNoSupabase(emailInput: string): Promise<any | null> {
-  const email = String(emailInput || '').trim().toLowerCase();
-  if (!email) return null;
+export async function buscarUsuarioNoSupabase(termoInput: string): Promise<any | null> {
+  const termo = String(termoInput || '').trim().toLowerCase();
+  if (!termo) return null;
   const todos = await listarUsuariosDoSupabase();
-  return todos.find((u) => String(u.email || '').trim().toLowerCase() === email) || null;
+  return (
+    todos.find(
+      (u) =>
+        String(u.email || '').trim().toLowerCase() === termo ||
+        String(u.pix || '').trim().toLowerCase() === termo ||
+        String(u.telefone || '').trim().toLowerCase() === termo ||
+        String(u.nome || '').trim().toLowerCase() === termo
+    ) || null
+  );
 }
 
-export async function upsertJogadorInDb(j: any): Promise<void> {
+export async function upsertJogadorInDb(j: any, _isNovo?: boolean): Promise<void> {
   const email = String(j.email || '').trim().toLowerCase();
   if (!email) return;
-  clearJogadorDeletedLocal(email);
+  clearJogadorDeletedLocal(email, j._docId || j.id);
 
-  let uuid = j.uid && isUuid(j.uid) ? String(j.uid) : stringToUuid(email);
+  let uuid = j.uid && isUuid(j.uid) ? String(j.uid) : isUuid(j.id) ? String(j.id) : stringToUuid(email);
 
   try {
     const { data: existingProf } = await supabase
@@ -403,49 +474,35 @@ export async function upsertJogadorInDb(j: any): Promise<void> {
   } catch {}
 
   const nome = String(j.nome || email.split('@')[0] || 'Jogador').trim().slice(0, 80);
-  const telefone = String(j.telefone || '').trim().slice(0, 30);
-  const cpf = String(j.cpf || '').trim().slice(0, 20);
-  const chavePix = String(j.chavePix || telefone || '').trim().slice(0, 120);
-  const saldo = Number(j.saldo) || 0;
-  const pontos = Number(j.pontos) || 0;
-  const acertos = Number(j.acertos) || 0;
-  const pagou = Boolean(j.pagou);
-  const statusPagamento = j.statusPagamento || (pagou ? 'aprovado' : 'nenhum');
-  const comprovante = j.comprovante || '';
-  const palpitesExtras = Number(j.palpitesExtras) || 0;
-  const senha = String(j.senha || '123456').slice(0, 60);
-  const updatedAt = new Date().toISOString();
+  const pix = String(j.pix || j.chavePix || j.telefone || '').trim().slice(0, 120);
+  const telefone = String(j.telefone || pix || '').trim().slice(0, 60);
+  const pagou = Boolean(
+    j.pagou ||
+      j.aprovado ||
+      j.status_pagamento === 'pago' ||
+      j.statusPagamento === 'APROVADO'
+  );
+  const statusPagamento =
+    j.statusPagamento || (pagou ? 'APROVADO' : j.comprovante ? 'EM_ANALISE' : 'PENDENTE');
 
   const fullMeta = {
+    ...j,
     uid: uuid,
     id: uuid,
+    _docId: j._docId || getJogadorDocId(email),
     nome,
     email,
     telefone,
-    cpf,
-    chavePix,
-    saldo,
-    pontos,
-    acertos,
+    pix,
+    chavePix: pix,
     pagou,
+    aprovado: pagou,
+    status_pagamento: pagou ? 'pago' : 'pendente',
     statusPagamento,
-    comprovante,
-    palpitesExtras,
-    senha,
-    updatedAt,
+    role: email === 'inhobahia29@gmail.com' ? 'admin' : j.role || 'player',
+    is_admin: email === 'inhobahia29@gmail.com' ? true : Boolean(j.is_admin),
+    updatedAt: new Date().toISOString(),
   };
-
-  if (j.senha) {
-    supabase.auth
-      .signUp({
-        email,
-        password: String(j.senha).length >= 6 ? String(j.senha) : `${j.senha}123456`,
-        options: {
-          data: { nome, telefone, cpf, chavePix },
-        },
-      })
-      .catch(() => {});
-  }
 
   await Promise.all([
     supabase
@@ -465,7 +522,7 @@ export async function upsertJogadorInDb(j: any): Promise<void> {
         {
           id: uuid,
           nome,
-          whatsapp: telefone || email || '00000000000',
+          whatsapp: pix || telefone || email || '00000000000',
           pagou,
           time_coracao: JSON.stringify(fullMeta),
         },
@@ -476,21 +533,35 @@ export async function upsertJogadorInDb(j: any): Promise<void> {
   triggerListenersForCollection('jogadores');
 }
 
-export async function deleteJogadorFromDb(email: string): Promise<void> {
+export async function deleteJogadorFromDb(
+  email: string,
+  idsExtras?: string[],
+  _nome?: string
+): Promise<void> {
   const cleanEmail = String(email || '').trim().toLowerCase();
-  if (!cleanEmail) return;
   markJogadorDeletedLocal(cleanEmail);
+  if (Array.isArray(idsExtras)) {
+    idsExtras.forEach((id) => markJogadorDeletedLocal(cleanEmail, id));
+  }
 
   try {
-    const { data: existingProf } = await supabase
-      .from('profiles')
-      .select('id')
-      .ilike('email', cleanEmail);
+    const idsToDelete = new Set<string>();
+    if (cleanEmail) idsToDelete.add(stringToUuid(cleanEmail));
+    if (Array.isArray(idsExtras)) {
+      for (const id of idsExtras) {
+        if (isUuid(id)) idsToDelete.add(id);
+      }
+    }
 
-    const idsToDelete = new Set<string>([stringToUuid(cleanEmail)]);
-    if (Array.isArray(existingProf)) {
-      for (const p of existingProf) {
-        if (p?.id) idsToDelete.add(String(p.id));
+    if (cleanEmail) {
+      const { data: existingProf } = await supabase
+        .from('profiles')
+        .select('id')
+        .ilike('email', cleanEmail);
+      if (Array.isArray(existingProf)) {
+        for (const p of existingProf) {
+          if (p?.id) idsToDelete.add(String(p.id));
+        }
       }
     }
 
@@ -501,15 +572,140 @@ export async function deleteJogadorFromDb(email: string): Promise<void> {
         supabase.from('profiles').delete().eq('id', id),
       ]);
     }
-    await supabase.from('profiles').delete().ilike('email', cleanEmail);
+    if (cleanEmail) {
+      await supabase.from('profiles').delete().ilike('email', cleanEmail);
+    }
   } catch {}
 
   triggerListenersForCollection('jogadores');
 }
 
 // ============================================================================
-// JOGOS / PARTIDAS NO SUPABASE (TABELA REAL: jogos + metadados em apostas)
+// JOGOS / PARTIDAS NO SUPABASE + INTEGRAÇÃO DIRETA ESPN COM 1 CLIQUE
 // ============================================================================
+export const JOGOS_RODADA_BRASILEIRAO_PADRAO = [
+  {
+    id: 'espn_401841255',
+    casa: 'Internacional',
+    fora: 'Corinthians',
+    escudoCasa: 'https://logodetimes.com/times/internacional/logo-internacional-256.png',
+    escudoFora: 'https://logodetimes.com/times/corinthians/logo-corinthians-256.png',
+    data: '19:30',
+    estadio: 'Estádio Beira-Rio',
+    publicado: true,
+    bolaoId: 'bolao_rodada_espn',
+    tituloBolao: 'Rodada Oficial Brasileirão Série A',
+  },
+  {
+    id: 'espn_401841253',
+    casa: 'Red Bull Bragantino',
+    fora: 'Mirassol',
+    escudoCasa: 'https://logodetimes.com/times/red-bull-bragantino/logo-red-bull-bragantino-256.png',
+    escudoFora: 'https://logodetimes.com/times/mirassol/logo-mirassol-256.png',
+    data: '19:30',
+    estadio: 'Estádio Nabi Abi Chedid',
+    publicado: true,
+    bolaoId: 'bolao_rodada_espn',
+    tituloBolao: 'Rodada Oficial Brasileirão Série A',
+  },
+  {
+    id: 'espn_401841252',
+    casa: 'Remo',
+    fora: 'Grêmio',
+    escudoCasa: 'https://logodetimes.com/times/remo/logo-remo-256.png',
+    escudoFora: 'https://logodetimes.com/times/gremio/logo-gremio-256.png',
+    data: '19:30',
+    estadio: 'Mangueirão',
+    publicado: true,
+    bolaoId: 'bolao_rodada_espn',
+    tituloBolao: 'Rodada Oficial Brasileirão Série A',
+  },
+  {
+    id: 'espn_401841250',
+    casa: 'Vitória',
+    fora: 'Chapecoense',
+    escudoCasa: 'https://logodetimes.com/times/vitoria/logo-vitoria-256.png',
+    escudoFora: 'https://logodetimes.com/times/chapecoense/logo-chapecoense-256.png',
+    data: '20:00',
+    estadio: 'Barradão',
+    publicado: true,
+    bolaoId: 'bolao_rodada_espn',
+    tituloBolao: 'Rodada Oficial Brasileirão Série A',
+  },
+  {
+    id: 'espn_401841257',
+    casa: 'Botafogo',
+    fora: 'Vasco da Gama',
+    escudoCasa: 'https://logodetimes.com/times/botafogo/logo-botafogo-256.png',
+    escudoFora: 'https://logodetimes.com/times/vasco-da-gama/logo-vasco-da-gama-256.png',
+    data: '20:30',
+    estadio: 'Estádio Nilton Santos',
+    publicado: true,
+    bolaoId: 'bolao_rodada_espn',
+    tituloBolao: 'Rodada Oficial Brasileirão Série A',
+  },
+  {
+    id: 'espn_401841249',
+    casa: 'Cruzeiro',
+    fora: 'São Paulo',
+    escudoCasa: 'https://logodetimes.com/times/cruzeiro/logo-cruzeiro-256.png',
+    escudoFora: 'https://logodetimes.com/times/sao-paulo/logo-sao-paulo-256.png',
+    data: '21:30',
+    estadio: 'Mineirão',
+    publicado: true,
+    bolaoId: 'bolao_rodada_espn',
+    tituloBolao: 'Rodada Oficial Brasileirão Série A',
+  },
+  {
+    id: 'espn_401841251',
+    casa: 'Santos',
+    fora: 'Flamengo',
+    escudoCasa: 'https://logodetimes.com/times/santos/logo-santos-256.png',
+    escudoFora: 'https://logodetimes.com/times/flamengo/logo-flamengo-256.png',
+    data: '19:30',
+    estadio: 'Vila Belmiro',
+    publicado: true,
+    bolaoId: 'bolao_rodada_espn',
+    tituloBolao: 'Rodada Oficial Brasileirão Série A',
+  },
+  {
+    id: 'espn_401841256',
+    casa: 'Athletico-PR',
+    fora: 'Atlético-MG',
+    escudoCasa: 'https://logodetimes.com/times/atletico-paranaense/logo-atletico-paranaense-256.png',
+    escudoFora: 'https://logodetimes.com/times/atletico-mineiro/logo-atletico-mineiro-256.png',
+    data: '20:00',
+    estadio: 'Ligga Arena (Arena da Baixada)',
+    publicado: true,
+    bolaoId: 'bolao_rodada_espn',
+    tituloBolao: 'Rodada Oficial Brasileirão Série A',
+  },
+  {
+    id: 'espn_401841248',
+    casa: 'Fluminense',
+    fora: 'Coritiba',
+    escudoCasa: 'https://logodetimes.com/times/fluminense/logo-fluminense-256.png',
+    escudoFora: 'https://logodetimes.com/times/coritiba/logo-coritiba-256.png',
+    data: '21:30',
+    estadio: 'Maracanã',
+    publicado: true,
+    bolaoId: 'bolao_rodada_espn',
+    tituloBolao: 'Rodada Oficial Brasileirão Série A',
+  },
+  {
+    id: 'espn_401841254',
+    casa: 'Palmeiras',
+    fora: 'Bahia',
+    escudoCasa: 'https://logodetimes.com/times/palmeiras/logo-palmeiras-256.png',
+    escudoFora: 'https://logodetimes.com/times/bahia/logo-bahia-256.png',
+    data: '21:30',
+    estadio: 'Allianz Parque',
+    publicado: true,
+    bolaoId: 'bolao_rodada_espn',
+    tituloBolao: 'Rodada Oficial Brasileirão Série A',
+  },
+];
+
 function parseDataParaIsoDate(rawDate: string): string {
   const str = String(rawDate || '').trim();
   if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
@@ -527,6 +723,53 @@ function parseDataParaIsoDate(rawDate: string): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+let seedInicialExecutado = false;
+
+export async function sincronizarTimesEJogosIniciaisNoSupabase(): Promise<void> {
+  if (!hasValidSupabaseKey()) return;
+
+  try {
+    // 1. Garante todos os times cadastrados no Supabase (via tabela apostas com __type = 'times_bolao')
+    const timesUuid = stringToUuid('times_bolao_elite_serie_a');
+    await supabase.from('apostas').upsert(
+      {
+        id: timesUuid,
+        user_id: null,
+        jogo_id: null,
+        palpite: JSON.stringify({
+          __type: 'times_bolao',
+          times: TODOS_OS_TIMES_BOLAO,
+          updatedAt: new Date().toISOString(),
+        }),
+      },
+      { onConflict: 'id' }
+    );
+
+    // 2. Verifica se a tabela jogos está vazia; se estiver, recupera os confrontos (do localStorage ou da rodada oficial ESPN)
+    const { data: jogosAtuais } = await supabase.from('jogos').select('id').limit(1);
+    if (!jogosAtuais || jogosAtuais.length === 0) {
+      let jogosParaRecuperar: any[] = [];
+      if (typeof window !== 'undefined') {
+        try {
+          const localRaw = localStorage.getItem('elite_jogos_v11');
+          if (localRaw) {
+            const parsed = JSON.parse(localRaw);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              jogosParaRecuperar = parsed;
+            }
+          }
+        } catch {}
+      }
+      if (jogosParaRecuperar.length === 0) {
+        jogosParaRecuperar = JOGOS_RODADA_BRASILEIRAO_PADRAO;
+      }
+      for (const jg of jogosParaRecuperar.slice(0, 10)) {
+        await upsertJogoInDb({ ...jg, publicado: true });
+      }
+    }
+  } catch {}
+}
+
 export async function listarJogosDoSupabase(): Promise<any[]> {
   if (!hasValidSupabaseKey()) return [];
 
@@ -537,6 +780,12 @@ export async function listarJogosDoSupabase(): Promise<any[]> {
 
   const jogosRows = Array.isArray(resJogos.data) ? resJogos.data : [];
   const apostasRows = Array.isArray(resApostas.data) ? resApostas.data : [];
+
+  if (jogosRows.length === 0 && !seedInicialExecutado) {
+    seedInicialExecutado = true;
+    await sincronizarTimesEJogosIniciaisNoSupabase();
+    return listarJogosDoSupabase();
+  }
 
   const metaByGameUuid = new Map<string, any>();
   for (const a of apostasRows) {
@@ -569,26 +818,19 @@ export async function listarJogosDoSupabase(): Promise<any[]> {
     const escudoFora = String(meta.escudoFora || buscarEscudoPadrao(fora));
 
     mapaJogos.set(id, {
+      ...meta,
       id,
       gameUuid: gUuid,
       casa,
       fora,
       escudoCasa,
       escudoFora,
-      golsCasa: meta.golsCasa === null || meta.golsCasa === undefined || meta.golsCasa === '' ? null : Number(meta.golsCasa),
-      golsFora: meta.golsFora === null || meta.golsFora === undefined || meta.golsFora === '' ? null : Number(meta.golsFora),
-      data: String(meta.data || row.data_jogo || 'Hoje'),
-      horario: String(meta.horario || '16:00'),
-      estadio: String(meta.estadio || 'Arena'),
-      encerrado: Boolean(meta.encerrado ?? false),
-      publicado: true,
-      titulo: String(meta.titulo || `${casa} x ${fora}`),
-      subtitulo: String(meta.subtitulo || 'Bolão Elite'),
-      campeonato: String(meta.campeonato || 'Brasileirão Série A'),
-      rodada: String(meta.rodada || 'Rodada Principal'),
-      tipoJogo: String(meta.tipoJogo || 'Brasileirão Série A'),
-      premioBase: Number(meta.premioBase) || 1000,
-      valorCota: Number(meta.valorCota) || VALOR_COTA,
+      data: String(meta.data || meta.horario || row.data_jogo || '19:30'),
+      estadio: String(meta.estadio || 'Brasileirão Série A'),
+      resultadoOficial: meta.resultadoOficial || undefined,
+      publicado: meta.publicado !== undefined ? Boolean(meta.publicado) : true,
+      bolaoId: String(meta.bolaoId || 'bolao_1'),
+      tituloBolao: String(meta.tituloBolao || 'Rodada Oficial Brasileirão Série A'),
       updatedAt: String(meta.updatedAt || row.created_at || new Date().toISOString()),
     });
   }
@@ -597,7 +839,7 @@ export async function listarJogosDoSupabase(): Promise<any[]> {
 }
 
 export async function upsertJogoInDb(j: any): Promise<void> {
-  const id = String(j.id || '').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64);
+  const id = String(j.id || `jg_${Date.now()}`).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64);
   if (!id) return;
 
   const gameUuid = isUuid(id) ? id : stringToUuid(id);
@@ -605,20 +847,12 @@ export async function upsertJogoInDb(j: any): Promise<void> {
   const fora = String(j.fora || j.time_fora || '').trim().slice(0, 60);
   const escudoCasa = String(j.escudoCasa || buscarEscudoPadrao(casa)).trim();
   const escudoFora = String(j.escudoFora || buscarEscudoPadrao(fora)).trim();
-  const golsCasa = j.golsCasa === null || j.golsCasa === undefined || j.golsCasa === '' ? null : Number(j.golsCasa);
-  const golsFora = j.golsFora === null || j.golsFora === undefined || j.golsFora === '' ? null : Number(j.golsFora);
-  const data = String(j.data || 'Hoje').slice(0, 20);
-  const horario = String(j.horario || '16:00').slice(0, 20);
-  const estadio = String(j.estadio || 'Arena').slice(0, 60);
-  const encerrado = Boolean(j.encerrado);
+  const data = String(j.data || j.horario || '19:30').slice(0, 30);
+  const estadio = String(j.estadio || j.campeonato || 'Estádio Principal').slice(0, 80);
   const publicado = j.publicado !== undefined ? Boolean(j.publicado) : true;
-  const titulo = String(j.titulo || `${casa} x ${fora}`).slice(0, 80);
-  const subtitulo = String(j.subtitulo || 'Bolão Elite').slice(0, 100);
-  const campeonato = String(j.campeonato || 'Brasileirão Série A').slice(0, 80);
-  const rodada = String(j.rodada || 'Rodada Principal').slice(0, 60);
-  const tipoJogo = String(j.tipoJogo || 'Brasileirão Série A').slice(0, 60);
-  const premioBase = Number(j.premioBase) || 1000;
-  const valorCota = Number(j.valorCota) || VALOR_COTA;
+  const bolaoId = String(j.bolaoId || 'bolao_1').slice(0, 60);
+  const tituloBolao = String(j.tituloBolao || 'Rodada Oficial Brasileirão').slice(0, 80);
+  const resultadoOficial = j.resultadoOficial || undefined;
   const updatedAt = new Date().toISOString();
 
   const fullJogoMeta = {
@@ -629,20 +863,12 @@ export async function upsertJogoInDb(j: any): Promise<void> {
     fora,
     escudoCasa,
     escudoFora,
-    golsCasa,
-    golsFora,
     data,
-    horario,
     estadio,
-    encerrado,
+    resultadoOficial,
     publicado,
-    titulo,
-    subtitulo,
-    campeonato,
-    rodada,
-    tipoJogo,
-    premioBase,
-    valorCota,
+    bolaoId,
+    tituloBolao,
     updatedAt,
   };
 
@@ -689,17 +915,133 @@ export interface JogoDisponivelItem {
   rodada?: string;
   time_casa: string;
   time_fora: string;
-  escudo_casa: string;
-  escudo_fora: string;
+  escudo_casa?: string;
+  escudo_fora?: string;
   data: string;
   horario: string;
-  estadio: string;
-  status: string;
-  selecionado_admin: boolean;
+  estadio?: string;
+  status?: string;
+  selecionado_admin?: boolean;
+  adicionado_ao_bolao?: boolean;
 }
 
 export async function upsertJogoDisponivelInDb(_item: JogoDisponivelItem): Promise<void> {
   // Mantido para compatibilidade com ImportarJogosAdmin
+}
+
+// Busca jogos da rodada atual do Brasileirão na ESPN (com busca inteligente de datas da rodada)
+export async function buscarJogosRodadaEspn(dataAlvoIso?: string): Promise<any[]> {
+  const parseEventosEspn = (events: any[], fallbackDateIso: string) => {
+    const lista: any[] = [];
+    for (let i = 0; i < events.length; i++) {
+      const ev = events[i];
+      const comp = ev?.competitions?.[0];
+      const competitors = comp?.competitors || [];
+      const homeComp = competitors.find((c: any) => c.homeAway === 'home') || competitors[0];
+      const awayComp = competitors.find((c: any) => c.homeAway === 'away') || competitors[1];
+
+      const casa = String(homeComp?.team?.displayName || homeComp?.team?.name || '').trim();
+      const fora = String(awayComp?.team?.displayName || awayComp?.team?.name || '').trim();
+      if (!casa || !fora) continue;
+
+      const rawDate = ev?.date || comp?.date || '';
+      let horarioFormatado = '19:30';
+      let dataFormatada = fallbackDateIso;
+      if (rawDate) {
+        const dt = new Date(rawDate);
+        if (!isNaN(dt.getTime())) {
+          horarioFormatado = dt.toLocaleTimeString('pt-BR', {
+            hour: '2-digit',
+            minute: '2-digit',
+          });
+          dataFormatada = dt.toISOString().slice(0, 10);
+        }
+      }
+
+      const estadio = String(comp?.venue?.fullName || 'Brasileirão Série A').trim();
+      const idEv = `espn_${ev?.id || `${dataFormatada}_${i}_${casa}_${fora}`}`.replace(/[^a-zA-Z0-9_-]/g, '_');
+
+      lista.push({
+        id: idEv,
+        time_casa: casa,
+        time_fora: fora,
+        casa,
+        fora,
+        campeonato: 'Brasileirão Série A',
+        horario: horarioFormatado,
+        data: dataFormatada,
+        estadio,
+        adicionado_ao_bolao: false,
+        escudoCasaUrl: buscarEscudoPadrao(casa) || homeComp?.team?.logo || '',
+        escudoForaUrl: buscarEscudoPadrao(fora) || awayComp?.team?.logo || '',
+        origem: 'espn' as const,
+      });
+    }
+    return lista;
+  };
+
+  try {
+    const mapa = new Map<string, any>();
+
+    // 1. Se o usuário informou uma data específica, tenta primeiro essa data + o dia seguinte da rodada
+    if (dataAlvoIso) {
+      const limpo = dataAlvoIso.replace(/-/g, '');
+      const r1 = await fetch(
+        `https://site.api.espn.com/apis/site/v2/sports/soccer/bra.1/scoreboard?dates=${encodeURIComponent(limpo)}`
+      ).catch(() => null);
+      if (r1 && r1.ok) {
+        const d1 = await r1.json().catch(() => ({}));
+        const evs = parseEventosEspn(Array.isArray(d1?.events) ? d1.events : [], dataAlvoIso);
+        evs.forEach((x) => mapa.set(`${x.time_casa}_${x.time_fora}`, x));
+      }
+    }
+
+    // 2. Se a data escolhida não tiver 10 jogos (ex.: dia sem jogos / véspera da rodada), busca a rodada ativa da ESPN e os próximos 3 dias
+    if (mapa.size < 10) {
+      const baseDate = dataAlvoIso ? new Date(`${dataAlvoIso}T12:00:00`) : new Date();
+      const urlsToFetch = ['https://site.api.espn.com/apis/site/v2/sports/soccer/bra.1/scoreboard'];
+      for (let offset = 0; offset <= 4; offset++) {
+        const d = new Date(baseDate.getTime() + offset * 86400000);
+        const ymd = d.toISOString().slice(0, 10).replace(/-/g, '');
+        urlsToFetch.push(`https://site.api.espn.com/apis/site/v2/sports/soccer/bra.1/scoreboard?dates=${ymd}`);
+      }
+
+      const responses = await Promise.all(urlsToFetch.map((u) => fetch(u).catch(() => null)));
+      for (const resp of responses) {
+        if (!resp || !resp.ok) continue;
+        const json = await resp.json().catch(() => ({}));
+        const evs = parseEventosEspn(
+          Array.isArray(json?.events) ? json.events : [],
+          dataAlvoIso || new Date().toISOString().slice(0, 10)
+        );
+        for (const item of evs) {
+          const k = `${item.time_casa}_${item.time_fora}`;
+          if (!mapa.has(k)) {
+            mapa.set(k, item);
+          }
+        }
+      }
+    }
+
+    const resultado = Array.from(mapa.values());
+    if (resultado.length > 0) return resultado;
+  } catch {}
+
+  return JOGOS_RODADA_BRASILEIRAO_PADRAO.map((j) => ({
+    id: j.id,
+    time_casa: j.casa,
+    time_fora: j.fora,
+    casa: j.casa,
+    fora: j.fora,
+    campeonato: 'Brasileirão Série A',
+    horario: j.data,
+    data: new Date().toISOString().slice(0, 10),
+    estadio: j.estadio,
+    adicionado_ao_bolao: false,
+    escudoCasaUrl: j.escudoCasa,
+    escudoForaUrl: j.escudoFora,
+    origem: 'espn' as const,
+  }));
 }
 
 // ============================================================================
@@ -723,39 +1065,25 @@ export async function listarPalpitesDoSupabase(): Promise<any[]> {
         if (
           parsed.__type === 'jogo_meta' ||
           parsed.__type === 'config_bolao' ||
-          parsed.__type === 'comprovante_premiacao'
+          parsed.__type === 'comprovante_premiacao' ||
+          parsed.__type === 'times_bolao'
         ) {
           continue;
         }
-        const id = String(parsed.id || row.id || '');
-        if (!id) continue;
-        mapaPalpites.set(id, {
-          id,
-          jogadorEmail: String(parsed.jogadorEmail || '').trim().toLowerCase(),
-          jogadorNome: String(parsed.jogadorNome || 'Jogador'),
-          jogoId: String(parsed.jogoId || row.jogo_id || ''),
-          golsCasa: Number(parsed.golsCasa) || 0,
-          golsFora: Number(parsed.golsFora) || 0,
-          indicePalpite: Number(parsed.indicePalpite) || 1,
-          timestamp: String(parsed.timestamp || row.created_at || ''),
+        const jogadorEmail = String(parsed.jogadorEmail || '').trim().toLowerCase();
+        const jogoId = String(parsed.jogoId || row.jogo_id || '');
+        if (!jogadorEmail || !jogoId) continue;
+
+        const key = `${jogadorEmail}_${jogoId}`;
+        mapaPalpites.set(key, {
+          id: parsed.id || key,
+          jogadorEmail,
+          jogoId,
+          escolha: parsed.escolha || 'CASA',
+          pago: Boolean(parsed.pago),
           updatedAt: String(parsed.updatedAt || row.created_at || new Date().toISOString()),
         });
       } catch {}
-    } else if (/^\d+\s*[xX-]\s*\d+$/.test(rawPalpite)) {
-      const parts = rawPalpite.split(/[xX-]/);
-      const id = String(row.id || '');
-      if (!id) continue;
-      mapaPalpites.set(id, {
-        id,
-        jogadorEmail: String(row.user_id || '').trim().toLowerCase(),
-        jogadorNome: 'Jogador',
-        jogoId: String(row.jogo_id || ''),
-        golsCasa: Number(parts[0]) || 0,
-        golsFora: Number(parts[1]) || 0,
-        indicePalpite: 1,
-        timestamp: String(row.created_at || ''),
-        updatedAt: String(row.created_at || new Date().toISOString()),
-      });
     }
   }
 
@@ -763,29 +1091,21 @@ export async function listarPalpitesDoSupabase(): Promise<any[]> {
 }
 
 export async function upsertPalpiteInDb(p: any): Promise<void> {
-  const id = String(p.id || '').replace(/[^a-zA-Z0-9_@.-]/g, '_').slice(0, 120);
-  if (!id) return;
-  const betUuid = stringToUuid(`palpite_${id}`);
-  const jogadorEmail = String(p.jogadorEmail || '').trim().toLowerCase().slice(0, 120);
-  const jogadorNome = String(p.jogadorNome || 'Jogador').trim().slice(0, 80);
-  const jogoId = String(p.jogoId || '').slice(0, 64);
-  const golsCasa = Number(p.golsCasa) || 0;
-  const golsFora = Number(p.golsFora) || 0;
-  const indicePalpite = Number(p.indicePalpite) || 1;
-  const timestamp = String(p.timestamp || new Date().toLocaleString('pt-BR')).slice(0, 40);
-  const updatedAt = new Date().toISOString();
+  const jogadorEmail = String(p.jogadorEmail || '').trim().toLowerCase();
+  const jogoId = String(p.jogoId || '').trim();
+  if (!jogadorEmail || !jogoId) return;
+
+  const rawId = String(p.id || `${jogadorEmail}_${jogoId}`);
+  const betUuid = stringToUuid(`palpite_${rawId}`);
 
   const payload = {
     __type: 'palpite',
-    id,
+    id: rawId,
     jogadorEmail,
-    jogadorNome,
     jogoId,
-    golsCasa,
-    golsFora,
-    indicePalpite,
-    timestamp,
-    updatedAt,
+    escolha: p.escolha || 'CASA',
+    pago: Boolean(p.pago),
+    updatedAt: new Date().toISOString(),
   };
 
   await supabase.from('apostas').upsert(
@@ -801,10 +1121,12 @@ export async function upsertPalpiteInDb(p: any): Promise<void> {
   triggerListenersForCollection('palpites');
 }
 
-export async function deletePalpiteFromDb(id: string): Promise<void> {
-  const cleanId = String(id || '').replace(/[^a-zA-Z0-9_@.-]/g, '_').slice(0, 120);
-  if (!cleanId) return;
-  const betUuid = stringToUuid(`palpite_${cleanId}`);
+export async function deletePalpiteFromDb(emailOrId: string, jogoId?: string): Promise<void> {
+  const rawId = jogoId
+    ? `${String(emailOrId || '').trim().toLowerCase()}_${String(jogoId).trim()}`
+    : String(emailOrId || '').trim();
+  if (!rawId) return;
+  const betUuid = stringToUuid(`palpite_${rawId}`);
 
   try {
     await supabase.from('apostas').delete().eq('id', betUuid);
@@ -819,13 +1141,18 @@ export async function deletePalpiteFromDb(id: string): Promise<void> {
 export interface ComprovantePremiacaoItem {
   id: string;
   ganhadorNome: string;
-  rodadaTitulo: string;
-  valorPremio: number;
+  colocacao?: string;
+  rodadaTitulo?: string;
+  valorPago?: number;
+  valorPremio?: number;
   chavePixGanhador?: string;
-  comprovanteUrl: string;
+  descricao?: string;
   observacao?: string;
+  imagemComprovante?: string;
+  comprovanteUrl?: string;
   dataEnvio: string;
-  createdAtMs: number;
+  timestamp?: number;
+  createdAtMs?: number;
 }
 
 export async function listarComprovantesPremiacaoDoSupabase(): Promise<ComprovantePremiacaoItem[]> {
@@ -842,21 +1169,21 @@ export async function listarComprovantesPremiacaoDoSupabase(): Promise<Comprovan
       const parsed = JSON.parse(raw);
       if (parsed && parsed.__type === 'comprovante_premiacao' && parsed.id) {
         lista.push({
+          ...parsed,
           id: String(parsed.id),
           ganhadorNome: String(parsed.ganhadorNome || 'Ganhador'),
-          rodadaTitulo: String(parsed.rodadaTitulo || 'Rodada Principal'),
-          valorPremio: Number(parsed.valorPremio) || 0,
-          chavePixGanhador: String(parsed.chavePixGanhador || ''),
-          comprovanteUrl: String(parsed.comprovanteUrl || ''),
-          observacao: String(parsed.observacao || ''),
+          colocacao: String(parsed.colocacao || parsed.rodadaTitulo || '🥇 1º Lugar'),
+          valorPago: Number(parsed.valorPago ?? parsed.valorPremio) || 0,
+          descricao: String(parsed.descricao || parsed.observacao || ''),
+          imagemComprovante: String(parsed.imagemComprovante || parsed.comprovanteUrl || ''),
           dataEnvio: String(parsed.dataEnvio || ''),
-          createdAtMs: Number(parsed.createdAtMs) || Date.now(),
+          timestamp: Number(parsed.timestamp ?? parsed.createdAtMs) || Date.now(),
         });
       }
     } catch {}
   }
 
-  return lista.sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0));
+  return lista.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
 }
 
 export async function upsertComprovantePremiacaoInDb(item: ComprovantePremiacaoItem): Promise<void> {
@@ -865,15 +1192,8 @@ export async function upsertComprovantePremiacaoInDb(item: ComprovantePremiacaoI
 
   const payload = {
     __type: 'comprovante_premiacao',
+    ...item,
     id,
-    ganhadorNome: String(item.ganhadorNome || 'Ganhador').trim().slice(0, 80),
-    rodadaTitulo: String(item.rodadaTitulo || 'Rodada Principal').trim().slice(0, 80),
-    valorPremio: Number(item.valorPremio) || 0,
-    chavePixGanhador: String(item.chavePixGanhador || '').trim().slice(0, 120),
-    comprovanteUrl: String(item.comprovanteUrl || ''),
-    observacao: String(item.observacao || '').trim().slice(0, 240),
-    dataEnvio: String(item.dataEnvio || new Date().toLocaleString('pt-BR')).slice(0, 40),
-    createdAtMs: Number(item.createdAtMs) || Date.now(),
     updatedAt: new Date().toISOString(),
   };
 
@@ -922,32 +1242,15 @@ async function carregarConfigBolaoDoSupabase(): Promise<Record<string, any> | nu
   return null;
 }
 
-export async function saveConfigInDb(config: {
-  premioBase?: number;
-  valorCota?: number;
-  chavePix?: string;
-  tituloBolao?: string;
-  subtituloBolao?: string;
-  regrasBolao?: string;
-  termosBolao?: string;
-  palpitesBloqueados?: boolean;
-}): Promise<void> {
-  const payload: Record<string, any> = {
-    __type: 'config_bolao',
-    updatedAt: new Date().toISOString(),
-  };
-  if (config.premioBase !== undefined) payload.premioBase = Number(config.premioBase);
-  if (config.valorCota !== undefined) payload.valorCota = Number(config.valorCota);
-  if (config.chavePix !== undefined) payload.chavePix = String(config.chavePix).slice(0, 140);
-  if (config.tituloBolao !== undefined) payload.tituloBolao = String(config.tituloBolao).slice(0, 80);
-  if (config.subtituloBolao !== undefined) payload.subtituloBolao = String(config.subtituloBolao).slice(0, 120);
-  if (config.regrasBolao !== undefined) payload.regrasBolao = String(config.regrasBolao).slice(0, 4000);
-  if (config.termosBolao !== undefined) payload.termosBolao = String(config.termosBolao).slice(0, 6000);
-  if (config.palpitesBloqueados !== undefined) payload.palpitesBloqueados = Boolean(config.palpitesBloqueados);
-
+export async function saveConfigInDb(config: Record<string, any>): Promise<void> {
   try {
     const atual = (await carregarConfigBolaoDoSupabase()) || {};
-    const merged = { ...atual, ...payload, __type: 'config_bolao' };
+    const merged = {
+      ...atual,
+      ...config,
+      __type: 'config_bolao',
+      updatedAt: new Date().toISOString(),
+    };
     try {
       localStorage.setItem('bolao_config_cache_v1', JSON.stringify(merged));
     } catch {}
@@ -964,33 +1267,29 @@ export async function saveConfigInDb(config: {
   } catch {}
 }
 
-export async function inicializarConfigAdminInDb(emailAdmin: string): Promise<void> {
-  const cleanEmail = String(emailAdmin || '').trim().toLowerCase();
+export async function inicializarConfigAdminInDb(emailAdmin?: string): Promise<void> {
+  const cleanEmail = String(emailAdmin || 'inhobahia29@gmail.com').trim().toLowerCase();
   if (!cleanEmail) return;
+  await sincronizarTimesEJogosIniciaisNoSupabase();
 }
 
-export async function registrarDepositoConfirmadoInDb(params: {
-  email: string;
-  nome?: string;
-  telefone?: string;
-  chavePix?: string;
-  valor: number;
-  novoSaldo: number;
-  metodo?: string;
-}): Promise<void> {
-  const cleanEmail = String(params.email || '').trim().toLowerCase();
+export async function registrarDepositoConfirmadoInDb(
+  jogadorOuParams: any,
+  valorOpcional?: number
+): Promise<void> {
+  const cleanEmail = String(jogadorOuParams?.email || '').trim().toLowerCase();
   if (!cleanEmail) return;
 
   const existente = await buscarUsuarioNoSupabase(cleanEmail);
   await upsertJogadorInDb({
     ...(existente || {}),
+    ...(jogadorOuParams || {}),
     email: cleanEmail,
-    nome: params.nome || existente?.nome || cleanEmail.split('@')[0],
-    telefone: params.telefone || existente?.telefone || '',
-    chavePix: params.chavePix || existente?.chavePix || '',
-    saldo: Number(params.novoSaldo) || 0,
     pagou: true,
-    statusPagamento: 'aprovado',
+    aprovado: true,
+    status_pagamento: 'pago',
+    statusPagamento: 'APROVADO',
+    valorPago: valorOpcional ?? jogadorOuParams?.valor ?? VALOR_COTA,
   });
 }
 
@@ -1177,9 +1476,6 @@ export function onSnapshot(
   };
 }
 
-// ============================================================================
-// UTILITÁRIO PARA COMPRIMIR IMAGEM DE COMPROVANTE
-// ============================================================================
 export async function compressImageToDataUrl(
   file: File,
   maxWidth = 900,

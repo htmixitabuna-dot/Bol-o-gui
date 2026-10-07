@@ -2,7 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 
 function normalizeSupabaseUrl(raw) {
   let u = String(raw || "https://slaqxbccectdgmlokjos.supabase.co").trim();
-  u = u.replace("slaqxbcectdgmlokjos", "slaqxbccectdgmlokjos");
+  u = u.replace(/slaq[a-z]*lokjos\.supabase\.co/i, "slaqxbccectdgmlokjos.supabase.co");
   if (!/^https?:\/\//i.test(u)) {
     u = `https://${u}`;
   }
