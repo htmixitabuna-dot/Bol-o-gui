@@ -39,6 +39,7 @@ import {
   listarJogosDoSupabase,
   getHojeBrasilISO,
   limparCacheJogosLocal,
+  MENSAGEM_DATA_FIFA,
 } from './supabase';
 
 // ============================================================================
@@ -121,7 +122,14 @@ export interface Jogo {
   escudoCasa: string;
   escudoFora: string;
   data: string;
+  data_jogo?: string;
   estadio: string;
+  placarCasa?: string | number;
+  placarFora?: string | number;
+  aoVivo?: boolean;
+  encerrado?: boolean;
+  tempoJogo?: string;
+  statusDetalhe?: string;
   resultadoOficial?: EscolhaResultado;
   publicado?: boolean;
   bolaoId?: string;
@@ -244,19 +252,55 @@ export default function App() {
   // Logo Oficial do Bolões Elite
   const [logoBolao, setLogoBolao] = useState<string>(logoOficial);
 
-  // Confronto Form & Novo Bolão Salvo (Pré-Pronto)
-  const [nomeTime1, setNomeTime1] = useState("Palmeiras");
-  const [nomeTime2, setNomeTime2] = useState("Grêmio");
-  const [escudoTime1, setEscudoTime1] = useState(() => getEscudoPadrao("Palmeiras"));
-  const [escudoTime2, setEscudoTime2] = useState(() => getEscudoPadrao("Grêmio"));
+  // Confronto Form & Novo Bolão Salvo (Sem jogos falsos pré-preenchidos)
+  const [nomeTime1, setNomeTime1] = useState("");
+  const [nomeTime2, setNomeTime2] = useState("");
+  const [escudoTime1, setEscudoTime1] = useState("");
+  const [escudoTime2, setEscudoTime2] = useState("");
   const [dataJ, setDataJ] = useState("16:00");
-  const [estadio, setEstadio] = useState("Maracanã");
+  const [estadio, setEstadio] = useState("Brasileirão Série A");
   const [tituloNovoBolao, setTituloNovoBolao] = useState("Novo Bolão da Rodada");
   const [bolaoEmPreparoId, setBolaoEmPreparoId] = useState("bolao_salvo_1");
   const [bolaoSalvoAviso, setBolaoSalvoAviso] = useState(false);
 
   // Escolhas temporárias do jogador para a rodada atual
-  const [escolhasTemp, setEscolhasTemp] = useState<Record<string, EscolhaResultado>>({});
+  const [escolhasTemp, setEscolhasTemp] = useState<Record<string, EscolhaResultado>>(() => {
+    try {
+      const saved = localStorage.getItem("elite_escolhas_temp_v11");
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  const getEscolhaDoJogo = (j: Jogo): EscolhaResultado | undefined => {
+    const gUuid = (j as any)?.gameUuid;
+    const chaveTime = `${(j.casa || "").trim().toLowerCase()}_x_${(j.fora || "").trim().toLowerCase()}`;
+    return (
+      escolhasTemp[j.id] ||
+      (gUuid ? escolhasTemp[gUuid] : undefined) ||
+      escolhasTemp[chaveTime]
+    );
+  };
+
+  const selecionarOpcaoJogo = (j: Jogo, escolha: EscolhaResultado) => {
+    const gUuid = (j as any)?.gameUuid;
+    const chaveTime = `${(j.casa || "").trim().toLowerCase()}_x_${(j.fora || "").trim().toLowerCase()}`;
+    setEscolhasTemp((prev) => {
+      const next: Record<string, EscolhaResultado> = {
+        ...prev,
+        [j.id]: escolha,
+        [chaveTime]: escolha,
+      };
+      if (gUuid) {
+        next[gUuid] = escolha;
+      }
+      try {
+        localStorage.setItem("elite_escolhas_temp_v11", JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  };
 
   // Termos
   const [aceitouTermos, setAceitouTermos] = useState(true);
@@ -628,18 +672,34 @@ export default function App() {
     }
   }, [page]);
 
-  // Inicializa escolhas temporárias do usuário ao carregar jogos/palpites (exceto quando estiver fazendo nova aposta)
+  // Inicializa escolhas temporárias do usuário ao carregar jogos/palpites sem apagar seleções já feitas pelo jogador na tela
   useEffect(() => {
     if (modoNovaAposta) return;
     if (user && palpites.length > 0) {
-      const userP = palpites.filter((p) => p.jogadorEmail === user.email);
-      const map: Record<string, EscolhaResultado> = {};
-      userP.forEach((p) => {
-        map[p.jogoId] = p.escolha;
+      const emailLogado = (user.email || "").trim().toLowerCase();
+      const userP = palpites.filter(
+        (p) => (p.jogadorEmail || "").trim().toLowerCase() === emailLogado
+      );
+      if (userP.length === 0) return;
+      setEscolhasTemp((prev) => {
+        const next: Record<string, EscolhaResultado> = { ...prev };
+        let alterou = false;
+        userP.forEach((p) => {
+          if (p.jogoId && !next[p.jogoId]) {
+            next[p.jogoId] = p.escolha;
+            alterou = true;
+          }
+        });
+        if (alterou) {
+          try {
+            localStorage.setItem("elite_escolhas_temp_v11", JSON.stringify(next));
+          } catch {}
+          return next;
+        }
+        return prev;
       });
-      setEscolhasTemp(map);
     }
-  }, [user, palpites, modoNovaAposta]);
+  }, [user?.email, palpites, modoNovaAposta]);
 
   useEffect(() => {
     if (user) {
@@ -654,6 +714,9 @@ export default function App() {
     }
     setModoNovaAposta(true);
     setEscolhasTemp({});
+    try {
+      localStorage.removeItem("elite_escolhas_temp_v11");
+    } catch {}
     setPage("palpites");
     setTimeout(() => {
       const el = document.getElementById("secao-jogos-rodada");
@@ -2132,7 +2195,7 @@ export default function App() {
 
   const salvarPalpitesTemporariosSeHouver = async () => {
     if (!user) return;
-    const jogosComPalpite = jogosPublicados.filter((j) => escolhasTemp[j.id]);
+    const jogosComPalpite = jogosPublicados.filter((j) => Boolean(getEscolhaDoJogo(j)));
     if (jogosComPalpite.length === 0) return;
 
     const jaPago =
@@ -2147,7 +2210,7 @@ export default function App() {
     const novosPalpites: Palpite[] = jogosComPalpite.map((j) => ({
       jogadorEmail: user.email,
       jogoId: j.id,
-      escolha: escolhasTemp[j.id],
+      escolha: getEscolhaDoJogo(j)!,
       pago: jaPago,
     }));
 
@@ -2182,7 +2245,7 @@ export default function App() {
                   setPage("loginJogador");
                   return;
                 }
-                const jogosComPalpite = jogosPublicados.filter((j) => escolhasTemp[j.id]);
+                const jogosComPalpite = jogosPublicados.filter((j) => Boolean(getEscolhaDoJogo(j)));
                 if (jogosComPalpite.length === 0 && meusPalpitesSalvos.length === 0) {
                   alert("Selecione seus palpites nos jogos da rodada antes de pagar!");
                   return;
@@ -2277,7 +2340,7 @@ export default function App() {
                   setPage("loginJogador");
                   return;
                 }
-                const jogosComPalpite = jogosPublicados.filter((j) => escolhasTemp[j.id]);
+                const jogosComPalpite = jogosPublicados.filter((j) => Boolean(getEscolhaDoJogo(j)));
                 if (jogosComPalpite.length === 0 && meusPalpitesSalvos.length === 0) {
                   alert("Selecione seus palpites nos jogos da rodada antes de pagar!");
                   return;
@@ -2812,13 +2875,33 @@ export default function App() {
                       <span>🏟️ {match.estadio}</span>
                     </div>
 
-                    {/* Placar / Confronto */}
+                    {/* Placar Ao Vivo / Confronto */}
                     <div className="flex items-center justify-between gap-2 bg-zinc-900/70 p-2.5 rounded-xl border border-zinc-800/80">
                       <div className="flex items-center gap-2 flex-1 min-w-0">
                         <Escudo src={match.escudoCasa} nome={match.casa} size={32} />
                         <span className="font-bold text-xs text-white truncate">{match.casa}</span>
                       </div>
-                      <span className="text-[10px] font-black text-zinc-500 px-1">VS</span>
+                      <div className="flex flex-col items-center shrink-0 px-2">
+                        {match.aoVivo && (
+                          <span className="text-[9px] bg-red-600 text-white font-black px-1.5 py-0.5 rounded animate-pulse mb-0.5">
+                            🔴 AO VIVO {match.tempoJogo ? `• ${match.tempoJogo}` : ""}
+                          </span>
+                        )}
+                        {!match.aoVivo && match.encerrado && (
+                          <span className="text-[9px] bg-zinc-800 text-zinc-300 font-black px-1.5 py-0.5 rounded mb-0.5">
+                            🏁 FIM
+                          </span>
+                        )}
+                        {match.placarCasa !== undefined && match.placarFora !== undefined ? (
+                          <div className="bg-black border border-zinc-700 px-2.5 py-1 rounded-lg font-mono text-xs font-black text-white flex items-center gap-1.5">
+                            <span>{match.placarCasa}</span>
+                            <span className="text-[#FF6B00]">x</span>
+                            <span>{match.placarFora}</span>
+                          </div>
+                        ) : (
+                          <span className="text-[10px] font-black text-zinc-500 px-1">VS</span>
+                        )}
+                      </div>
                       <div className="flex items-center gap-2 flex-1 min-w-0 justify-end">
                         <span className="font-bold text-xs text-white truncate text-right">{match.fora}</span>
                         <Escudo src={match.escudoFora} nome={match.fora} size={32} />
@@ -2982,6 +3065,67 @@ export default function App() {
               </button>
             </div>
           )}
+
+          {/* Painel Placar ao Vivo / Status Oficial ESPN (Brasileirão) na Tela Inicial */}
+          <div className="w-full mt-5 bg-zinc-900/90 border border-zinc-800 rounded-2xl p-3.5 text-left space-y-2.5 shadow-lg">
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
+              <div className="flex items-center gap-1.5">
+                <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse"></span>
+                <span className="text-[10px] font-black uppercase tracking-wider text-[#FF6B00]">
+                  PLACAR AO VIVO • BRASILEIRÃO (ESPN)
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => atualizarJogosEspnAoVivo()}
+                disabled={carregandoEspnRapido}
+                className="text-[10px] bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold px-2 py-0.5 rounded cursor-pointer transition"
+              >
+                {carregandoEspnRapido ? "🔄..." : "🔄 Ao Vivo"}
+              </button>
+            </div>
+
+            {jogosPublicados.length === 0 ? (
+              <div className="bg-black/80 border border-[#FF6B00]/40 rounded-xl p-3.5 text-center space-y-1">
+                <div className="text-xs sm:text-sm font-black text-[#FF6B00] uppercase tracking-wide">
+                  {MENSAGEM_DATA_FIFA}
+                </div>
+                <p className="text-[10px] text-zinc-400">
+                  Sincronizado em tempo real com a API oficial da ESPN (Brasileirão Série A).
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                {jogosPublicados.map((j) => (
+                  <div
+                    key={j.id}
+                    className="bg-black/80 border border-zinc-800 rounded-xl px-3 py-2 flex items-center justify-between gap-2 text-xs"
+                  >
+                    <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                      <Escudo src={j.escudoCasa} nome={j.casa} size={22} />
+                      <span className="font-bold text-white truncate">{j.casa}</span>
+                    </div>
+                    <div className="flex flex-col items-center shrink-0 px-2">
+                      {j.aoVivo && (
+                        <span className="text-[8px] bg-red-600 text-white font-black px-1.5 py-0.5 rounded animate-pulse mb-0.5">
+                          🔴 {j.tempoJogo || "AO VIVO"}
+                        </span>
+                      )}
+                      <div className="bg-zinc-900 border border-zinc-700 px-2 py-0.5 rounded font-mono text-xs font-black text-white flex items-center gap-1">
+                        <span>{j.placarCasa ?? 0}</span>
+                        <span className="text-[#FF6B00]">x</span>
+                        <span>{j.placarFora ?? 0}</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-1 min-w-0 justify-end">
+                      <span className="font-bold text-white truncate text-right">{j.fora}</span>
+                      <Escudo src={j.escudoFora} nome={j.fora} size={22} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
 
           {/* Banner para Instalar o App no Celular com a Logo do Bolões Elite */}
           <PWAInstallButton variant="banner" logoSrc={logoBolao} />
@@ -4666,11 +4810,13 @@ export default function App() {
                 🔄 Buscando jogos de hoje ao vivo na ESPN (sem cache)...
               </div>
             ) : jogosEspnRapido.length === 0 ? (
-              <div className="bg-black/70 border border-zinc-800 rounded-xl p-5 text-center space-y-1">
+              <div className="bg-black/80 border border-[#FF6B00]/50 rounded-xl p-5 text-center space-y-1.5">
                 <div className="text-2xl">⚽</div>
-                <div className="text-sm font-black text-white">Nenhum jogo hoje</div>
+                <div className="text-sm sm:text-base font-black text-[#FF6B00] uppercase tracking-wide">
+                  {MENSAGEM_DATA_FIFA}
+                </div>
                 <p className="text-[11px] text-zinc-400">
-                  Não há jogos do Brasileirão Série A na ESPN hoje ({getHojeBrasilISO()}). Jogos de ontem não são exibidos.
+                  Busca em tempo real na API da ESPN (Brasileirão Série A • {getHojeBrasilISO()}). Sem jogos falsos.
                 </p>
               </div>
             ) : (
@@ -4695,7 +4841,9 @@ export default function App() {
                       <div className="flex items-center gap-1.5 min-w-0">
                         <Escudo src={getEscudoPadrao(casaNome) || item.escudoCasaUrl} nome={casaNome} size={26} />
                         <span className="font-bold text-white truncate">{casaNome}</span>
-                        <span className="text-[#FF6B00] font-black">x</span>
+                        <span className="bg-zinc-900 border border-zinc-700 px-1.5 py-0.5 rounded font-mono text-[11px] font-black text-[#FF6B00]">
+                          {item.placar_casa ?? 0} x {item.placar_fora ?? 0}
+                        </span>
                         <span className="font-bold text-white truncate">{foraNome}</span>
                         <Escudo src={getEscudoPadrao(foraNome) || item.escudoForaUrl} nome={foraNome} size={26} />
                       </div>
@@ -4710,7 +4858,15 @@ export default function App() {
                             escudoCasa: getEscudoPadrao(casaNome) || item.escudoCasaUrl || "",
                             escudoFora: getEscudoPadrao(foraNome) || item.escudoForaUrl || "",
                             data: item.horario || "19:30",
+                            data_jogo: item.data || getHojeBrasilISO(),
                             estadio: item.estadio || item.campeonato || "Brasileirão Série A",
+                            placarCasa: item.placar_casa ?? "0",
+                            placarFora: item.placar_fora ?? "0",
+                            aoVivo: Boolean(item.aoVivo),
+                            encerrado: Boolean(item.encerrado),
+                            tempoJogo: item.tempoJogo || "",
+                            statusDetalhe: item.status || "",
+                            resultadoOficial: item.resultadoOficial,
                             publicado: true,
                             bolaoId: bolaoEmPreparoId,
                             tituloBolao: tituloNovoBolao || "Rodada Oficial Brasileirão",
@@ -5172,9 +5328,14 @@ export default function App() {
             </div>
 
             {jogosPublicados.length === 0 ? (
-              <p className="text-zinc-500 text-xs py-3 text-center border border-dashed border-zinc-800 rounded-lg">
-                Nenhum confronto publicado para os jogadores no momento. Clique em &quot;PUBLICAR P/ OS JOGADORES&quot; em um bolão salvo acima para liberar!
-              </p>
+              <div className="py-5 px-4 text-center border border-dashed border-[#FF6B00]/50 bg-black/60 rounded-xl space-y-1">
+                <div className="text-xs sm:text-sm font-black text-[#FF6B00] uppercase">
+                  {MENSAGEM_DATA_FIFA}
+                </div>
+                <p className="text-zinc-500 text-[11px]">
+                  Nenhum jogo ativo no momento. Assim que a rodada retornar na ESPN, os jogos aparecerão aqui e para todos os jogadores.
+                </p>
+              </div>
             ) : (
               jogosPublicados.map((j) => (
                 <div
@@ -5187,9 +5348,16 @@ export default function App() {
                     </span>
                     <Escudo src={j.escudoCasa} nome={j.casa} size={32} />
                     <span className="font-bold text-white truncate">{j.casa}</span>
-                    <span className="text-[#FF6B00] font-black px-1">x</span>
+                    <span className="bg-zinc-900 border border-zinc-700 px-2 py-0.5 rounded font-mono text-xs font-black text-[#FF6B00]">
+                      {j.placarCasa ?? 0} x {j.placarFora ?? 0}
+                    </span>
                     <span className="font-bold text-white truncate">{j.fora}</span>
                     <Escudo src={j.escudoFora} nome={j.fora} size={32} />
+                    {j.aoVivo && (
+                      <span className="text-[9px] bg-red-600 text-white font-black px-1.5 py-0.5 rounded animate-pulse shrink-0">
+                        🔴 AO VIVO {j.tempoJogo ? `• ${j.tempoJogo}` : ""}
+                      </span>
+                    )}
                     <span className="text-[10px] text-zinc-500 ml-2 hidden sm:inline">
                       • {j.data} ({j.estadio})
                     </span>
@@ -5341,6 +5509,8 @@ export default function App() {
             <button
               onClick={() => {
                 localStorage.removeItem("elite_user_v11");
+                localStorage.removeItem("elite_escolhas_temp_v11");
+                setEscolhasTemp({});
                 setUser(null);
                 setPage("landing");
               }}
@@ -5485,11 +5655,11 @@ export default function App() {
               <span className="text-xs font-bold text-white">
                 {jogosPublicados.length > 0
                   ? `Escolha de Jogos: ${jogosPublicados.length} Jogo(s) Disponível(is) p/ Apostar`
-                  : "Nenhum jogo hoje"}
+                  : MENSAGEM_DATA_FIFA}
               </span>
             </div>
             <span className="text-[10px] text-green-400 font-mono">
-              🟢 Marque 1X, X ou X2 e envie sua cartela • Atualiza a cada 1 min
+              🟢 Placar ao Vivo ESPN • Atualiza a cada 1 min
               {ultimaAtualizacaoJogos ? ` • ${ultimaAtualizacaoJogos}` : ""}
             </span>
           </div>
@@ -5510,23 +5680,25 @@ export default function App() {
               <span>➕</span> Fazer Nova Aposta
             </button>
             <span className="text-[10px] bg-black text-[#FF6B00] font-black px-2 py-0.5 rounded border border-zinc-800">
-              {Object.keys(escolhasTemp).filter((id) => jogosPublicados.some((jp) => jp.id === id)).length}/{jogosPublicados.length} APOSTADOS
+              {jogosPublicados.filter((jp) => Boolean(getEscolhaDoJogo(jp))).length}/{jogosPublicados.length} APOSTADOS
             </span>
           </div>
         </div>
 
         {jogosPublicados.length === 0 ? (
-          <div className="mt-8 text-center py-12 px-4 bg-zinc-900/60 rounded-2xl border border-dashed border-zinc-800 text-zinc-400 space-y-2">
-            <div className="text-3xl">⚽</div>
-            <div className="font-black text-base sm:text-lg text-white">Nenhum jogo hoje</div>
-            <p className="text-xs text-zinc-400 max-w-sm mx-auto">
-              Não há jogos do Brasileirão Série A na ESPN hoje ({getHojeBrasilISO()}). A página atualiza sozinha a cada 1 minuto e não exibe jogos de ontem.
+          <div className="mt-8 text-center py-12 px-4 bg-zinc-900/80 rounded-2xl border-2 border-[#FF6B00]/60 text-zinc-300 space-y-3 shadow-xl">
+            <div className="text-4xl">⚽</div>
+            <div className="font-black text-base sm:text-xl text-[#FF6B00] uppercase tracking-wider">
+              {MENSAGEM_DATA_FIFA}
+            </div>
+            <p className="text-xs text-zinc-400 max-w-md mx-auto">
+              Conectado ao vivo na API oficial da ESPN (Brasileirão Série A). A página atualiza automaticamente a cada 1 minuto sem usar jogos falsos.
             </p>
           </div>
         ) : (
           <div className="mt-4 space-y-3">
             {jogosPublicados.map((j, idx) => {
-              const escolhaAtual = escolhasTemp[j.id];
+              const escolhaAtual = getEscolhaDoJogo(j);
               const ganhouJogo = Boolean(escolhaAtual && j.resultadoOficial && j.resultadoOficial === escolhaAtual);
               const perdeuJogo = Boolean(escolhaAtual && j.resultadoOficial && j.resultadoOficial !== escolhaAtual);
 
@@ -5538,6 +5710,8 @@ export default function App() {
                       ? "border-green-500"
                       : perdeuJogo
                       ? "border-red-600"
+                      : escolhaAtual
+                      ? "border-[#FF6B00] shadow-[#FF6B00]/10"
                       : "border-zinc-800"
                   }`}
                 >
@@ -5573,9 +5747,22 @@ export default function App() {
                   )}
 
                   <div className="p-4 space-y-3">
-                    {/* Cabeçalho do Confronto */}
-                    <div className="text-[10px] text-zinc-400 text-center uppercase font-bold tracking-wider">
-                      Jogo #{idx + 1} • {j.data} • {j.estadio}
+                    {/* Cabeçalho do Confronto + Status Ao Vivo da ESPN */}
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-zinc-400 uppercase font-bold tracking-wider border-b border-zinc-800/80 pb-2">
+                      <span>Jogo #{idx + 1} • {j.data} • {j.estadio}</span>
+                      {j.aoVivo ? (
+                        <span className="bg-red-600 text-white font-black px-2 py-0.5 rounded-full animate-pulse flex items-center gap-1">
+                          <span>🔴</span> AO VIVO {j.tempoJogo ? `• ${j.tempoJogo}` : ""}
+                        </span>
+                      ) : j.encerrado ? (
+                        <span className="bg-zinc-800 text-zinc-200 font-black px-2 py-0.5 rounded-full">
+                          🏁 ENCERRADO
+                        </span>
+                      ) : (
+                        <span className="bg-black text-green-400 border border-green-800/60 font-mono px-2 py-0.5 rounded-full">
+                          🟢 ESPN AO VIVO
+                        </span>
+                      )}
                     </div>
 
                     {/* Aviso de Resultado Lançado pelo ADM */}
@@ -5607,20 +5794,44 @@ export default function App() {
 
                   <div className="flex items-center justify-between gap-3 px-2">
                     {/* Mandante */}
-                    <div className="flex items-center gap-2.5 flex-1 min-w-0">
+                    <button
+                      type="button"
+                      onClick={() => selecionarOpcaoJogo(j, "CASA")}
+                      className={`flex items-center gap-2.5 flex-1 min-w-0 text-left p-1.5 rounded-xl transition cursor-pointer ${
+                        escolhaAtual === "CASA"
+                          ? "bg-[#FF6B00]/20 ring-1 ring-[#FF6B00]"
+                          : "hover:bg-zinc-800/60"
+                      }`}
+                    >
                       <Escudo src={j.escudoCasa} nome={j.casa} size={42} />
                       <span className="font-black text-sm truncate text-white">{j.casa}</span>
-                    </div>
+                    </button>
 
-                    <div className="text-zinc-500 font-black text-sm shrink-0 px-2">
-                      VS
+                    {/* Placar Ao Vivo em Tempo Real */}
+                    <div className="flex flex-col items-center shrink-0 px-2">
+                      <div className="bg-black border-2 border-zinc-700 px-3 py-1 rounded-xl font-mono text-base font-black text-white flex items-center gap-2 shadow-inner">
+                        <span>{j.placarCasa ?? 0}</span>
+                        <span className="text-[#FF6B00] text-xs">X</span>
+                        <span>{j.placarFora ?? 0}</span>
+                      </div>
+                      <span className="text-[9px] text-zinc-500 font-bold uppercase mt-0.5">
+                        {j.aoVivo ? j.tempoJogo || "Em andamento" : j.encerrado ? "Placar Final" : "Placar Ao Vivo"}
+                      </span>
                     </div>
 
                     {/* Visitante */}
-                    <div className="flex items-center gap-2.5 flex-1 min-w-0 justify-end">
+                    <button
+                      type="button"
+                      onClick={() => selecionarOpcaoJogo(j, "FORA")}
+                      className={`flex items-center gap-2.5 flex-1 min-w-0 justify-end text-right p-1.5 rounded-xl transition cursor-pointer ${
+                        escolhaAtual === "FORA"
+                          ? "bg-[#FF6B00]/20 ring-1 ring-[#FF6B00]"
+                          : "hover:bg-zinc-800/60"
+                      }`}
+                    >
                       <span className="font-black text-sm truncate text-right text-white">{j.fora}</span>
                       <Escudo src={j.escudoFora} nome={j.fora} size={42} />
-                    </div>
+                    </button>
                   </div>
 
                   {/* SELETOR: QUEM VENCE OU EMPATE */}
@@ -5628,7 +5839,7 @@ export default function App() {
                     {/* 1: Mandante */}
                     <button
                       type="button"
-                      onClick={() => setEscolhasTemp({ ...escolhasTemp, [j.id]: "CASA" })}
+                      onClick={() => selecionarOpcaoJogo(j, "CASA")}
                       className={`p-3 rounded-xl border text-center font-bold text-xs transition cursor-pointer flex flex-col items-center justify-center gap-1 ${
                         escolhaAtual === "CASA"
                           ? "bg-[#FF6B00] text-black border-[#FF6B00] shadow-md shadow-[#FF6B00]/30 scale-[1.02]"
@@ -5644,7 +5855,7 @@ export default function App() {
                     {/* X: Empate */}
                     <button
                       type="button"
-                      onClick={() => setEscolhasTemp({ ...escolhasTemp, [j.id]: "EMPATE" })}
+                      onClick={() => selecionarOpcaoJogo(j, "EMPATE")}
                       className={`p-3 rounded-xl border text-center font-bold text-xs transition cursor-pointer flex flex-col items-center justify-center gap-1 ${
                         escolhaAtual === "EMPATE"
                           ? "bg-[#FF6B00] text-black border-[#FF6B00] shadow-md shadow-[#FF6B00]/30 scale-[1.02]"
@@ -5658,7 +5869,7 @@ export default function App() {
                     {/* 2: Visitante */}
                     <button
                       type="button"
-                      onClick={() => setEscolhasTemp({ ...escolhasTemp, [j.id]: "FORA" })}
+                      onClick={() => selecionarOpcaoJogo(j, "FORA")}
                       className={`p-3 rounded-xl border text-center font-bold text-xs transition cursor-pointer flex flex-col items-center justify-center gap-1 ${
                         escolhaAtual === "FORA"
                           ? "bg-[#FF6B00] text-black border-[#FF6B00] shadow-md shadow-[#FF6B00]/30 scale-[1.02]"
@@ -5684,7 +5895,7 @@ export default function App() {
                     setPage("loginJogador");
                     return;
                   }
-                  const jogosComPalpite = jogosPublicados.filter((j) => escolhasTemp[j.id]);
+                  const jogosComPalpite = jogosPublicados.filter((j) => Boolean(getEscolhaDoJogo(j)));
                   if (jogosComPalpite.length === 0) {
                     alert("Selecione seus palpites nos jogos da rodada antes de finalizar a aposta!");
                     return;

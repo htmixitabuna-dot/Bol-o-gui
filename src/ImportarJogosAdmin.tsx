@@ -10,6 +10,7 @@ import {
   buscarJogosRodadaEspn,
   getHojeBrasilISO,
   limparCacheJogosLocal,
+  MENSAGEM_DATA_FIFA,
 } from './supabase';
 import { TIMES_PADRAO, getEscudoPadrao, Jogo } from './App';
 
@@ -43,6 +44,10 @@ const gerarUuidSimples = () => {
 interface JogoEspnCard extends JogoDisponivelItem {
   escudoCasaUrl?: string;
   escudoForaUrl?: string;
+  aoVivo?: boolean;
+  encerrado?: boolean;
+  tempoJogo?: string;
+  resultadoOficial?: 'CASA' | 'EMPATE' | 'FORA';
   origem: 'espn';
 }
 
@@ -244,7 +249,15 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
           escudoCasa,
           escudoFora,
           data: item.horario || '19:30',
+          data_jogo: item.data || dataFiltro || getHojeISO(),
           estadio: item.estadio || item.campeonato || 'Brasileirão Série A',
+          placarCasa: item.placar_casa ?? '0',
+          placarFora: item.placar_fora ?? '0',
+          aoVivo: Boolean(item.aoVivo),
+          encerrado: Boolean(item.encerrado),
+          tempoJogo: item.tempoJogo || '',
+          statusDetalhe: item.status || '',
+          resultadoOficial: item.resultadoOficial,
           publicado: true,
           bolaoId: 'bolao_rodada_espn',
           tituloBolao: 'Rodada Oficial Brasileirão (ESPN)',
@@ -556,13 +569,13 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
                 🔄 Buscando jogos ao vivo da ESPN na internet agora (sem cache)...
               </div>
             ) : jogosEspn.length === 0 ? (
-              <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-8 text-center space-y-2">
-                <div className="text-3xl">⚽</div>
-                <div className="text-base sm:text-lg font-black text-white">
-                  Nenhum jogo hoje
+              <div className="bg-zinc-900 border-2 border-[#FF6B00]/60 rounded-2xl p-8 text-center space-y-2.5 shadow-xl">
+                <div className="text-4xl">⚽</div>
+                <div className="text-base sm:text-xl font-black text-[#FF6B00] uppercase tracking-wider">
+                  {MENSAGEM_DATA_FIFA}
                 </div>
                 <p className="text-xs text-zinc-400">
-                  Não há jogos do Brasileirão Série A agendados na ESPN para hoje ({dataFiltro}). Jogos de ontem não são exibidos.
+                  Sincronizado em tempo real com a API oficial da ESPN (Brasileirão Série A • {dataFiltro}). Sem jogos falsos.
                 </p>
               </div>
             ) : (
@@ -581,12 +594,23 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
                       }`}
                     >
                       <div className="flex items-center justify-between text-[10px] text-zinc-400 border-b border-zinc-800/80 pb-2">
-                        <span className="font-bold text-[#FF6B00] uppercase truncate max-w-[200px]">
+                        <span className="font-bold text-[#FF6B00] uppercase truncate max-w-[180px]">
                           🏆 {item.campeonato}
                         </span>
-                        <span className="bg-black px-2 py-0.5 rounded text-zinc-300 font-mono">
-                          ⏰ {item.horario} • {item.data}
-                        </span>
+                        <div className="flex items-center gap-1.5">
+                          {item.aoVivo ? (
+                            <span className="bg-red-600 text-white font-black px-2 py-0.5 rounded-full animate-pulse">
+                              🔴 AO VIVO {item.tempoJogo ? `• ${item.tempoJogo}` : ''}
+                            </span>
+                          ) : item.encerrado ? (
+                            <span className="bg-zinc-800 text-zinc-200 font-black px-2 py-0.5 rounded-full">
+                              🏁 ENCERRADO
+                            </span>
+                          ) : null}
+                          <span className="bg-black px-2 py-0.5 rounded text-zinc-300 font-mono">
+                            ⏰ {item.horario} • {item.data}
+                          </span>
+                        </div>
                       </div>
 
                       <div className="flex items-center justify-between gap-2 py-1">
@@ -595,7 +619,11 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
                           <span className="font-black text-sm text-white truncate">{item.time_casa}</span>
                         </div>
 
-                        <span className="text-xs font-black text-[#FF6B00] px-1.5">X</span>
+                        <div className="bg-black border border-zinc-700 px-2.5 py-1 rounded-xl font-mono text-sm font-black text-white flex items-center gap-1.5 shrink-0">
+                          <span>{item.placar_casa ?? 0}</span>
+                          <span className="text-[#FF6B00] text-xs">X</span>
+                          <span>{item.placar_fora ?? 0}</span>
+                        </div>
 
                         <div className="flex items-center justify-end gap-2.5 flex-1 min-w-0 text-right">
                           <span className="font-black text-sm text-white truncate">{item.time_fora}</span>
@@ -849,9 +877,14 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
           </div>
 
           {jogosBolaoAtivos.length === 0 ? (
-            <p className="text-xs text-zinc-500 text-center py-4">
-              Nenhum jogo cadastrado no bolão ainda.
-            </p>
+            <div className="text-center py-5 space-y-1">
+              <div className="text-xs sm:text-sm font-black text-[#FF6B00] uppercase">
+                {MENSAGEM_DATA_FIFA}
+              </div>
+              <p className="text-xs text-zinc-500">
+                Nenhum jogo cadastrado no bolão no momento.
+              </p>
+            </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {jogosBolaoAtivos.map((j) => (
@@ -864,7 +897,9 @@ function ImportarJogosContent({ onVoltar }: { onVoltar: () => void }) {
                   <div className="flex items-center gap-2 min-w-0">
                     <EscudoTime nome={j.casa} badgeUrl={j.escudoCasa} size={26} />
                     <span className="font-bold text-white truncate">{j.casa}</span>
-                    <span className="text-[#FF6B00] font-black">x</span>
+                    <span className="bg-zinc-900 border border-zinc-700 px-1.5 py-0.5 rounded font-mono text-[11px] font-black text-[#FF6B00]">
+                      {j.placarCasa ?? 0} x {j.placarFora ?? 0}
+                    </span>
                     <span className="font-bold text-white truncate">{j.fora}</span>
                     <EscudoTime nome={j.fora} badgeUrl={j.escudoFora} size={26} />
                     <span

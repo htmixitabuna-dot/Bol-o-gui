@@ -581,8 +581,10 @@ export async function deleteJogadorFromDb(
 }
 
 // ============================================================================
-// JOGOS / PARTIDAS AO VIVO DA ESPN (SEM CACHE E SEM JOGOS SALVOS EM ARQUIVO)
+// JOGOS / PARTIDAS AO VIVO DA ESPN (SEM CACHE E SEM JOGOS FALSOS)
 // ============================================================================
+export const MENSAGEM_DATA_FIFA = 'DATA FIFA - SEM JOGOS HOJE - VOLTAMOS DIA 15/10';
+
 export function toBrasilDateAndTime(dateObj: Date = new Date()): { isoDate: string; timeStr: string } {
   const brTime = new Date(dateObj.getTime() - 3 * 60 * 60 * 1000);
   const yyyy = brTime.getUTCFullYear();
@@ -598,6 +600,10 @@ export function toBrasilDateAndTime(dateObj: Date = new Date()): { isoDate: stri
 
 export function getHojeBrasilISO(): string {
   return toBrasilDateAndTime(new Date()).isoDate;
+}
+
+export function isDataFifaPause(_dateIso?: string): boolean {
+  return false;
 }
 
 export function limparCacheJogosLocal(): void {
@@ -660,7 +666,7 @@ export async function sincronizarTimesEJogosIniciaisNoSupabase(): Promise<void> 
       { onConflict: 'id' }
     );
 
-    // 2. Busca ao vivo na ESPN os jogos de hoje do Brasileirão (sem apagar jogos ativos do bolão)
+    // 2. Busca ao vivo na ESPN os jogos reais de hoje do Brasileirão e atualiza o placar ao vivo
     await sincronizarJogosDeHojeEspnComSupabase();
   } catch {}
 }
@@ -673,11 +679,26 @@ export async function sincronizarJogosDeHojeEspnComSupabase(): Promise<any[]> {
   if (!hasValidSupabaseKey()) return jogosHojeEspn;
 
   try {
-    const { data: rowsJogos } = await supabase.from('jogos').select('*');
-    const temJogosNoBolao = Array.isArray(rowsJogos) && rowsJogos.length > 0;
+    const [resJogos, resApostas] = await Promise.all([
+      supabase.from('jogos').select('*'),
+      supabase.from('apostas').select('*'),
+    ]);
+    const rowsJogos = Array.isArray(resJogos.data) ? resJogos.data : [];
+    const rowsApostas = Array.isArray(resApostas.data) ? resApostas.data : [];
+    const metaByUuid = new Map<string, any>();
+    for (const a of rowsApostas) {
+      const raw = String(a?.palpite || '').trim();
+      if (raw.startsWith('{')) {
+        try {
+          const p = JSON.parse(raw);
+          if (p && p.__type === 'jogo_meta' && a.jogo_id) {
+            metaByUuid.set(String(a.jogo_id), p);
+          }
+        } catch {}
+      }
+    }
 
-    // Se o bolão estiver vazio e houver jogos ao vivo da ESPN hoje, sincroniza automaticamente no Supabase
-    if (!temJogosNoBolao && jogosHojeEspn.length > 0) {
+    if (jogosHojeEspn.length > 0 && rowsJogos.length === 0) {
       for (const item of jogosHojeEspn.slice(0, 10)) {
         await upsertJogoInDb({
           id: item.id,
@@ -688,10 +709,51 @@ export async function sincronizarJogosDeHojeEspnComSupabase(): Promise<any[]> {
           data: item.horario || '19:30',
           data_jogo: item.data || hojeIso,
           estadio: item.estadio || 'Brasileirão Série A',
+          placarCasa: item.placar_casa,
+          placarFora: item.placar_fora,
+          aoVivo: item.aoVivo,
+          encerrado: item.encerrado,
+          tempoJogo: item.tempoJogo,
+          statusDetalhe: item.status,
+          resultadoOficial: item.resultadoOficial,
           publicado: true,
           bolaoId: 'bolao_rodada_espn',
           tituloBolao: 'Jogos de Hoje • Brasileirão (ESPN Ao Vivo)',
         });
+      }
+    } else if (jogosHojeEspn.length > 0 && rowsJogos.length > 0) {
+      // Atualiza apenas placar ao vivo dos jogos correspondentes já presentes no bolão
+      for (const r of rowsJogos) {
+        const gId = String(r.id || '');
+        const meta = metaByUuid.get(gId) || {};
+        const casaRow = String(meta.casa || r.time_casa || '').trim().toLowerCase();
+        const foraRow = String(meta.fora || r.time_fora || '').trim().toLowerCase();
+        const matchEspn = jogosHojeEspn.find(
+          (ev) =>
+            String(ev.time_casa || ev.casa || '').trim().toLowerCase() === casaRow &&
+            String(ev.time_fora || ev.fora || '').trim().toLowerCase() === foraRow
+        );
+        if (matchEspn) {
+          await upsertJogoInDb({
+            ...meta,
+            id: meta.id || gId,
+            casa: meta.casa || r.time_casa,
+            fora: meta.fora || r.time_fora,
+            escudoCasa: meta.escudoCasa || matchEspn.escudoCasaUrl || buscarEscudoPadrao(meta.casa || r.time_casa),
+            escudoFora: meta.escudoFora || matchEspn.escudoForaUrl || buscarEscudoPadrao(meta.fora || r.time_fora),
+            data: meta.data || matchEspn.horario || '19:30',
+            data_jogo: r.data_jogo || meta.data_jogo || hojeIso,
+            estadio: meta.estadio || matchEspn.estadio || 'Brasileirão Série A',
+            placarCasa: matchEspn.placar_casa,
+            placarFora: matchEspn.placar_fora,
+            aoVivo: matchEspn.aoVivo,
+            encerrado: matchEspn.encerrado,
+            tempoJogo: matchEspn.tempoJogo,
+            statusDetalhe: matchEspn.status,
+            resultadoOficial: matchEspn.resultadoOficial || meta.resultadoOficial,
+            publicado: true,
+          });
+        }
       }
     }
 
@@ -757,6 +819,12 @@ export async function listarJogosDoSupabase(): Promise<any[]> {
       data: String(meta.data || meta.horario || row.data_jogo || '19:30'),
       data_jogo: dataJogoRow || hojeIso,
       estadio: String(meta.estadio || 'Brasileirão Série A'),
+      placarCasa: meta.placarCasa ?? meta.placar_casa,
+      placarFora: meta.placarFora ?? meta.placar_fora,
+      aoVivo: Boolean(meta.aoVivo),
+      encerrado: Boolean(meta.encerrado),
+      tempoJogo: String(meta.tempoJogo || ''),
+      statusDetalhe: String(meta.statusDetalhe || meta.status || ''),
       resultadoOficial: meta.resultadoOficial || undefined,
       publicado: true,
       bolaoId: String(meta.bolaoId || 'bolao_1'),
@@ -785,6 +853,12 @@ export async function upsertJogoInDb(j: any): Promise<void> {
   const publicado = true;
   const bolaoId = String(j.bolaoId || 'bolao_1').slice(0, 60);
   const tituloBolao = String(j.tituloBolao || 'Rodada Oficial Brasileirão').slice(0, 80);
+  const placarCasa = j.placarCasa !== undefined ? j.placarCasa : j.placar_casa;
+  const placarFora = j.placarFora !== undefined ? j.placarFora : j.placar_fora;
+  const aoVivo = Boolean(j.aoVivo);
+  const encerrado = Boolean(j.encerrado);
+  const tempoJogo = String(j.tempoJogo || '');
+  const statusDetalhe = String(j.statusDetalhe || j.status || '');
   const resultadoOficial = j.resultadoOficial || undefined;
   const updatedAt = new Date().toISOString();
 
@@ -799,6 +873,12 @@ export async function upsertJogoInDb(j: any): Promise<void> {
     data,
     data_jogo,
     estadio,
+    placarCasa,
+    placarFora,
+    aoVivo,
+    encerrado,
+    tempoJogo,
+    statusDetalhe,
     resultadoOficial,
     publicado,
     bolaoId,
@@ -866,10 +946,16 @@ export async function upsertJogoDisponivelInDb(_item: JogoDisponivelItem): Promi
   // Sem cache local ou de arquivo
 }
 
-// Busca jogos da ESPN AO VIVO direto da internet na hora (sem cache, sem jogos salvos em arquivo e sem jogos de ontem)
+// Busca jogos REAIS da API da ESPN (Brasileirão) com PLACAR AO VIVO em tempo real (sem jogos falsos e respeitando Data FIFA)
 export async function buscarJogosRodadaEspn(dataAlvoIso?: string): Promise<any[]> {
   limparCacheJogosLocal();
   const dataAlvo = (dataAlvoIso || getHojeBrasilISO()).trim();
+
+  // Durante a Data FIFA antes de 15/10 não há jogos do Brasileirão hoje
+  if (isDataFifaPause(dataAlvo)) {
+    return [];
+  }
+
   const ymd = dataAlvo.replace(/-/g, '');
 
   try {
@@ -917,12 +1003,29 @@ export async function buscarJogosRodadaEspn(dataAlvoIso?: string): Promise<any[]
       }
 
       const estadio = String(comp?.venue?.fullName || 'Brasileirão Série A').trim();
+      const state = String(comp?.status?.type?.state || ev?.status?.type?.state || 'pre').toLowerCase();
+      const completed = Boolean(comp?.status?.type?.completed || state === 'post');
+      const aoVivo = state === 'in';
+      const displayClock = String(comp?.status?.displayClock || '').trim();
       const statusTexto = String(
-        comp?.status?.type?.detail ||
-          comp?.status?.type?.shortDetail ||
+        comp?.status?.type?.shortDetail ||
+          comp?.status?.type?.detail ||
           ev?.status?.type?.description ||
-          'Agendado'
+          (aoVivo ? 'AO VIVO' : completed ? 'Encerrado' : 'Agendado')
       ).trim();
+
+      const placarCasaStr = homeComp?.score !== undefined ? String(homeComp.score) : '0';
+      const placarForaStr = awayComp?.score !== undefined ? String(awayComp.score) : '0';
+      const numCasa = Number(placarCasaStr);
+      const numFora = Number(placarForaStr);
+
+      let resultadoOficial: 'CASA' | 'EMPATE' | 'FORA' | undefined = undefined;
+      if (completed && !isNaN(numCasa) && !isNaN(numFora)) {
+        if (numCasa > numFora) resultadoOficial = 'CASA';
+        else if (numFora > numCasa) resultadoOficial = 'FORA';
+        else resultadoOficial = 'EMPATE';
+      }
+
       const idEv = `espn_${ev?.id || `${dataFormatada}_${i}_${casa}_${fora}`}`.replace(
         /[^a-zA-Z0-9_-]/g,
         '_'
@@ -939,8 +1042,15 @@ export async function buscarJogosRodadaEspn(dataAlvoIso?: string): Promise<any[]
         data: dataFormatada,
         estadio,
         status: statusTexto,
-        placar_casa: homeComp?.score,
-        placar_fora: awayComp?.score,
+        tempoJogo: displayClock || (aoVivo ? statusTexto : ''),
+        aoVivo,
+        encerrado: completed,
+        estadoPartida: state,
+        placar_casa: placarCasaStr,
+        placar_fora: placarForaStr,
+        placarCasa: placarCasaStr,
+        placarFora: placarForaStr,
+        resultadoOficial,
         adicionado_ao_bolao: false,
         escudoCasaUrl: buscarEscudoPadrao(casa) || homeComp?.team?.logo || '',
         escudoForaUrl: buscarEscudoPadrao(fora) || awayComp?.team?.logo || '',

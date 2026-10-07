@@ -5,10 +5,12 @@ import { BOLAO_ELITE_ICON_DATA_URL } from './src/pwaIconDataUrl'
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
-  const supabaseUrl =
+  const rawUrl =
     env.NEXT_PUBLIC_SUPABASE_URL ||
     process.env.NEXT_PUBLIC_SUPABASE_URL ||
-    'https://slaqxbccectdgmlokjos.supabase.co'
+    'slaqxbccectdgmlokjos.supabase.co'
+  const normalizedHost = rawUrl.replace(/slaq[a-z]*lokjos\.supabase\.co/i, 'slaqxbccectdgmlokjos.supabase.co').trim()
+  const supabaseUrl = /^https?:\/\//i.test(normalizedHost) ? normalizedHost : `https://${normalizedHost}`
   const supabaseAnonKey =
     env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
