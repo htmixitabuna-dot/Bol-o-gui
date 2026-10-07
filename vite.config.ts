@@ -8,19 +8,33 @@ export default defineConfig(({ mode }) => {
   const rawUrl =
     env.NEXT_PUBLIC_SUPABASE_URL ||
     process.env.NEXT_PUBLIC_SUPABASE_URL ||
-    'slaqxbccectdgmlokjos.supabase.co'
-  const normalizedHost = rawUrl.replace(/slaq[a-z]*lokjos\.supabase\.co/i, 'slaqxbccectdgmlokjos.supabase.co').trim()
+    'https://slaqxbccectdgmlokjos.supabase.co'
+  const normalizedHost = rawUrl
+    .replace(/slaq[a-z]*lokjos\.supabase\.co/i, 'slaqxbccectdgmlokjos.supabase.co')
+    .replace(/\/rest\/v1\/?.*$/i, '')
+    .replace(/\/+$/, '')
+    .trim()
   const supabaseUrl = /^https?:\/\//i.test(normalizedHost) ? normalizedHost : `https://${normalizedHost}`
-  const supabaseAnonKey =
+  const rawAnonKey = (
     env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
     'sb_publishable_Tqbx1xWWObM_PYo9A8Lwzg_HP4Q5M1Y'
+  ).trim()
+  const supabaseAnonKey = rawAnonKey.startsWith('sb_secret_')
+    ? 'sb_publishable_Tqbx1xWWObM_PYo9A8Lwzg_HP4Q5M1Y'
+    : rawAnonKey || 'sb_publishable_Tqbx1xWWObM_PYo9A8Lwzg_HP4Q5M1Y'
+  const supabaseSecretKey =
+    env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    'sb_secret_eoy7344Q4e7XqhFDPf5ayg_DI1D2iT2'
 
   return {
-    envPrefix: ['NEXT_PUBLIC_'],
+    envPrefix: ['NEXT_PUBLIC_', 'SUPABASE_'],
     define: {
       'process.env.NEXT_PUBLIC_SUPABASE_URL': JSON.stringify(supabaseUrl),
+      'process.env.SUPABASE_REST_URL': JSON.stringify(`${supabaseUrl}/rest/v1/`),
       'process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY': JSON.stringify(supabaseAnonKey),
+      'process.env.SUPABASE_SERVICE_ROLE_KEY': JSON.stringify(supabaseSecretKey),
     },
     plugins: [
       react(),

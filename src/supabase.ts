@@ -5,25 +5,46 @@ const envMeta: Record<string, any> =
 const envProc: Record<string, any> =
   typeof process !== 'undefined' && process.env ? process.env : {};
 
+export const SUPABASE_REST_URL = 'https://slaqxbccectdgmlokjos.supabase.co/rest/v1/';
+export const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_Tqbx1xWWObM_PYo9A8Lwzg_HP4Q5M1Y';
+export const SUPABASE_SECRET_KEY = 'sb_secret_eoy7344Q4e7XqhFDPf5ayg_DI1D2iT2';
+
 export function normalizeSupabaseUrl(raw: string): string {
   let u = String(raw || 'https://slaqxbccectdgmlokjos.supabase.co').trim();
   u = u.replace(/slaq[a-z]*lokjos\.supabase\.co/i, 'slaqxbccectdgmlokjos.supabase.co');
+  // Remove /rest/v1/ caso tenha sido informado na URL base para evitar /rest/v1/rest/v1 no cliente Supabase
+  u = u.replace(/\/rest\/v1\/?.*$/i, '');
   if (!/^https?:\/\//i.test(u)) {
     u = `https://${u}`;
   }
   return u.replace(/\/+$/, '');
 }
 
+export function normalizeSupabaseAnonKey(raw: string): string {
+  const k = String(raw || '').trim();
+  // O navegador exige a chave publishable (chaves sb_secret_ retornam 401 no browser)
+  if (!k || k === 'sb-anon-key-placeholder' || k.startsWith('sb_secret_') || k.startsWith('http')) {
+    return SUPABASE_PUBLISHABLE_KEY;
+  }
+  return k;
+}
+
 export let NEXT_PUBLIC_SUPABASE_URL: string = normalizeSupabaseUrl(
   envMeta.NEXT_PUBLIC_SUPABASE_URL ||
     envProc.NEXT_PUBLIC_SUPABASE_URL ||
-    'https://slaqxbccectdgmlokjos.supabase.co'
+    SUPABASE_REST_URL
 );
 
-export let NEXT_PUBLIC_SUPABASE_ANON_KEY: string =
+export let NEXT_PUBLIC_SUPABASE_ANON_KEY: string = normalizeSupabaseAnonKey(
   envMeta.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-  envProc.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-  'sb_publishable_Tqbx1xWWObM_PYo9A8Lwzg_HP4Q5M1Y';
+    envProc.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+    SUPABASE_PUBLISHABLE_KEY
+);
+
+export let SUPABASE_SERVICE_ROLE_KEY: string =
+  envMeta.SUPABASE_SERVICE_ROLE_KEY ||
+  envProc.SUPABASE_SERVICE_ROLE_KEY ||
+  SUPABASE_SECRET_KEY;
 
 export let supabase: SupabaseClient = createClient(
   NEXT_PUBLIC_SUPABASE_URL,
