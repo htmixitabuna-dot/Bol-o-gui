@@ -527,11 +527,11 @@ export async function listarUsuariosDoSupabase(): Promise<any[]> {
         : compDoc.statusPagamento || norm.statusPagamento || 'EM_ANALISE';
     return {
       ...norm,
-      comprovante: norm.comprovante || compDoc.comprovante,
+      comprovante: compDoc.comprovante || norm.comprovante,
       timestampComprovante: tsComp,
-      dataEnvioComprovante: norm.dataEnvioComprovante || compDoc.dataEnvioComprovante || 'Recente',
+      dataEnvioComprovante: compDoc.dataEnvioComprovante || norm.dataEnvioComprovante || 'Recente',
       statusPagamento: statusComp,
-      bolaoPagoId: norm.bolaoPagoId || compDoc.bolaoPagoId || '',
+      bolaoPagoId: compDoc.bolaoPagoId || norm.bolaoPagoId || '',
     };
   };
 
@@ -542,14 +542,14 @@ export async function listarUsuariosDoSupabase(): Promise<any[]> {
     const pId = String(p?.id || '');
     const pEmail = String(p?.email || '').trim().toLowerCase();
     const matchedJ =
-      (pId && jogadoresById.get(pId)) ||
       (pEmail && jogadoresByEmail.get(pEmail)) ||
+      (pId && jogadoresById.get(pId)) ||
       undefined;
     if (matchedJ?.id) usedJogadorIds.add(String(matchedJ.id));
 
     const norm = aplicarComprovanteSalvo(normalizarLinhaUsuarioSupabase(p, matchedJ));
     if (!norm || !norm.email) continue;
-    if (deletedSet.has(norm.email)) continue;
+    if (deletedSet.has(norm.email) && !norm.comprovante) continue;
     mapaUsuarios.set(norm.email, norm);
   }
 
@@ -557,7 +557,7 @@ export async function listarUsuariosDoSupabase(): Promise<any[]> {
     if (j?.id && usedJogadorIds.has(String(j.id))) continue;
     const norm = aplicarComprovanteSalvo(normalizarLinhaUsuarioSupabase(null, j));
     if (!norm || !norm.email) continue;
-    if (deletedSet.has(norm.email)) continue;
+    if (deletedSet.has(norm.email) && !norm.comprovante) continue;
     if (!mapaUsuarios.has(norm.email)) {
       mapaUsuarios.set(norm.email, norm);
     }
@@ -565,7 +565,6 @@ export async function listarUsuariosDoSupabase(): Promise<any[]> {
 
   // Garante que qualquer jogador que tenha enviado comprovante em apostas apareça na lista do ADM mesmo se não estiver em profiles
   for (const [em, compDoc] of comprovantesByEmail.entries()) {
-    if (deletedSet.has(em)) continue;
     if (!mapaUsuarios.has(em)) {
       const uid = stringToUuid(em);
       mapaUsuarios.set(em, {
@@ -678,64 +677,55 @@ export async function upsertJogadorInDb(j: any, _isNovo?: boolean): Promise<void
 
   const compPagamentoUuid = stringToUuid(`comprovante_pag_${email}`);
 
-  const operacoes: Promise<any>[] = [
-    Promise.resolve(
-      supabase.from('profiles').upsert(
-        {
-          id: uuid,
-          nome,
-          email,
-          telefone,
-        },
-        { onConflict: 'id' }
-      )
-    ),
-    Promise.resolve(
-      supabase.from('jogadores').upsert(
-        {
-          id: uuid,
-          nome,
-          whatsapp: pix || telefone || email || '00000000000',
-          pagou,
-          time_coracao: JSON.stringify(fullMeta),
-        },
-        { onConflict: 'id' }
-      )
-    ),
-  ];
-
+  // 1. Grava primeiro o comprovante e a linha em jogadores para que quando o Realtime disparar já esteja 100% disponível
   if (j.removerComprovante === true) {
-    operacoes.push(Promise.resolve(supabase.from('apostas').delete().eq('id', compPagamentoUuid)));
+    await supabase.from('apostas').delete().eq('id', compPagamentoUuid);
   } else if (j.comprovante) {
-    operacoes.push(
-      Promise.resolve(
-        supabase.from('apostas').upsert(
-          {
-            id: compPagamentoUuid,
-            user_id: null,
-            jogo_id: null,
-            palpite: JSON.stringify({
-              __type: 'comprovante_pagamento_jogador',
-              email,
-              nome,
-              pix,
-              telefone,
-              comprovante: j.comprovante,
-              timestampComprovante: j.timestampComprovante || Date.now(),
-              dataEnvioComprovante: j.dataEnvioComprovante || 'Recente',
-              statusPagamento,
-              bolaoPagoId,
-              updatedAt: new Date().toISOString(),
-            }),
-          },
-          { onConflict: 'id' }
-        )
-      )
+    await supabase.from('apostas').upsert(
+      {
+        id: compPagamentoUuid,
+        user_id: null,
+        jogo_id: null,
+        palpite: JSON.stringify({
+          __type: 'comprovante_pagamento_jogador',
+          email,
+          nome,
+          pix,
+          telefone,
+          comprovante: j.comprovante,
+          timestampComprovante: j.timestampComprovante || Date.now(),
+          dataEnvioComprovante: j.dataEnvioComprovante || 'Recente',
+          statusPagamento,
+          bolaoPagoId,
+          updatedAt: new Date().toISOString(),
+        }),
+      },
+      { onConflict: 'id' }
     );
   }
 
-  await Promise.all(operacoes);
+  await supabase.from('jogadores').upsert(
+    {
+      id: uuid,
+      nome,
+      whatsapp: pix || telefone || email || '00000000000',
+      pagou,
+      time_coracao: JSON.stringify(fullMeta),
+    },
+    { onConflict: 'id' }
+  );
 
+  await supabase.from('profiles').upsert(
+    {
+      id: uuid,
+      nome,
+      email,
+      telefone,
+    },
+    { onConflict: 'id' }
+  );
+
+  pollingPausedUntil = 0;
   triggerListenersForCollection('jogadores');
 }
 
@@ -1975,6 +1965,11 @@ type ListenerEntry = {
 const activeListeners = new Set<ListenerEntry>();
 let realtimeChannel: RealtimeChannel | null = null;
 let pollingIntervalId: any = null;
+let pollingPausedUntil = 0;
+
+export function pausarPollingTemporariamente(ms = 25000): void {
+  pollingPausedUntil = Date.now() + ms;
+}
 
 async function notifyListener(entry: ListenerEntry): Promise<void> {
   try {
@@ -2031,6 +2026,7 @@ export function triggerAllListeners(): void {
 function ensureRealtimeAndPolling(): void {
   if (!pollingIntervalId && typeof window !== 'undefined') {
     pollingIntervalId = window.setInterval(() => {
+      if (Date.now() < pollingPausedUntil) return;
       if (activeListeners.size > 0) {
         triggerAllListeners();
       }
@@ -2042,6 +2038,7 @@ function ensureRealtimeAndPolling(): void {
       realtimeChannel = supabase
         .channel('bolao-elite-realtime')
         .on('postgres_changes', { event: '*', schema: 'public' }, () => {
+          if (Date.now() < pollingPausedUntil) return;
           triggerAllListeners();
         })
         .subscribe();
@@ -2066,8 +2063,8 @@ export function onSnapshot(
 
 export async function compressImageToDataUrl(
   file: File,
-  maxWidth = 900,
-  quality = 0.72
+  maxWidth = 680,
+  quality = 0.65
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -2096,8 +2093,24 @@ export async function compressImageToDataUrl(
             resolve(resultStr);
             return;
           }
+          ctx.fillStyle = '#FFFFFF';
+          ctx.fillRect(0, 0, width, height);
           ctx.drawImage(img, 0, 0, width, height);
-          const compressed = canvas.toDataURL('image/jpeg', quality);
+          let compressed = canvas.toDataURL('image/jpeg', quality);
+          if (compressed.length > 140000) {
+            const w2 = Math.min(width, 480);
+            const h2 = Math.round((height * w2) / width);
+            const c2 = document.createElement('canvas');
+            c2.width = w2;
+            c2.height = h2;
+            const ctx2 = c2.getContext('2d');
+            if (ctx2) {
+              ctx2.fillStyle = '#FFFFFF';
+              ctx2.fillRect(0, 0, w2, h2);
+              ctx2.drawImage(img, 0, 0, w2, h2);
+              compressed = c2.toDataURL('image/jpeg', 0.55);
+            }
+          }
           resolve(compressed.length < resultStr.length ? compressed : resultStr);
         } catch {
           resolve(resultStr);

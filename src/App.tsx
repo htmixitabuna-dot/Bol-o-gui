@@ -41,6 +41,7 @@ import {
   sincronizarIntegridadeCompletaNoSupabase,
   resetarPagamentosDaRodadaNoSupabase,
   compressImageToDataUrl,
+  pausarPollingTemporariamente,
   buscarJogosRodadaEspn,
   sincronizarTimesEJogosIniciaisNoSupabase,
   sincronizarJogosDeHojeEspnComSupabase,
@@ -382,6 +383,50 @@ export default function App() {
   const [enviandoComprovantePremiacao, setEnviandoComprovantePremiacao] = useState(false);
   const [modalTransparenciaAberto, setModalTransparenciaAberto] = useState(false);
   const [comprovantePremiacaoZoom, setComprovantePremiacaoZoom] = useState<ComprovantePremiacaoItem | null>(null);
+  const inputComprovanteGlobalRef = useRef<HTMLInputElement | null>(null);
+
+  const safeSetLocalStorage = (key: string, value: string) => {
+    try {
+      localStorage.setItem(key, value);
+    } catch {
+      if (key === "elite_jogadores_v11") {
+        try {
+          const parsed = JSON.parse(value);
+          if (Array.isArray(parsed)) {
+            const leve = parsed.map((jg: any) => ({
+              ...jg,
+              comprovante: undefined,
+            }));
+            localStorage.setItem(key, JSON.stringify(leve));
+          }
+        } catch {}
+      }
+    }
+  };
+
+  const abrirSeletorComprovante = () => {
+    pausarPollingTemporariamente(25000);
+    if (inputComprovanteGlobalRef.current) {
+      inputComprovanteGlobalRef.current.value = "";
+      inputComprovanteGlobalRef.current.click();
+    }
+  };
+
+  const inputComprovantePersistenteEl = (
+    <input
+      ref={inputComprovanteGlobalRef}
+      type="file"
+      accept="image/*"
+      className="hidden"
+      onChange={(e) => {
+        const file = e.target.files?.[0];
+        if (file) {
+          handleUploadComprovanteApi(file);
+          e.target.value = "";
+        }
+      }}
+    />
+  );
 
   // Menu Lateral ADM & Histórico de Ranking Automático (Somente Top 3 + Dados da Partida por Bolão Rodado)
   const [historicoRankings, setHistoricoRankings] = useState<HistoricoRankingBolaoItem[]>(() => {
@@ -460,7 +505,7 @@ export default function App() {
           });
         setJogadores(limposJd);
         if (alterouJd) {
-          localStorage.setItem("elite_jogadores_v11", JSON.stringify(limposJd));
+          safeSetLocalStorage("elite_jogadores_v11", JSON.stringify(limposJd));
         }
       }
 
@@ -500,7 +545,7 @@ export default function App() {
             parsedU.comprovante = undefined;
             parsedU.timestampComprovante = undefined;
             parsedU.dataEnvioComprovante = undefined;
-            localStorage.setItem("elite_user_v11", JSON.stringify(parsedU));
+            safeSetLocalStorage("elite_user_v11", JSON.stringify(parsedU));
           }
           setUser(parsedU);
           syncAuthCurrentUser(parsedU);
@@ -508,15 +553,15 @@ export default function App() {
       }
       if (l) setLogoBolao(l);
     } catch {
-      localStorage.clear();
+      // ignora erro de parse sem apagar sessão do usuário
     }
 
-    const agoraMs = Date.now();
     const TRES_DIAS_MS = 3 * 24 * 60 * 60 * 1000;
 
     const unsubJogadores = onSnapshot(
       collection(db, "jogadores"),
       (snapshot) => {
+        const agoraMs = Date.now();
         setDbConectado(true);
         const listaDb: any[] = [];
         snapshot.forEach((docSnap) => {
@@ -553,7 +598,7 @@ export default function App() {
               loc?.comprovante &&
               !rem.comprovante &&
               loc.timestampComprovante &&
-              Date.now() - Number(loc.timestampComprovante) < 60000
+              Date.now() - Number(loc.timestampComprovante) < 300000
             ) {
               return {
                 ...rem,
@@ -576,7 +621,7 @@ export default function App() {
             return true;
           });
           const combinada = [...listaDbMesclada, ...locaisNaoSincronizados];
-          localStorage.setItem("elite_jogadores_v11", JSON.stringify(combinada));
+          safeSetLocalStorage("elite_jogadores_v11", JSON.stringify(combinada));
           return combinada;
         });
 
@@ -596,7 +641,7 @@ export default function App() {
               prevUser.comprovante &&
               !atualizado.comprovante &&
               prevUser.timestampComprovante &&
-              Date.now() - Number(prevUser.timestampComprovante) < 60000
+              Date.now() - Number(prevUser.timestampComprovante) < 300000
                 ? {
                     ...atualizado,
                     comprovante: prevUser.comprovante,
@@ -606,7 +651,7 @@ export default function App() {
                     bolaoPagoId: prevUser.bolaoPagoId || atualizado.bolaoPagoId,
                   }
                 : atualizado;
-            localStorage.setItem("elite_user_v11", JSON.stringify(mescladoUser));
+            safeSetLocalStorage("elite_user_v11", JSON.stringify(mescladoUser));
             return mescladoUser;
           }
           return prevUser;
@@ -805,6 +850,55 @@ export default function App() {
       unsubHistoricoRankings();
     };
   }, []);
+
+  // Sincronização ativa de comprovantes e jogadores quando o ADM ou Jogador alterna de tela
+  useEffect(() => {
+    let ativo = true;
+    const sincronizarAgora = async () => {
+      try {
+        const lista = await listarUsuariosDoSupabase();
+        if (!ativo || !Array.isArray(lista) || lista.length === 0) return;
+        setJogadores((prevLocal) => {
+          const prevMap = new Map<string, any>();
+          prevLocal.forEach((loc) => {
+            const em = (loc.email || "").trim().toLowerCase();
+            if (em) prevMap.set(em, loc);
+          });
+          const mesclada = lista.map((rem) => {
+            const em = (rem.email || "").trim().toLowerCase();
+            const loc = prevMap.get(em);
+            if (
+              loc?.comprovante &&
+              !rem.comprovante &&
+              loc.timestampComprovante &&
+              Date.now() - Number(loc.timestampComprovante) < 300000
+            ) {
+              return {
+                ...rem,
+                comprovante: loc.comprovante,
+                timestampComprovante: loc.timestampComprovante,
+                dataEnvioComprovante: loc.dataEnvioComprovante,
+                statusPagamento: loc.statusPagamento || "EM_ANALISE",
+                bolaoPagoId: loc.bolaoPagoId || rem.bolaoPagoId,
+              };
+            }
+            return rem;
+          });
+          safeSetLocalStorage("elite_jogadores_v11", JSON.stringify(mesclada));
+          return mesclada;
+        });
+      } catch {
+        // ignore
+      }
+    };
+
+    sincronizarAgora();
+    const timer = setInterval(sincronizarAgora, 4000);
+    return () => {
+      ativo = false;
+      clearInterval(timer);
+    };
+  }, [page]);
 
   // Busca ao vivo os jogos de hoje na ESPN ao abrir a página e sincroniza os jogos ativos do Bolão no Supabase a cada 1 minuto (60.000 ms), sem cache
   const atualizarJogosEspnAoVivo = async () => {
@@ -1161,21 +1255,34 @@ export default function App() {
 
   const handleUploadComprovanteApi = async (file: File | undefined) => {
     if (!file) return;
-    if (file.size > 5 * 1024 * 1024) {
-      alert("Imagem muito grande, use arquivo até 5MB!");
+    if (file.size > 15 * 1024 * 1024) {
+      alert("Imagem muito grande, use arquivo até 15MB!");
       return;
     }
-    if (!user || !user.email) {
+
+    let usuarioAtivo = user;
+    if (!usuarioAtivo || !usuarioAtivo.email) {
+      try {
+        const salvo = localStorage.getItem("elite_user_v11");
+        if (salvo) {
+          usuarioAtivo = JSON.parse(salvo);
+          if (usuarioAtivo?.email) setUser(usuarioAtivo);
+        }
+      } catch {}
+    }
+
+    if (!usuarioAtivo || !usuarioAtivo.email) {
       alert("Faça login ou cadastre-se para enviar seu comprovante de pagamento!");
       setPage("loginJogador");
       return;
     }
 
+    pausarPollingTemporariamente(15000);
     setEnviandoComprovantePix(true);
     try {
       let comprovanteBase64 = "";
       try {
-        comprovanteBase64 = await compressImageToDataUrl(file, 800, 0.7);
+        comprovanteBase64 = await compressImageToDataUrl(file, 650, 0.68);
       } catch {
         comprovanteBase64 = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
@@ -1185,7 +1292,11 @@ export default function App() {
         });
       }
 
-      const usuarioAtivo = user;
+      if (!comprovanteBase64) {
+        alert("Não foi possível ler a imagem do comprovante. Tente outra foto ou print.");
+        return;
+      }
+
       const emailJogador = (usuarioAtivo.email || "").trim().toLowerCase();
       const nomeJogador = (usuarioAtivo.nome || "Jogador").trim();
       const jogadorId = usuarioAtivo.id || getJogadorDocId(emailJogador);
@@ -1209,8 +1320,11 @@ export default function App() {
       }).catch(() => {});
 
       setComprovanteEnviadoAviso(true);
-      setTimeout(() => setComprovanteEnviadoAviso(false), 6000);
-      alert("✅ Comprovante enviado com sucesso para conferência na área do ADM!");
+      setTimeout(() => setComprovanteEnviadoAviso(false), 10000);
+      alert("✅ Comprovante enviado com sucesso! Ele já está disponível na área do ADM para conferência.");
+    } catch (err) {
+      console.error("Erro ao enviar comprovante:", err);
+      alert("⚠️ Ocorreu um erro ao enviar a imagem. Tente novamente com um print da tela.");
     } finally {
       setEnviandoComprovantePix(false);
     }
@@ -1569,9 +1683,12 @@ export default function App() {
   };
 
   const aprovarPagamento = (email: string) => {
+    const emailAlvo = (email || "").trim().toLowerCase();
+    if (!emailAlvo) return;
+
     // 1. Marca todos os palpites do jogador como pagos no bolão atual
     const palpitesAtualizados = palpites.map((p: any) => {
-      if (p.jogadorEmail === email) {
+      if ((p.jogadorEmail || "").trim().toLowerCase() === emailAlvo) {
         const nextP = { ...p, pago: true, bolaoPagoId: cicloBolaoAtivoId };
         upsertPalpiteInDb(nextP).catch(() => {});
         return nextP;
@@ -1579,13 +1696,14 @@ export default function App() {
       return p;
     });
     setPalpites(palpitesAtualizados);
-    localStorage.setItem("elite_palpites_v11", JSON.stringify(palpitesAtualizados));
+    safeSetLocalStorage("elite_palpites_v11", JSON.stringify(palpitesAtualizados));
 
     // 2. Atualiza o status do jogador para APROVADO vinculado ao bolão atual
     const horaAprovacao = new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
     const valorCotaAprov = Number(config.valorCota ?? config.valor) || 10;
+    let jogadorAprovadoObj: any = null;
     const jogadoresAtualizados = jogadores.map((jg: any) => {
-      if (jg.email === email) {
+      if ((jg.email || "").trim().toLowerCase() === emailAlvo) {
         const nextJg = {
           ...jg,
           pagou: true,
@@ -1597,16 +1715,18 @@ export default function App() {
           valorPago: valorCotaAprov,
           timestampDeposito: Date.now(),
         };
+        jogadorAprovadoObj = nextJg;
         upsertJogadorInDb(nextJg).catch(() => {});
+        registrarDepositoConfirmadoInDb(nextJg, valorCotaAprov, cicloBolaoAtivoId).catch(() => {});
         return nextJg;
       }
       return jg;
     });
     setJogadores(jogadoresAtualizados);
-    localStorage.setItem("elite_jogadores_v11", JSON.stringify(jogadoresAtualizados));
+    safeSetLocalStorage("elite_jogadores_v11", JSON.stringify(jogadoresAtualizados));
 
     // 3. Se for o usuário atualmente conectado, atualiza a sessão imediatamente
-    if (user && user.email === email) {
+    if (user && (user.email || "").trim().toLowerCase() === emailAlvo) {
       const userAtualizado = {
         ...user,
         pagou: true,
@@ -1619,18 +1739,19 @@ export default function App() {
         timestampDeposito: Date.now(),
       };
       setUser(userAtualizado);
-      localStorage.setItem("elite_user_v11", JSON.stringify(userAtualizado));
+      safeSetLocalStorage("elite_user_v11", JSON.stringify(userAtualizado));
     }
 
     if (modalComprovante) setModalComprovante(null);
 
-    const jgNome = jogadores.find((x) => x.email === email)?.nome || "Jogador";
+    const jgNome = jogadorAprovadoObj?.nome || jogadores.find((x) => (x.email || "").trim().toLowerCase() === emailAlvo)?.nome || "Jogador";
     alert(`✅ Pagamento de ${jgNome} APROVADO com sucesso!\nO jogador já foi notificado na área dele.`);
   };
 
   const recusarPagamento = (email: string) => {
+    const emailAlvo = (email || "").trim().toLowerCase();
     const palpitesAtualizados = palpites.map((p: any) => {
-      if (p.jogadorEmail === email) {
+      if ((p.jogadorEmail || "").trim().toLowerCase() === emailAlvo) {
         const nextP = { ...p, pago: false, bolaoPagoId: "" };
         upsertPalpiteInDb(nextP).catch(() => {});
         return nextP;
@@ -1638,10 +1759,10 @@ export default function App() {
       return p;
     });
     setPalpites(palpitesAtualizados);
-    localStorage.setItem("elite_palpites_v11", JSON.stringify(palpitesAtualizados));
+    safeSetLocalStorage("elite_palpites_v11", JSON.stringify(palpitesAtualizados));
 
     const jogadoresAtualizados = jogadores.map((jg: any) => {
-      if (jg.email === email) {
+      if ((jg.email || "").trim().toLowerCase() === emailAlvo) {
         const nextJg = {
           ...jg,
           pagou: false,
@@ -1657,9 +1778,9 @@ export default function App() {
       return jg;
     });
     setJogadores(jogadoresAtualizados);
-    localStorage.setItem("elite_jogadores_v11", JSON.stringify(jogadoresAtualizados));
+    safeSetLocalStorage("elite_jogadores_v11", JSON.stringify(jogadoresAtualizados));
 
-    if (user && user.email === email) {
+    if (user && (user.email || "").trim().toLowerCase() === emailAlvo) {
       const userAtualizado = {
         ...user,
         pagou: false,
@@ -1670,7 +1791,7 @@ export default function App() {
         valorPago: 0,
       };
       setUser(userAtualizado);
-      localStorage.setItem("elite_user_v11", JSON.stringify(userAtualizado));
+      safeSetLocalStorage("elite_user_v11", JSON.stringify(userAtualizado));
     }
 
     if (modalComprovante) setModalComprovante(null);
@@ -1680,6 +1801,8 @@ export default function App() {
   const enviarComprovante = async (email: string, comprovanteBase64: string) => {
     const emailNorm = (email || user?.email || "").trim().toLowerCase();
     if (!emailNorm || !comprovanteBase64) return;
+
+    clearJogadorDeletedLocal(emailNorm);
 
     const agora = Date.now();
     const horaEnvio = new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
@@ -1732,9 +1855,6 @@ export default function App() {
       jogadoresAtualizados = [...jogadores, jogadorParaSalvar];
     }
 
-    setJogadores(jogadoresAtualizados);
-    localStorage.setItem("elite_jogadores_v11", JSON.stringify(jogadoresAtualizados));
-
     if (user && (user.email || "").trim().toLowerCase() === emailNorm) {
       const userAtualizado = {
         ...user,
@@ -1751,8 +1871,11 @@ export default function App() {
       };
       jogadorParaSalvar = userAtualizado;
       setUser(userAtualizado);
-      localStorage.setItem("elite_user_v11", JSON.stringify(userAtualizado));
+      safeSetLocalStorage("elite_user_v11", JSON.stringify(userAtualizado));
     }
+
+    setJogadores(jogadoresAtualizados);
+    safeSetLocalStorage("elite_jogadores_v11", JSON.stringify(jogadoresAtualizados));
 
     if (jogadorParaSalvar) {
       await upsertJogadorInDb(jogadorParaSalvar).catch(() => {});
@@ -2086,35 +2209,44 @@ export default function App() {
     };
     saveConfig(novoConfig);
 
-    // 2. Remove todos os participantes que depositaram naquele bolão da lista de depositantes (só voltam se fizerem novo depósito em novo bolão)
-    const jogadoresZerados = jogadores.map((jg: any) => ({
-      ...jg,
-      pagou: false,
-      aprovado: false,
-      status_pagamento: "pendente",
-      statusPagamento: jg.statusPagamento === "EM_ANALISE" ? "EM_ANALISE" : "PENDENTE",
-      bolaoPagoId: "",
-      valorPago: 0,
-      dataAprovacao: undefined,
-      aprovado_em: undefined,
-    }));
-    setJogadores(jogadoresZerados);
-    localStorage.setItem("elite_jogadores_v11", JSON.stringify(jogadoresZerados));
-
-    if (user) {
-      const userZerado = {
-        ...user,
+    // 2. Remove todos os participantes que depositaram naquele bolão da lista de depositantes (preservando quem acabou de enviar comprovante em análise)
+    const jogadoresZerados = jogadores.map((jg: any) => {
+      if (jg.comprovante && jg.statusPagamento === "EM_ANALISE") {
+        return {
+          ...jg,
+          bolaoPagoId: novoCicloId,
+        };
+      }
+      return {
+        ...jg,
         pagou: false,
         aprovado: false,
         status_pagamento: "pendente",
-        statusPagamento: user.statusPagamento === "EM_ANALISE" ? "EM_ANALISE" : "PENDENTE",
+        statusPagamento: "PENDENTE",
         bolaoPagoId: "",
         valorPago: 0,
         dataAprovacao: undefined,
         aprovado_em: undefined,
       };
+    });
+    setJogadores(jogadoresZerados);
+    safeSetLocalStorage("elite_jogadores_v11", JSON.stringify(jogadoresZerados));
+
+    if (user) {
+      const emAnaliseAtivo = Boolean(user.comprovante && user.statusPagamento === "EM_ANALISE");
+      const userZerado = {
+        ...user,
+        pagou: false,
+        aprovado: false,
+        status_pagamento: "pendente",
+        statusPagamento: emAnaliseAtivo ? "EM_ANALISE" : "PENDENTE",
+        bolaoPagoId: emAnaliseAtivo ? novoCicloId : "",
+        valorPago: 0,
+        dataAprovacao: undefined,
+        aprovado_em: undefined,
+      };
       setUser(userZerado);
-      localStorage.setItem("elite_user_v11", JSON.stringify(userZerado));
+      safeSetLocalStorage("elite_user_v11", JSON.stringify(userZerado));
     }
 
     // 3. Desmarca o status pago dos palpites da rodada encerrada
@@ -2216,8 +2348,11 @@ export default function App() {
   const isParticipanteEmAnaliseNoBolaoAtual = (jg: any): boolean => {
     if (!jg) return false;
     if (isParticipanteDepositanteNoBolaoAtual(jg)) return false;
+    if (jg.comprovante && jg.statusPagamento === "EM_ANALISE") {
+      return true;
+    }
     const bId = String(jg.bolaoPagoId || "").trim();
-    if (bId && boloesEncerradosSet.has(bId)) {
+    if (bId && bId !== cicloBolaoAtivoId && boloesEncerradosSet.has(bId)) {
       return false;
     }
     return Boolean(
@@ -2233,7 +2368,10 @@ export default function App() {
     const jogosEncerrados = jogosPublicados.filter((j) => j.resultadoOficial);
 
     const ranking = jogadores.map((jg) => {
-      const apostasJogador = palpites.filter((p) => p.jogadorEmail === jg.email);
+      const emailJgNorm = (jg.email || "").trim().toLowerCase();
+      const apostasJogador = palpites.filter(
+        (p) => (p.jogadorEmail || "").trim().toLowerCase() === emailJgNorm
+      );
       const isPago = isParticipanteDepositanteNoBolaoAtual(jg);
 
       let pontos = 0;
@@ -2257,12 +2395,16 @@ export default function App() {
       };
     });
 
-    // Ordenação: 1º por pontos (maior para menor), depois por pagos primeiro
+    // Ordenação: 1º por pontos (maior para menor), depois quem tem comprovante em análise/anexo ou pago
     ranking.sort((a, b) => {
       if (b.pontos !== a.pontos) return b.pontos - a.pontos;
+      const aComp = Boolean(a.comprovante && !a.isPago);
+      const bComp = Boolean(b.comprovante && !b.isPago);
+      if (aComp && !bComp) return -1;
+      if (!aComp && bComp) return 1;
       if (a.isPago && !b.isPago) return -1;
       if (!a.isPago && b.isPago) return 1;
-      return a.nome.localeCompare(b.nome);
+      return (a.nome || "").localeCompare(b.nome || "");
     });
 
     return { ranking, totalJogosEncerrados: jogosEncerrados.length };
@@ -2582,12 +2724,14 @@ export default function App() {
 
     (async () => {
       await salvarRankingBolaoNoHistorico(true, false, jogosPublicados).catch(() => {});
-      if (ultimaRodadaZeradaRef.current !== chaveRodadaJogos && (total > 0 || movDepositos.length > 0)) {
+      if (ultimaRodadaZeradaRef.current !== chaveRodadaJogos) {
         ultimaRodadaZeradaRef.current = chaveRodadaJogos;
-        await zerarSaldoEDepositantesAposRodada(bolaoIdAtual).catch(() => {});
+        if (total > 0 || pagos > 0) {
+          await zerarSaldoEDepositantesAposRodada(bolaoIdAtual).catch(() => {});
+        }
       }
     })();
-  }, [jogosPublicados, rankingGanhadores, total, movDepositos.length]);
+  }, [jogosPublicados, rankingGanhadores, total, pagos]);
 
   const excluirRankingDoHistoricoAdm = async (id: string, titulo: string) => {
     if (!confirm(`Deseja excluir o histórico salvo de "${titulo}"?`)) return;
@@ -2698,26 +2842,19 @@ export default function App() {
           </div>
 
           {/* Botão para anexar e enviar o comprovante direto do modal PIX */}
-          <label className="w-full bg-zinc-800 hover:bg-zinc-700 border-2 border-amber-500/80 text-amber-300 font-black py-3 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition flex items-center justify-center gap-2 shadow">
+          <button
+            type="button"
+            onClick={abrirSeletorComprovante}
+            disabled={enviandoComprovantePix}
+            className="w-full bg-zinc-800 hover:bg-zinc-700 border-2 border-amber-500/80 text-amber-300 font-black py-3 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition flex items-center justify-center gap-2 shadow"
+          >
             <span>📤</span>
             <span>
               {enviandoComprovantePix
                 ? "ENVIANDO COMPROVANTE P/ O ADM..."
                 : "ANEXAR E ENVIAR COMPROVANTE PIX P/ O ADM"}
             </span>
-            <input
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) {
-                  handleUploadComprovanteApi(file);
-                  e.target.value = "";
-                }
-              }}
-            />
-          </label>
+          </button>
 
           {/* Botão JÁ PAGUEI */}
           <button
@@ -2857,22 +2994,30 @@ export default function App() {
 
         {mostrarBotaoDepositar && (
           <div className="flex flex-wrap items-center gap-2 shrink-0">
-            <label className="bg-zinc-900 hover:bg-zinc-800 border border-amber-500/80 text-amber-300 font-black px-3 py-2 rounded-lg text-[10px] uppercase tracking-wider cursor-pointer transition shadow flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={abrirSeletorComprovante}
+              disabled={enviandoComprovantePix}
+              className="bg-zinc-900 hover:bg-zinc-800 border border-amber-500/80 text-amber-300 font-black px-3 py-2 rounded-lg text-[10px] uppercase tracking-wider cursor-pointer transition shadow flex items-center gap-1.5"
+            >
               <span>📤</span>
-              <span>{enviandoComprovantePix ? "ENVIANDO..." : "ENVIAR COMPROVANTE"}</span>
-              <input
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) {
-                    handleUploadComprovanteApi(file);
-                    e.target.value = "";
-                  }
-                }}
-              />
-            </label>
+              <span>
+                {enviandoComprovantePix
+                  ? "ENVIANDO..."
+                  : user?.comprovante
+                  ? "REENVIAR COMPROVANTE"
+                  : "ENVIAR COMPROVANTE"}
+              </span>
+            </button>
+            {user?.comprovante && (
+              <button
+                type="button"
+                onClick={() => setPastaComprovanteAberta(true)}
+                className="bg-amber-950/80 hover:bg-amber-900 border border-amber-500/70 text-amber-200 font-black px-2.5 py-2 rounded-lg text-[10px] uppercase tracking-wider cursor-pointer transition flex items-center gap-1"
+              >
+                <span>🔍</span> VER ENVIADO
+              </button>
+            )}
             <button
               type="button"
               onClick={abrirModalPixDireto}
@@ -3032,26 +3177,44 @@ export default function App() {
           )}
 
           {/* Botão ENVIAR COMPROVANTE logo abaixo */}
-          <label className="w-full bg-zinc-900 hover:bg-zinc-800 border-2 border-green-500/70 text-green-400 hover:text-green-300 font-black py-3 px-3 rounded-xl cursor-pointer transition text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 text-center shadow">
+          <button
+            type="button"
+            onClick={abrirSeletorComprovante}
+            disabled={enviandoComprovantePix}
+            className="w-full bg-zinc-900 hover:bg-zinc-800 border-2 border-green-500/70 text-green-400 hover:text-green-300 font-black py-3 px-3 rounded-xl cursor-pointer transition text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 text-center shadow"
+          >
             <span>📤</span>
-            <span>{enviandoComprovantePix ? "ENVIANDO COMPROVANTE..." : "ENVIAR COMPROVANTE"}</span>
-            <input
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) {
-                  handleUploadComprovanteApi(file);
-                  e.target.value = "";
-                }
-              }}
-            />
-          </label>
+            <span>
+              {enviandoComprovantePix
+                ? "ENVIANDO COMPROVANTE..."
+                : user?.comprovante
+                ? "ENVIAR NOVO COMPROVANTE"
+                : "ENVIAR COMPROVANTE"}
+            </span>
+          </button>
 
-          {comprovanteEnviadoAviso && (
-            <div className="bg-green-950/90 border border-green-500 text-green-200 text-[11px] font-bold p-2 rounded-lg text-center">
-              ✅ Comprovante enviado para a sua área no ADM!
+          {(comprovanteEnviadoAviso || user?.comprovante) && (
+            <div className="bg-green-950/90 border border-green-500 text-green-200 text-[11px] font-bold p-2.5 rounded-lg flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-left">
+                <img
+                  src={user?.comprovante}
+                  alt="Comprovante enviado"
+                  className="w-9 h-9 rounded object-cover border border-green-400 shrink-0"
+                />
+                <div>
+                  <div className="text-green-300 font-black">✅ Comprovante enviado ao ADM!</div>
+                  <div className="text-[10px] text-zinc-300">
+                    {user?.dataEnvioComprovante || "Aguardando conferência do ADM"}
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPastaComprovanteAberta(true)}
+                className="bg-green-500 text-black font-black text-[10px] px-2 py-1 rounded cursor-pointer shrink-0"
+              >
+                Ver
+              </button>
             </div>
           )}
         </div>
@@ -7633,6 +7796,7 @@ export default function App() {
             </div>
           </div>
         )}
+        {inputComprovantePersistenteEl}
         <ModalPixDireto />
         <ModalAreaTransparencia />
       </div>
@@ -7822,6 +7986,7 @@ export default function App() {
             })
           )}
         </div>
+        {inputComprovantePersistenteEl}
         <ModalPixDireto />
         <ModalAreaTransparencia />
       </div>
@@ -7908,7 +8073,7 @@ export default function App() {
 
         {/* Contabilizador de Depósito na Tela de Pagamento */}
         <div className="text-left">
-          <ContabilizadorDepositosJogador mostrarBotaoDepositar={false} />
+          <ContabilizadorDepositosJogador mostrarBotaoDepositar={true} />
         </div>
 
         {/* 2 BOTÕES LADO A LADO EM CAIXAS SEPARADAS */}
@@ -7936,6 +8101,7 @@ export default function App() {
         </div>
       </div>
 
+      {inputComprovantePersistenteEl}
       <ModalPixDireto />
     </div>
   );
