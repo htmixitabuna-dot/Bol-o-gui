@@ -421,7 +421,7 @@ export default function App() {
     inicializarConfigAdminInDb().catch(() => {});
     sincronizarIntegridadeCompletaNoSupabase().catch(() => {});
 
-    // Limpeza única de saldos/depósitos antigos que ficaram presos antes da separação por ciclo de bolão
+    // Limpeza local única de cache antigo
     try {
       if (localStorage.getItem("elite_reset_pagamentos_v2_done") !== "true") {
         localStorage.setItem("elite_reset_pagamentos_v2_done", "true");
@@ -429,7 +429,6 @@ export default function App() {
         localStorage.removeItem("elite_pix_confirmado_v11");
         setDepositos([]);
         setPagamentoConfirmadoLocal(false);
-        resetarPagamentosDaRodadaNoSupabase("ciclo_bolao_v2_ativo", ["bolao_1", "bolao_salvo_1"]).catch(() => {});
       }
     } catch {}
     try {
@@ -540,7 +539,35 @@ export default function App() {
           }
         });
         setJogadores((prevLocal) => {
-          const emailsNoBanco = new Set(listaDb.map((x) => (x.email || "").toLowerCase()));
+          const prevMap = new Map<string, any>();
+          prevLocal.forEach((loc) => {
+            const em = (loc.email || "").trim().toLowerCase();
+            if (em) prevMap.set(em, loc);
+          });
+
+          const listaDbMesclada = listaDb.map((rem) => {
+            const em = (rem.email || "").trim().toLowerCase();
+            const loc = prevMap.get(em);
+            // Preserva comprovante recém-enviado localmente enquanto sincroniza com o Supabase
+            if (
+              loc?.comprovante &&
+              !rem.comprovante &&
+              loc.timestampComprovante &&
+              Date.now() - Number(loc.timestampComprovante) < 60000
+            ) {
+              return {
+                ...rem,
+                comprovante: loc.comprovante,
+                timestampComprovante: loc.timestampComprovante,
+                dataEnvioComprovante: loc.dataEnvioComprovante,
+                statusPagamento: loc.statusPagamento || "EM_ANALISE",
+                bolaoPagoId: loc.bolaoPagoId || rem.bolaoPagoId,
+              };
+            }
+            return rem;
+          });
+
+          const emailsNoBanco = new Set(listaDbMesclada.map((x) => (x.email || "").toLowerCase()));
           const locaisNaoSincronizados = prevLocal.filter((loc) => {
             const em = (loc.email || "").toLowerCase();
             if (!em || emailsNoBanco.has(em)) return false;
@@ -548,7 +575,7 @@ export default function App() {
             upsertJogadorInDb(loc).catch(() => {});
             return true;
           });
-          const combinada = [...listaDb, ...locaisNaoSincronizados];
+          const combinada = [...listaDbMesclada, ...locaisNaoSincronizados];
           localStorage.setItem("elite_jogadores_v11", JSON.stringify(combinada));
           return combinada;
         });
@@ -565,8 +592,22 @@ export default function App() {
             (x) => (x.email || "").toLowerCase() === prevUser.email.toLowerCase()
           );
           if (atualizado) {
-            localStorage.setItem("elite_user_v11", JSON.stringify(atualizado));
-            return atualizado;
+            const mescladoUser =
+              prevUser.comprovante &&
+              !atualizado.comprovante &&
+              prevUser.timestampComprovante &&
+              Date.now() - Number(prevUser.timestampComprovante) < 60000
+                ? {
+                    ...atualizado,
+                    comprovante: prevUser.comprovante,
+                    timestampComprovante: prevUser.timestampComprovante,
+                    dataEnvioComprovante: prevUser.dataEnvioComprovante,
+                    statusPagamento: prevUser.statusPagamento || "EM_ANALISE",
+                    bolaoPagoId: prevUser.bolaoPagoId || atualizado.bolaoPagoId,
+                  }
+                : atualizado;
+            localStorage.setItem("elite_user_v11", JSON.stringify(mescladoUser));
+            return mescladoUser;
           }
           return prevUser;
         });
@@ -1124,11 +1165,17 @@ export default function App() {
       alert("Imagem muito grande, use arquivo até 5MB!");
       return;
     }
+    if (!user || !user.email) {
+      alert("Faça login ou cadastre-se para enviar seu comprovante de pagamento!");
+      setPage("loginJogador");
+      return;
+    }
+
     setEnviandoComprovantePix(true);
     try {
       let comprovanteBase64 = "";
       try {
-        comprovanteBase64 = await compressImageToDataUrl(file, 900, 0.72);
+        comprovanteBase64 = await compressImageToDataUrl(file, 800, 0.7);
       } catch {
         comprovanteBase64 = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
@@ -1138,23 +1185,16 @@ export default function App() {
         });
       }
 
-      if (!user || !jogadores.some((jg: any) => (jg.email || "").toLowerCase() === (user.email || "").toLowerCase())) {
-        alert("Seu cadastro não foi encontrado no banco de dados. Faça um Novo Cadastro para participar!");
-        setUser(null);
-        localStorage.removeItem("elite_user_v11");
-        setAbaLoginJogador("cadastro");
-        setPage("loginJogador");
-        return;
-      }
       const usuarioAtivo = user;
       const emailJogador = (usuarioAtivo.email || "").trim().toLowerCase();
       const nomeJogador = (usuarioAtivo.nome || "Jogador").trim();
       const jogadorId = usuarioAtivo.id || getJogadorDocId(emailJogador);
 
-      // Atualiza estado local e grava direto no registro do jogador no Supabase para aparecer na área do ADM (/admin)
-      enviarComprovante(emailJogador, comprovanteBase64);
+      // Salva palpites selecionados na tela (se houver) e grava o comprovante direto no Supabase (jogadores + apostas)
+      await salvarPalpitesTemporariosSeHouver().catch(() => {});
+      await enviarComprovante(emailJogador, comprovanteBase64);
 
-      // Envia também para o endpoint /api/upload-comprovante com o identificador do bolão atual
+      // Envia também para o endpoint /api/upload-comprovante caso esteja em ambiente serverless
       await fetch("/api/upload-comprovante", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1170,7 +1210,7 @@ export default function App() {
 
       setComprovanteEnviadoAviso(true);
       setTimeout(() => setComprovanteEnviadoAviso(false), 6000);
-      alert("✅ Comprovante enviado com sucesso para a sua pasta no painel do ADM! Aguarde a liberação em até 5 min.");
+      alert("✅ Comprovante enviado com sucesso para conferência na área do ADM!");
     } finally {
       setEnviandoComprovantePix(false);
     }
@@ -1637,40 +1677,49 @@ export default function App() {
     alert("Pagamento recusado. O status foi atualizado para o jogador.");
   };
 
-  const enviarComprovante = (email: string, comprovanteBase64: string) => {
+  const enviarComprovante = async (email: string, comprovanteBase64: string) => {
+    const emailNorm = (email || user?.email || "").trim().toLowerCase();
+    if (!emailNorm || !comprovanteBase64) return;
+
     const agora = Date.now();
     const horaEnvio = new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
     const dataHoraFormatada = `${new Date().toLocaleDateString("pt-BR")} às ${horaEnvio}`;
 
-    const existeNaLista = jogadores.some((jg: any) => (jg.email || "").toLowerCase() === email.toLowerCase());
-    if (!existeNaLista) {
-      return;
-    }
+    let jogadorParaSalvar: any = null;
+    const existeNaLista = jogadores.some(
+      (jg: any) => (jg.email || "").trim().toLowerCase() === emailNorm
+    );
 
-    const jogadoresAtualizados = jogadores.map((jg: any) => {
-      if ((jg.email || "").toLowerCase() === email.toLowerCase()) {
-        const nextJg = {
-          ...jg,
-          pagou: false,
-          aprovado: false,
-          status_pagamento: "pendente",
-          comprovante: comprovanteBase64,
-          timestampComprovante: agora,
-          statusPagamento: "EM_ANALISE",
-          dataEnvioComprovante: dataHoraFormatada,
-          bolaoPagoId: cicloBolaoAtivoId,
-        };
-        upsertJogadorInDb(nextJg).catch(() => {});
-        return nextJg;
-      }
-      return jg;
-    });
-    setJogadores(jogadoresAtualizados);
-    localStorage.setItem("elite_jogadores_v11", JSON.stringify(jogadoresAtualizados));
-
-    if (user && user.email === email) {
-      const userAtualizado = {
-        ...user,
+    let jogadoresAtualizados: any[];
+    if (existeNaLista) {
+      jogadoresAtualizados = jogadores.map((jg: any) => {
+        if ((jg.email || "").trim().toLowerCase() === emailNorm) {
+          const nextJg = {
+            ...jg,
+            email: emailNorm,
+            pagou: false,
+            aprovado: false,
+            status_pagamento: "pendente",
+            comprovante: comprovanteBase64,
+            timestampComprovante: agora,
+            statusPagamento: "EM_ANALISE",
+            dataEnvioComprovante: dataHoraFormatada,
+            bolaoPagoId: cicloBolaoAtivoId,
+          };
+          jogadorParaSalvar = nextJg;
+          return nextJg;
+        }
+        return jg;
+      });
+    } else {
+      const baseUser = user && (user.email || "").trim().toLowerCase() === emailNorm ? user : {};
+      jogadorParaSalvar = {
+        ...baseUser,
+        id: baseUser.id || getJogadorDocId(emailNorm),
+        nome: baseUser.nome || emailNorm.split("@")[0] || "Jogador",
+        email: emailNorm,
+        pix: baseUser.pix || baseUser.telefone || emailNorm,
+        telefone: baseUser.telefone || baseUser.pix || "",
         pagou: false,
         aprovado: false,
         status_pagamento: "pendente",
@@ -1680,9 +1729,33 @@ export default function App() {
         dataEnvioComprovante: dataHoraFormatada,
         bolaoPagoId: cicloBolaoAtivoId,
       };
+      jogadoresAtualizados = [...jogadores, jogadorParaSalvar];
+    }
+
+    setJogadores(jogadoresAtualizados);
+    localStorage.setItem("elite_jogadores_v11", JSON.stringify(jogadoresAtualizados));
+
+    if (user && (user.email || "").trim().toLowerCase() === emailNorm) {
+      const userAtualizado = {
+        ...user,
+        ...jogadorParaSalvar,
+        email: emailNorm,
+        pagou: false,
+        aprovado: false,
+        status_pagamento: "pendente",
+        comprovante: comprovanteBase64,
+        timestampComprovante: agora,
+        statusPagamento: "EM_ANALISE",
+        dataEnvioComprovante: dataHoraFormatada,
+        bolaoPagoId: cicloBolaoAtivoId,
+      };
+      jogadorParaSalvar = userAtualizado;
       setUser(userAtualizado);
       localStorage.setItem("elite_user_v11", JSON.stringify(userAtualizado));
-      upsertJogadorInDb(userAtualizado).catch(() => {});
+    }
+
+    if (jogadorParaSalvar) {
+      await upsertJogadorInDb(jogadorParaSalvar).catch(() => {});
     }
   };
 
@@ -1695,9 +1768,12 @@ export default function App() {
           comprovante: undefined,
           timestampComprovante: undefined,
           dataEnvioComprovante: undefined,
+          statusPagamento: jg.pagou ? "APROVADO" : "PENDENTE",
+          removerComprovante: true,
         };
         upsertJogadorInDb(nextJg).catch(() => {});
-        return nextJg;
+        const { removerComprovante, ...cleanJg } = nextJg;
+        return cleanJg;
       }
       return jg;
     });
@@ -1710,6 +1786,7 @@ export default function App() {
         comprovante: undefined,
         timestampComprovante: undefined,
         dataEnvioComprovante: undefined,
+        statusPagamento: user.pagou ? "APROVADO" : "PENDENTE",
       };
       setUser(userAtualizado);
       localStorage.setItem("elite_user_v11", JSON.stringify(userAtualizado));
@@ -1730,9 +1807,12 @@ export default function App() {
           comprovante: undefined,
           timestampComprovante: undefined,
           dataEnvioComprovante: undefined,
+          statusPagamento: jg.pagou ? "APROVADO" : "PENDENTE",
+          removerComprovante: true,
         };
         upsertJogadorInDb(nextJg).catch(() => {});
-        return nextJg;
+        const { removerComprovante, ...cleanJg } = nextJg;
+        return cleanJg;
       }
       return jg;
     });
@@ -1745,6 +1825,7 @@ export default function App() {
         comprovante: undefined,
         timestampComprovante: undefined,
         dataEnvioComprovante: undefined,
+        statusPagamento: user.pagou ? "APROVADO" : "PENDENTE",
       };
       setUser(userAtualizado);
       localStorage.setItem("elite_user_v11", JSON.stringify(userAtualizado));
@@ -2011,14 +2092,11 @@ export default function App() {
       pagou: false,
       aprovado: false,
       status_pagamento: "pendente",
-      statusPagamento: "PENDENTE",
+      statusPagamento: jg.statusPagamento === "EM_ANALISE" ? "EM_ANALISE" : "PENDENTE",
       bolaoPagoId: "",
       valorPago: 0,
       dataAprovacao: undefined,
       aprovado_em: undefined,
-      comprovante: undefined,
-      timestampComprovante: undefined,
-      dataEnvioComprovante: undefined,
     }));
     setJogadores(jogadoresZerados);
     localStorage.setItem("elite_jogadores_v11", JSON.stringify(jogadoresZerados));
@@ -2029,14 +2107,11 @@ export default function App() {
         pagou: false,
         aprovado: false,
         status_pagamento: "pendente",
-        statusPagamento: "PENDENTE",
+        statusPagamento: user.statusPagamento === "EM_ANALISE" ? "EM_ANALISE" : "PENDENTE",
         bolaoPagoId: "",
         valorPago: 0,
         dataAprovacao: undefined,
         aprovado_em: undefined,
-        comprovante: undefined,
-        timestampComprovante: undefined,
-        dataEnvioComprovante: undefined,
       };
       setUser(userZerado);
       localStorage.setItem("elite_user_v11", JSON.stringify(userZerado));
@@ -2140,11 +2215,15 @@ export default function App() {
 
   const isParticipanteEmAnaliseNoBolaoAtual = (jg: any): boolean => {
     if (!jg) return false;
+    if (isParticipanteDepositanteNoBolaoAtual(jg)) return false;
     const bId = String(jg.bolaoPagoId || "").trim();
-    if (!bId || bId !== cicloBolaoAtivoId || boloesEncerradosSet.has(bId)) {
+    if (bId && boloesEncerradosSet.has(bId)) {
       return false;
     }
-    return jg.statusPagamento === "EM_ANALISE" && !isParticipanteDepositanteNoBolaoAtual(jg);
+    return Boolean(
+      jg.statusPagamento === "EM_ANALISE" ||
+        (jg.comprovante && jg.statusPagamento !== "RECUSADO" && jg.statusPagamento !== "PENDENTE")
+    );
   };
 
   // =========================================================================
@@ -2618,6 +2697,28 @@ export default function App() {
             </button>
           </div>
 
+          {/* Botão para anexar e enviar o comprovante direto do modal PIX */}
+          <label className="w-full bg-zinc-800 hover:bg-zinc-700 border-2 border-amber-500/80 text-amber-300 font-black py-3 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition flex items-center justify-center gap-2 shadow">
+            <span>📤</span>
+            <span>
+              {enviandoComprovantePix
+                ? "ENVIANDO COMPROVANTE P/ O ADM..."
+                : "ANEXAR E ENVIAR COMPROVANTE PIX P/ O ADM"}
+            </span>
+            <input
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  handleUploadComprovanteApi(file);
+                  e.target.value = "";
+                }
+              }}
+            />
+          </label>
+
           {/* Botão JÁ PAGUEI */}
           <button
             type="button"
@@ -2755,13 +2856,31 @@ export default function App() {
         </div>
 
         {mostrarBotaoDepositar && (
-          <button
-            type="button"
-            onClick={abrirModalPixDireto}
-            className="bg-[#FF6B00] hover:bg-[#ff7b1a] text-black font-black px-3 py-2 rounded-lg text-[10px] uppercase tracking-wider cursor-pointer shrink-0 transition shadow"
-          >
-            PAGAR PIX AGORA (R$ {valorCotaNumerico})
-          </button>
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <label className="bg-zinc-900 hover:bg-zinc-800 border border-amber-500/80 text-amber-300 font-black px-3 py-2 rounded-lg text-[10px] uppercase tracking-wider cursor-pointer transition shadow flex items-center gap-1.5">
+              <span>📤</span>
+              <span>{enviandoComprovantePix ? "ENVIANDO..." : "ENVIAR COMPROVANTE"}</span>
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    handleUploadComprovanteApi(file);
+                    e.target.value = "";
+                  }
+                }}
+              />
+            </label>
+            <button
+              type="button"
+              onClick={abrirModalPixDireto}
+              className="bg-[#FF6B00] hover:bg-[#ff7b1a] text-black font-black px-3 py-2 rounded-lg text-[10px] uppercase tracking-wider cursor-pointer shrink-0 transition shadow"
+            >
+              PAGAR PIX AGORA (R$ {valorCotaNumerico})
+            </button>
+          </div>
         )}
       </div>
 
@@ -4936,6 +5055,201 @@ export default function App() {
         </div>
 
         {/* ================================================================= */}
+        {/* CENTRAL DE CONFERÊNCIA DE COMPROVANTES DE PAGAMENTO DOS JOGADORES */}
+        {/* ================================================================= */}
+        <div className="bg-zinc-900 p-4 rounded-xl border-2 border-amber-500/70 space-y-3.5 shadow-xl">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-800 pb-3">
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[10px] font-black uppercase tracking-wider bg-amber-400 text-black px-2 py-0.5 rounded">
+                  CONFERÊNCIA DE PAGAMENTOS PIX
+                </span>
+                <span className="text-[10px] text-amber-300 font-bold">
+                  ⚡ Comprovantes enviados na Área do Jogador chegam automaticamente aqui
+                </span>
+              </div>
+              <h3 className="font-black text-sm sm:text-base text-white flex items-center gap-2 mt-1">
+                <span>📥</span> COMPROVANTES DE PAGAMENTO RECEBIDOS PARA CONFERÊNCIA (
+                {jogadores.filter((jg) => Boolean(jg.comprovante)).length})
+              </h3>
+              <p className="text-[11px] text-zinc-400">
+                Confira o comprovante enviado pelo jogador, amplie a imagem e clique em Aprovar ou Recusar com 1 clique.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <span className="text-[10px] bg-amber-950/90 border border-amber-600 text-amber-300 font-black px-2.5 py-1.5 rounded-lg">
+                ⏳ {jogadores.filter((jg) => Boolean(jg.comprovante) && jg.statusPagamento === "EM_ANALISE").length} aguardando conferência
+              </span>
+              <button
+                type="button"
+                onClick={async () => {
+                  const listaSupabase = await listarUsuariosDoSupabase();
+                  if (listaSupabase.length > 0) {
+                    setJogadores(listaSupabase);
+                    localStorage.setItem("elite_jogadores_v11", JSON.stringify(listaSupabase));
+                  }
+                  const totalComps = listaSupabase.filter((x) => Boolean(x.comprovante)).length;
+                  mostrarAvisoAdm(
+                    `🔄 Comprovantes sincronizados com o Supabase (${totalComps} comprovante(s) encontrado(s))!`
+                  );
+                }}
+                className="text-[10px] bg-zinc-800 hover:bg-zinc-700 text-amber-300 border border-amber-500/50 px-3 py-1.5 rounded-lg cursor-pointer font-black transition flex items-center gap-1"
+              >
+                <span>🔄</span> Sincronizar Comprovantes
+              </button>
+            </div>
+          </div>
+
+          {jogadores.filter((jg) => Boolean(jg.comprovante)).length === 0 ? (
+            <div className="bg-black/60 border border-dashed border-zinc-800 rounded-xl p-5 text-center space-y-1.5">
+              <div className="text-2xl">📭</div>
+              <div className="text-xs font-black text-white">
+                Nenhum comprovante pendente de conferência no momento
+              </div>
+              <p className="text-[11px] text-zinc-400">
+                Assim que um jogador enviar o comprovante de pagamento PIX na Área do Jogador, ele aparecerá imediatamente aqui com foto para você aprovar.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {jogadores
+                .filter((jg) => Boolean(jg.comprovante))
+                .sort((a, b) => {
+                  const aAnalise = a.statusPagamento === "EM_ANALISE" ? 1 : 0;
+                  const bAnalise = b.statusPagamento === "EM_ANALISE" ? 1 : 0;
+                  if (bAnalise !== aAnalise) return bAnalise - aAnalise;
+                  return (Number(b.timestampComprovante) || 0) - (Number(a.timestampComprovante) || 0);
+                })
+                .map((jg, idx) => {
+                  const isPagoJg = isParticipanteDepositanteNoBolaoAtual(jg);
+                  const isEmAnaliseJg = !isPagoJg && jg.statusPagamento === "EM_ANALISE";
+                  const palpitesJg = palpites.filter(
+                    (p) => (p.jogadorEmail || "").toLowerCase() === (jg.email || "").toLowerCase()
+                  );
+
+                  return (
+                    <div
+                      key={`comp_adm_${jg.email || idx}`}
+                      className={`p-3.5 rounded-xl border-2 flex flex-col justify-between gap-3 ${
+                        isEmAnaliseJg
+                          ? "bg-amber-950/20 border-amber-500/80 shadow-lg"
+                          : isPagoJg
+                          ? "bg-green-950/20 border-green-600/70"
+                          : "bg-black/80 border-zinc-800"
+                      }`}
+                    >
+                      <div className="flex items-start gap-3">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setModalComprovante({
+                              url: jg.comprovante,
+                              nome: jg.nome,
+                              email: jg.email,
+                              timestamp: jg.timestampComprovante,
+                            })
+                          }
+                          className="relative w-20 h-20 rounded-xl overflow-hidden border-2 border-amber-500/70 bg-black shrink-0 cursor-pointer group"
+                          title="Clique para ampliar o comprovante"
+                        >
+                          <img
+                            src={jg.comprovante}
+                            alt={`Comprovante ${jg.nome}`}
+                            className="w-full h-full object-cover"
+                          />
+                          <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition flex items-center justify-center text-xs font-black text-white">
+                            🔍 AMPLIAR
+                          </div>
+                        </button>
+
+                        <div className="flex-1 min-w-0 space-y-1">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="font-black text-sm text-white truncate">{jg.nome}</span>
+                            <span
+                              className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase border ${
+                                isPagoJg
+                                  ? "bg-green-950 text-green-400 border-green-600"
+                                  : isEmAnaliseJg
+                                  ? "bg-amber-400 text-black border-amber-300 animate-pulse"
+                                  : jg.statusPagamento === "RECUSADO"
+                                  ? "bg-red-950 text-red-300 border-red-700"
+                                  : "bg-zinc-800 text-zinc-300 border-zinc-700"
+                              }`}
+                            >
+                              {isPagoJg
+                                ? "✅ APROVADO"
+                                : isEmAnaliseJg
+                                ? "⏳ AGUARDANDO CONFERÊNCIA"
+                                : jg.statusPagamento === "RECUSADO"
+                                ? "❌ RECUSADO"
+                                : "📎 ARQUIVADO"}
+                            </span>
+                          </div>
+
+                          <div className="text-[11px] text-zinc-300 truncate font-mono">{jg.email}</div>
+                          <div className="text-[11px] text-zinc-400">
+                            PIX: <strong className="text-[#FF6B00] font-mono select-all">{jg.pix || "Não informado"}</strong>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2 text-[10px] text-zinc-400">
+                            <span>📅 Enviado: {jg.dataEnvioComprovante || "Recente"}</span>
+                            <span className="text-[#FF6B00] font-bold">• {palpitesJg.length} palpite(s)</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-zinc-800/80">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setModalComprovante({
+                              url: jg.comprovante,
+                              nome: jg.nome,
+                              email: jg.email,
+                              timestamp: jg.timestampComprovante,
+                            })
+                          }
+                          className="bg-blue-950 hover:bg-blue-900 text-blue-200 border border-blue-700 px-3 py-1.5 rounded-lg text-[11px] font-black cursor-pointer transition flex items-center gap-1"
+                        >
+                          <span>🔍</span> Ver Comprovante
+                        </button>
+
+                        {!isPagoJg && (
+                          <button
+                            type="button"
+                            onClick={() => aprovarPagamento(jg.email)}
+                            className="bg-green-600 hover:bg-green-500 text-black px-3 py-1.5 rounded-lg text-[11px] font-black cursor-pointer transition flex items-center gap-1 shadow"
+                          >
+                            <span>✅</span> Aprovar Pagamento
+                          </button>
+                        )}
+
+                        {jg.statusPagamento !== "RECUSADO" && !isPagoJg && (
+                          <button
+                            type="button"
+                            onClick={() => recusarPagamento(jg.email)}
+                            className="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 px-2.5 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer transition"
+                          >
+                            Recusar
+                          </button>
+                        )}
+
+                        <button
+                          type="button"
+                          onClick={() => excluirComprovante(jg.email)}
+                          className="bg-red-950/70 hover:bg-red-900 text-red-300 border border-red-800 px-2.5 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer transition ml-auto"
+                        >
+                          🗑️ Excluir
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+            </div>
+          )}
+        </div>
+
+        {/* ================================================================= */}
         {/* BANCO DE DADOS DE TODOS OS APOSTADORES CADASTRADOS */}
         {/* ================================================================= */}
         <div className="bg-zinc-900 p-4 rounded-xl border border-zinc-800 space-y-3">
@@ -5047,14 +5361,41 @@ export default function App() {
 
                       <div className="flex flex-wrap items-center gap-1.5 shrink-0">
                         {jg.comprovante && (
-                          <button
-                            type="button"
-                            onClick={() => excluirComprovante(jg.email)}
-                            className="text-[10px] bg-amber-950/70 hover:bg-amber-900 text-amber-300 border border-amber-800/80 px-2.5 py-1.5 rounded-lg cursor-pointer font-bold transition"
-                            title="Excluir comprovante de pagamento deste jogador"
-                          >
-                            🗑️ Excluir Comprovante
-                          </button>
+                          <>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setModalComprovante({
+                                  url: jg.comprovante,
+                                  nome: jg.nome,
+                                  email: jg.email,
+                                  timestamp: jg.timestampComprovante,
+                                })
+                              }
+                              className="text-[10px] bg-blue-950 hover:bg-blue-900 text-blue-300 border border-blue-700 px-2.5 py-1.5 rounded-lg cursor-pointer font-black transition flex items-center gap-1"
+                              title="Ver comprovante de pagamento enviado pelo jogador"
+                            >
+                              🔍 Ver Comprovante
+                            </button>
+                            {!isPagoJg && (
+                              <button
+                                type="button"
+                                onClick={() => aprovarPagamento(jg.email)}
+                                className="text-[10px] bg-green-600 hover:bg-green-500 text-black px-2.5 py-1.5 rounded-lg cursor-pointer font-black transition flex items-center gap-1"
+                                title="Aprovar pagamento deste jogador"
+                              >
+                                ✅ Aprovar PIX
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => excluirComprovante(jg.email)}
+                              className="text-[10px] bg-amber-950/70 hover:bg-amber-900 text-amber-300 border border-amber-800/80 px-2.5 py-1.5 rounded-lg cursor-pointer font-bold transition"
+                              title="Excluir comprovante de pagamento deste jogador"
+                            >
+                              🗑️ Excluir Comprovante
+                            </button>
+                          </>
                         )}
                         <button
                           type="button"
@@ -5708,6 +6049,24 @@ export default function App() {
                               >
                                 <span>🔍</span> Ver Completo
                               </button>
+                              {!jg.isPago && (
+                                <button
+                                  type="button"
+                                  onClick={() => aprovarPagamento(jg.email)}
+                                  className="text-xs bg-green-600 hover:bg-green-500 text-black px-3 py-1 rounded-lg cursor-pointer font-black transition flex items-center gap-1 shadow"
+                                >
+                                  <span>✅</span> Aprovar Pagamento
+                                </button>
+                              )}
+                              {!jg.isPago && jg.statusPagamento !== "RECUSADO" && (
+                                <button
+                                  type="button"
+                                  onClick={() => recusarPagamento(jg.email)}
+                                  className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 px-3 py-1 rounded-lg cursor-pointer font-bold transition"
+                                >
+                                  Recusar
+                                </button>
+                              )}
                               <button
                                 type="button"
                                 onClick={() => excluirComprovante(jg.email)}
@@ -7220,7 +7579,24 @@ export default function App() {
                 <input
                   type="file"
                   accept="image/*"
-                  onChange={(e) => handleFile(e.target.files?.[0], setTempComprovante)}
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    if (file.size > 5 * 1024 * 1024) {
+                      alert("Imagem muito grande, use arquivo até 5MB!");
+                      return;
+                    }
+                    try {
+                      const compressed = await compressImageToDataUrl(file, 800, 0.7);
+                      setTempComprovante(compressed);
+                      if (user?.email) {
+                        await salvarPalpitesTemporariosSeHouver().catch(() => {});
+                        await enviarComprovante(user.email, compressed);
+                      }
+                    } catch {
+                      handleFile(file, setTempComprovante);
+                    }
+                  }}
                   className="w-full text-xs text-zinc-400 file:mr-2 file:py-2 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-black file:bg-[#FF6B00] file:text-black cursor-pointer"
                 />
 
@@ -7231,14 +7607,17 @@ export default function App() {
                     </div>
                     <button
                       type="button"
-                      onClick={() => {
-                        enviarComprovante(user.email, tempComprovante);
+                      onClick={async () => {
+                        if (user?.email) {
+                          await salvarPalpitesTemporariosSeHouver().catch(() => {});
+                          await enviarComprovante(user.email, tempComprovante);
+                        }
                         setTempComprovante("");
-                        alert("Comprovante gravado na sua pasta e enviado para o ADM com sucesso!");
+                        alert("✅ Comprovante gravado na sua pasta e enviado para a área do ADM para conferência!");
                       }}
                       className="w-full bg-green-600 hover:bg-green-500 text-black font-black py-2.5 rounded-xl cursor-pointer text-xs uppercase tracking-wider transition shadow-md"
                     >
-                      💾 SALVAR NA PASTA & ENVIAR P/ O ADM
+                      💾 CONFIRMAR ENVIO DO COMPROVANTE P/ O ADM
                     </button>
                   </div>
                 )}

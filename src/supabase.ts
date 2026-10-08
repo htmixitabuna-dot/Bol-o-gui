@@ -476,13 +476,30 @@ export async function listarUsuariosDoSupabase(): Promise<any[]> {
 
   const deletedSet = getDeletedJogadoresSet();
 
-  const [resProfiles, resJogadores] = await Promise.all([
+  const [resProfiles, resJogadores, resApostas] = await Promise.all([
     supabase.from('profiles').select('*'),
     supabase.from('jogadores').select('*'),
+    supabase.from('apostas').select('*'),
   ]);
 
   const profilesList = Array.isArray(resProfiles.data) ? resProfiles.data : [];
   const jogadoresList = Array.isArray(resJogadores.data) ? resJogadores.data : [];
+  const apostasList = Array.isArray(resApostas.data) ? resApostas.data : [];
+
+  const comprovantesByEmail = new Map<string, any>();
+  for (const a of apostasList) {
+    const raw = String(a?.palpite || '').trim();
+    if (!raw.startsWith('{')) continue;
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.__type === 'comprovante_pagamento_jogador' && parsed.email) {
+        const em = String(parsed.email).trim().toLowerCase();
+        if (em && parsed.comprovante) {
+          comprovantesByEmail.set(em, parsed);
+        }
+      }
+    } catch {}
+  }
 
   const jogadoresById = new Map<string, any>();
   const jogadoresByEmail = new Map<string, any>();
@@ -499,6 +516,25 @@ export async function listarUsuariosDoSupabase(): Promise<any[]> {
     }
   }
 
+  const aplicarComprovanteSalvo = (norm: any): any => {
+    if (!norm || !norm.email) return norm;
+    const compDoc = comprovantesByEmail.get(String(norm.email).trim().toLowerCase());
+    if (!compDoc || !compDoc.comprovante) return norm;
+    const tsComp = Number(compDoc.timestampComprovante) || Number(norm.timestampComprovante) || Date.now();
+    const statusComp =
+      norm.pagou || norm.statusPagamento === 'APROVADO'
+        ? 'APROVADO'
+        : compDoc.statusPagamento || norm.statusPagamento || 'EM_ANALISE';
+    return {
+      ...norm,
+      comprovante: norm.comprovante || compDoc.comprovante,
+      timestampComprovante: tsComp,
+      dataEnvioComprovante: norm.dataEnvioComprovante || compDoc.dataEnvioComprovante || 'Recente',
+      statusPagamento: statusComp,
+      bolaoPagoId: norm.bolaoPagoId || compDoc.bolaoPagoId || '',
+    };
+  };
+
   const mapaUsuarios = new Map<string, any>();
   const usedJogadorIds = new Set<string>();
 
@@ -511,7 +547,7 @@ export async function listarUsuariosDoSupabase(): Promise<any[]> {
       undefined;
     if (matchedJ?.id) usedJogadorIds.add(String(matchedJ.id));
 
-    const norm = normalizarLinhaUsuarioSupabase(p, matchedJ);
+    const norm = aplicarComprovanteSalvo(normalizarLinhaUsuarioSupabase(p, matchedJ));
     if (!norm || !norm.email) continue;
     if (deletedSet.has(norm.email)) continue;
     mapaUsuarios.set(norm.email, norm);
@@ -519,11 +555,41 @@ export async function listarUsuariosDoSupabase(): Promise<any[]> {
 
   for (const j of jogadoresList) {
     if (j?.id && usedJogadorIds.has(String(j.id))) continue;
-    const norm = normalizarLinhaUsuarioSupabase(null, j);
+    const norm = aplicarComprovanteSalvo(normalizarLinhaUsuarioSupabase(null, j));
     if (!norm || !norm.email) continue;
     if (deletedSet.has(norm.email)) continue;
     if (!mapaUsuarios.has(norm.email)) {
       mapaUsuarios.set(norm.email, norm);
+    }
+  }
+
+  // Garante que qualquer jogador que tenha enviado comprovante em apostas apareça na lista do ADM mesmo se não estiver em profiles
+  for (const [em, compDoc] of comprovantesByEmail.entries()) {
+    if (deletedSet.has(em)) continue;
+    if (!mapaUsuarios.has(em)) {
+      const uid = stringToUuid(em);
+      mapaUsuarios.set(em, {
+        uid,
+        id: uid,
+        _docId: getJogadorDocId(em),
+        nome: String(compDoc.nome || em.split('@')[0] || 'Jogador'),
+        email: em,
+        telefone: String(compDoc.telefone || compDoc.pix || ''),
+        pix: String(compDoc.pix || compDoc.telefone || em),
+        chavePix: String(compDoc.pix || compDoc.telefone || em),
+        pagou: false,
+        aprovado: false,
+        status_pagamento: 'pendente',
+        statusPagamento: compDoc.statusPagamento || 'EM_ANALISE',
+        bolaoPagoId: String(compDoc.bolaoPagoId || ''),
+        valorPago: 0,
+        comprovante: compDoc.comprovante,
+        timestampComprovante: Number(compDoc.timestampComprovante) || Date.now(),
+        dataEnvioComprovante: String(compDoc.dataEnvioComprovante || 'Recente'),
+        role: 'player',
+        is_admin: false,
+        updatedAt: String(compDoc.updatedAt || new Date().toISOString()),
+      });
     }
   }
 
@@ -608,11 +674,13 @@ export async function upsertJogadorInDb(j: any, _isNovo?: boolean): Promise<void
     is_admin: email === 'inhobahia29@gmail.com' ? true : Boolean(j.is_admin),
     updatedAt: new Date().toISOString(),
   };
+  delete (fullMeta as any).removerComprovante;
 
-  await Promise.all([
-    supabase
-      .from('profiles')
-      .upsert(
+  const compPagamentoUuid = stringToUuid(`comprovante_pag_${email}`);
+
+  const operacoes: Promise<any>[] = [
+    Promise.resolve(
+      supabase.from('profiles').upsert(
         {
           id: uuid,
           nome,
@@ -620,10 +688,10 @@ export async function upsertJogadorInDb(j: any, _isNovo?: boolean): Promise<void
           telefone,
         },
         { onConflict: 'id' }
-      ),
-    supabase
-      .from('jogadores')
-      .upsert(
+      )
+    ),
+    Promise.resolve(
+      supabase.from('jogadores').upsert(
         {
           id: uuid,
           nome,
@@ -632,8 +700,41 @@ export async function upsertJogadorInDb(j: any, _isNovo?: boolean): Promise<void
           time_coracao: JSON.stringify(fullMeta),
         },
         { onConflict: 'id' }
-      ),
-  ]);
+      )
+    ),
+  ];
+
+  if (j.removerComprovante === true) {
+    operacoes.push(Promise.resolve(supabase.from('apostas').delete().eq('id', compPagamentoUuid)));
+  } else if (j.comprovante) {
+    operacoes.push(
+      Promise.resolve(
+        supabase.from('apostas').upsert(
+          {
+            id: compPagamentoUuid,
+            user_id: null,
+            jogo_id: null,
+            palpite: JSON.stringify({
+              __type: 'comprovante_pagamento_jogador',
+              email,
+              nome,
+              pix,
+              telefone,
+              comprovante: j.comprovante,
+              timestampComprovante: j.timestampComprovante || Date.now(),
+              dataEnvioComprovante: j.dataEnvioComprovante || 'Recente',
+              statusPagamento,
+              bolaoPagoId,
+              updatedAt: new Date().toISOString(),
+            }),
+          },
+          { onConflict: 'id' }
+        )
+      )
+    );
+  }
+
+  await Promise.all(operacoes);
 
   triggerListenersForCollection('jogadores');
 }
@@ -1191,6 +1292,7 @@ export async function listarPalpitesDoSupabase(): Promise<any[]> {
           parsed.__type === 'jogo_meta' ||
           parsed.__type === 'config_bolao' ||
           parsed.__type === 'comprovante_premiacao' ||
+          parsed.__type === 'comprovante_pagamento_jogador' ||
           parsed.__type === 'times_bolao' ||
           parsed.__type === 'historico_ranking_bolao'
         ) {
@@ -1740,8 +1842,6 @@ export async function resetarPagamentosDaRodadaNoSupabase(
         u.aprovado ||
         u.status_pagamento === 'pago' ||
         u.statusPagamento === 'APROVADO' ||
-        u.statusPagamento === 'EM_ANALISE' ||
-        u.comprovante ||
         u.bolaoPagoId
       ) {
         await upsertJogadorInDb({
@@ -1749,14 +1849,11 @@ export async function resetarPagamentosDaRodadaNoSupabase(
           pagou: false,
           aprovado: false,
           status_pagamento: 'pendente',
-          statusPagamento: 'PENDENTE',
+          statusPagamento: u.statusPagamento === 'EM_ANALISE' ? 'EM_ANALISE' : 'PENDENTE',
           bolaoPagoId: '',
           valorPago: 0,
           dataAprovacao: undefined,
           aprovado_em: undefined,
-          comprovante: undefined,
-          timestampComprovante: undefined,
-          dataEnvioComprovante: undefined,
         });
       }
     }
