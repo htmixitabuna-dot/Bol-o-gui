@@ -13,11 +13,34 @@ declare const process: {
 const envMeta: Record<string, any> =
   typeof import.meta !== 'undefined' && (import.meta as any).env ? (import.meta as any).env : {};
 
+export const SUPABASE_DEFAULT_URL = 'https://slaqxbccectdgmlokjos.supabase.co';
+export const SUPABASE_DEFAULT_REST_URL = 'https://slaqxbccectdgmlokjos.supabase.co/rest/v1/';
 export const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_Tqbx1xWWObM_PYo9A8Lwzg_HP4Q5M1Y';
 export const SUPABASE_SECRET_KEY = 'sb_secret_eoy7344Q4e7XqhFDPf5ayg_DI1D2iT2';
 
+const SAVED_KEYS_STORAGE_KEY = 'bolao_supabase_saved_keys_v1';
+
+function readSavedKeysFromLocal(): Record<string, string> {
+  try {
+    if (typeof localStorage === 'undefined') return {};
+    const raw = localStorage.getItem(SAVED_KEYS_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') return parsed;
+    }
+  } catch {}
+  return {};
+}
+
+function writeSavedKeysToLocal(keys: Record<string, string>): void {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.setItem(SAVED_KEYS_STORAGE_KEY, JSON.stringify(keys));
+  } catch {}
+}
+
 export function normalizeSupabaseUrl(raw: string): string {
-  let u = String(raw || 'https://slaqxbccectdgmlokjos.supabase.co').trim();
+  let u = String(raw || SUPABASE_DEFAULT_URL).trim();
   u = u.replace(/slaq[a-z]*lokjos\.supabase\.co/i, 'slaqxbccectdgmlokjos.supabase.co');
   // Remove /rest/v1/ caso tenha sido informado na URL base para evitar /rest/v1/rest/v1 no cliente Supabase
   u = u.replace(/\/rest\/v1\/?.*$/i, '');
@@ -36,30 +59,45 @@ export function normalizeSupabaseAnonKey(raw: string): string {
   return k;
 }
 
+const initialSavedKeys = readSavedKeysFromLocal();
+
 export let SUPABASE_REST_URL: string = normalizeSupabaseUrl(
   process.env.SUPABASE_REST_URL ||
     envMeta.SUPABASE_REST_URL ||
+    initialSavedKeys.SUPABASE_REST_URL ||
     process.env.NEXT_PUBLIC_SUPABASE_URL ||
     envMeta.NEXT_PUBLIC_SUPABASE_URL ||
-    'https://slaqxbccectdgmlokjos.supabase.co'
+    initialSavedKeys.NEXT_PUBLIC_SUPABASE_URL ||
+    SUPABASE_DEFAULT_URL
 );
 
 export let NEXT_PUBLIC_SUPABASE_URL: string = normalizeSupabaseUrl(
   process.env.NEXT_PUBLIC_SUPABASE_URL ||
     envMeta.NEXT_PUBLIC_SUPABASE_URL ||
+    initialSavedKeys.NEXT_PUBLIC_SUPABASE_URL ||
     SUPABASE_REST_URL
 );
 
 export let NEXT_PUBLIC_SUPABASE_ANON_KEY: string = normalizeSupabaseAnonKey(
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
     envMeta.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+    initialSavedKeys.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
     SUPABASE_PUBLISHABLE_KEY
 );
 
 export let SUPABASE_SERVICE_ROLE_KEY: string =
   process.env.SUPABASE_SERVICE_ROLE_KEY ||
   envMeta.SUPABASE_SERVICE_ROLE_KEY ||
+  initialSavedKeys.SUPABASE_SERVICE_ROLE_KEY ||
   SUPABASE_SECRET_KEY;
+
+// Salva imediatamente no storage local para nunca perder
+writeSavedKeysToLocal({
+  NEXT_PUBLIC_SUPABASE_URL,
+  NEXT_PUBLIC_SUPABASE_ANON_KEY,
+  SUPABASE_REST_URL: SUPABASE_DEFAULT_REST_URL,
+  SUPABASE_SERVICE_ROLE_KEY,
+});
 
 export let supabase: SupabaseClient = createClient(
   NEXT_PUBLIC_SUPABASE_URL,
@@ -1122,7 +1160,8 @@ export async function listarPalpitesDoSupabase(): Promise<any[]> {
           parsed.__type === 'jogo_meta' ||
           parsed.__type === 'config_bolao' ||
           parsed.__type === 'comprovante_premiacao' ||
-          parsed.__type === 'times_bolao'
+          parsed.__type === 'times_bolao' ||
+          parsed.__type === 'historico_ranking_bolao'
         ) {
           continue;
         }
@@ -1278,6 +1317,153 @@ export async function deleteComprovantePremiacaoFromDb(id: string): Promise<void
   triggerListenersForCollection('comprovantes_premiacao');
 }
 
+// ============================================================================
+// HISTÓRICO DE RANKINGS POR CADA BOLÃO RODADO (SALVO NO SUPABASE - TOP 3 + PARTIDAS)
+// ============================================================================
+export interface HistoricoRankingPartidaApostada {
+  jogoId: string;
+  casa: string;
+  fora: string;
+  escudoCasa?: string;
+  escudoFora?: string;
+  placarCasa?: string | number;
+  placarFora?: string | number;
+  escolha: 'CASA' | 'EMPATE' | 'FORA';
+  resultadoOficial?: 'CASA' | 'EMPATE' | 'FORA';
+  acertou: boolean;
+  data?: string;
+  estadio?: string;
+}
+
+export interface HistoricoRankingJogadorItem {
+  posicao: number;
+  nome: string;
+  email: string;
+  pix: string;
+  pontos: number;
+  totalApostas: number;
+  isPago: boolean;
+  premioEstimado: number;
+  partidasApostadas?: HistoricoRankingPartidaApostada[];
+}
+
+export interface HistoricoRankingJogoItem {
+  id: string;
+  casa: string;
+  fora: string;
+  escudoCasa?: string;
+  escudoFora?: string;
+  placarCasa?: string | number;
+  placarFora?: string | number;
+  resultadoOficial?: 'CASA' | 'EMPATE' | 'FORA';
+  data?: string;
+  data_jogo?: string;
+  estadio?: string;
+  encerrado?: boolean;
+}
+
+export interface HistoricoRankingBolaoItem {
+  id: string;
+  bolaoId: string;
+  tituloBolao: string;
+  dataRodada: string;
+  timestamp: number;
+  valorCota: number;
+  totalArrecadado: number;
+  premioTotal80: number;
+  premio1: number;
+  premio2: number;
+  premio3: number;
+  totalParticipantes: number;
+  totalPagos: number;
+  totalJogos: number;
+  totalJogosEncerrados: number;
+  statusBolao?: 'EM_ANDAMENTO' | 'ENCERRADO' | 'ARQUIVADO';
+  jogos: HistoricoRankingJogoItem[];
+  ranking: HistoricoRankingJogadorItem[];
+}
+
+export async function listarHistoricoRankingsDoSupabase(): Promise<HistoricoRankingBolaoItem[]> {
+  if (!hasValidSupabaseKey()) return [];
+
+  const { data: rows } = await supabase.from('apostas').select('*');
+  if (!Array.isArray(rows)) return [];
+
+  const lista: HistoricoRankingBolaoItem[] = [];
+  for (const row of rows) {
+    const raw = String(row?.palpite || '').trim();
+    if (!raw.startsWith('{')) continue;
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.__type === 'historico_ranking_bolao' && parsed.id) {
+        const rankingTop3 = Array.isArray(parsed.ranking) ? parsed.ranking.slice(0, 3) : [];
+        lista.push({
+          ...parsed,
+          id: String(parsed.id),
+          bolaoId: String(parsed.bolaoId || parsed.id),
+          tituloBolao: String(parsed.tituloBolao || 'Bolão Rodado'),
+          dataRodada: String(parsed.dataRodada || ''),
+          timestamp: Number(parsed.timestamp) || Date.now(),
+          valorCota: Number(parsed.valorCota) || 10,
+          totalArrecadado: Number(parsed.totalArrecadado) || 0,
+          premioTotal80: Number(parsed.premioTotal80) || 0,
+          premio1: Number(parsed.premio1) || 0,
+          premio2: Number(parsed.premio2) || 0,
+          premio3: Number(parsed.premio3) || 0,
+          totalParticipantes: Number(parsed.totalParticipantes) || 0,
+          totalPagos: Number(parsed.totalPagos) || 0,
+          totalJogos: Number(parsed.totalJogos) || 0,
+          totalJogosEncerrados: Number(parsed.totalJogosEncerrados) || 0,
+          statusBolao: parsed.statusBolao || 'ENCERRADO',
+          jogos: Array.isArray(parsed.jogos) ? parsed.jogos : [],
+          ranking: rankingTop3,
+        });
+      }
+    } catch {}
+  }
+
+  return lista.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+}
+
+export async function upsertHistoricoRankingBolaoInDb(item: HistoricoRankingBolaoItem): Promise<void> {
+  const id = String(item.id || `hist_bolao_${Date.now()}`).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
+  const histUuid = stringToUuid(`historico_ranking_${id}`);
+  const rankingTop3 = Array.isArray(item.ranking) ? item.ranking.slice(0, 3) : [];
+
+  const payload = {
+    __type: 'historico_ranking_bolao',
+    ...item,
+    id,
+    ranking: rankingTop3,
+    statusBolao: item.statusBolao || 'ENCERRADO',
+    updatedAt: new Date().toISOString(),
+  };
+
+  await supabase.from('apostas').upsert(
+    {
+      id: histUuid,
+      user_id: null,
+      jogo_id: null,
+      palpite: JSON.stringify(payload),
+    },
+    { onConflict: 'id' }
+  );
+
+  triggerListenersForCollection('historico_rankings');
+}
+
+export async function deleteHistoricoRankingBolaoFromDb(id: string): Promise<void> {
+  const cleanId = String(id || '').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
+  if (!cleanId) return;
+  const histUuid = stringToUuid(`historico_ranking_${cleanId}`);
+
+  try {
+    await supabase.from('apostas').delete().eq('id', histUuid);
+  } catch {}
+
+  triggerListenersForCollection('historico_rankings');
+}
+
 const CONFIG_BOLAO_UUID = stringToUuid('config_bolao_elite_v1');
 
 async function carregarConfigBolaoDoSupabase(): Promise<Record<string, any> | null> {
@@ -1304,6 +1490,10 @@ export async function saveConfigInDb(config: Record<string, any>): Promise<void>
     const merged = {
       ...atual,
       ...config,
+      NEXT_PUBLIC_SUPABASE_URL,
+      NEXT_PUBLIC_SUPABASE_ANON_KEY,
+      SUPABASE_REST_URL: SUPABASE_DEFAULT_REST_URL,
+      SUPABASE_SERVICE_ROLE_KEY,
       __type: 'config_bolao',
       updatedAt: new Date().toISOString(),
     };
@@ -1326,6 +1516,13 @@ export async function saveConfigInDb(config: Record<string, any>): Promise<void>
 export async function inicializarConfigAdminInDb(emailAdmin?: string): Promise<void> {
   const cleanEmail = String(emailAdmin || 'inhobahia29@gmail.com').trim().toLowerCase();
   if (!cleanEmail) return;
+  await saveConfigInDb({
+    adminEmail: cleanEmail,
+    NEXT_PUBLIC_SUPABASE_URL,
+    NEXT_PUBLIC_SUPABASE_ANON_KEY,
+    SUPABASE_REST_URL: SUPABASE_DEFAULT_REST_URL,
+    SUPABASE_SERVICE_ROLE_KEY,
+  });
   await sincronizarTimesEJogosIniciaisNoSupabase();
 }
 
@@ -1434,6 +1631,10 @@ export async function setDoc(ref: DocRef, data: any, _options?: { merge?: boolea
     await upsertComprovantePremiacaoInDb({ ...data, id: data?.id || ref.id });
     return;
   }
+  if (ref.collectionName === 'historico_rankings') {
+    await upsertHistoricoRankingBolaoInDb({ ...data, id: data?.id || ref.id });
+    return;
+  }
 }
 
 type ListenerEntry = {
@@ -1464,6 +1665,8 @@ async function notifyListener(entry: ListenerEntry): Promise<void> {
       items = await listarPalpitesDoSupabase();
     } else if (target.collectionName === 'comprovantes_premiacao') {
       items = await listarComprovantesPremiacaoDoSupabase();
+    } else if (target.collectionName === 'historico_rankings') {
+      items = await listarHistoricoRankingsDoSupabase();
     }
 
     const docs = items.map((item) => ({

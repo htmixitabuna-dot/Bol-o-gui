@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import logoOficial from './assets/images/bolao_elite_logo_1791164462566.jpg';
 import { PWAInstallButton } from './PWAInstallButton';
@@ -30,6 +30,12 @@ import {
   ComprovantePremiacaoItem,
   upsertComprovantePremiacaoInDb,
   deleteComprovantePremiacaoFromDb,
+  HistoricoRankingBolaoItem,
+  HistoricoRankingJogadorItem,
+  HistoricoRankingJogoItem,
+  HistoricoRankingPartidaApostada,
+  upsertHistoricoRankingBolaoInDb,
+  deleteHistoricoRankingBolaoFromDb,
   saveConfigInDb,
   inicializarConfigAdminInDb,
   compressImageToDataUrl,
@@ -338,6 +344,28 @@ export default function App() {
   const [modalTransparenciaAberto, setModalTransparenciaAberto] = useState(false);
   const [comprovantePremiacaoZoom, setComprovantePremiacaoZoom] = useState<ComprovantePremiacaoItem | null>(null);
 
+  // Menu Lateral ADM & Histórico de Ranking Automático (Somente Top 3 + Dados da Partida por Bolão Rodado)
+  const [historicoRankings, setHistoricoRankings] = useState<HistoricoRankingBolaoItem[]>(() => {
+    try {
+      const saved = localStorage.getItem("elite_historico_rankings_v11");
+      if (!saved) return [];
+      const parsed = JSON.parse(saved);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.map((item: any) => ({
+        ...item,
+        ranking: Array.isArray(item?.ranking) ? item.ranking.slice(0, 3) : [],
+      }));
+    } catch {
+      return [];
+    }
+  });
+  const [abaMenuAdm, setAbaMenuAdm] = useState<"painel" | "historico">("painel");
+  const [menuLateralAdmMobile, setMenuLateralAdmMobile] = useState(false);
+  const [bolaoHistoricoSelecionadoId, setBolaoHistoricoSelecionadoId] = useState<string>("");
+  const [tituloSalvarRanking, setTituloSalvarRanking] = useState("");
+  const [salvandoHistoricoRanking, setSalvandoHistoricoRanking] = useState(false);
+  const ultimaAssinaturaRodadaSalvaRef = useRef<string>("");
+
   const mostrarAvisoAdm = (msg: string) => {
     setAvisoAdm(msg);
     setTimeout(() => setAvisoAdm(""), 4000);
@@ -583,6 +611,35 @@ export default function App() {
       () => {}
     );
 
+    const unsubHistoricoRankings = onSnapshot(
+      collection(db, "historico_rankings"),
+      (snapshot) => {
+        setDbConectado(true);
+        const listaHist: HistoricoRankingBolaoItem[] = [];
+        snapshot.forEach((docSnap) => {
+          const rawData = docSnap.data() as HistoricoRankingBolaoItem;
+          listaHist.push({
+            ...rawData,
+            ranking: Array.isArray(rawData?.ranking) ? rawData.ranking.slice(0, 3) : [],
+          });
+        });
+        listaHist.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+        setHistoricoRankings((prevLocal) => {
+          const idsBanco = new Set(listaHist.map((x) => x.id));
+          const locaisExtras = prevLocal
+            .filter((loc) => loc.id && !idsBanco.has(loc.id))
+            .map((loc) => ({
+              ...loc,
+              ranking: Array.isArray(loc?.ranking) ? loc.ranking.slice(0, 3) : [],
+            }));
+          const combinada = [...listaHist, ...locaisExtras].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+          localStorage.setItem("elite_historico_rankings_v11", JSON.stringify(combinada));
+          return combinada;
+        });
+      },
+      () => {}
+    );
+
     const handleStorageSync = (ev: StorageEvent) => {
       if (ev.key === "elite_jogadores_v11" && ev.newValue) {
         try {
@@ -605,6 +662,7 @@ export default function App() {
       unsubDepositos();
       unsubConfig();
       unsubComprovantesPremiacao();
+      unsubHistoricoRankings();
     };
   }, []);
 
@@ -1270,6 +1328,9 @@ export default function App() {
     let novaLista: Jogo[];
     if (candidatos.length > 0) {
       if (substituirAtivos) {
+        if (jogosPublicados.length > 0 && palpites.length > 0) {
+          salvarRankingBolaoNoHistorico(true, false).catch(() => {});
+        }
         // Remove os jogos publicados da rodada anterior e publica apenas o novo bolão salvo
         const mantendoRascunhosOutros = jogos.filter(
           (j) => j.publicado === false && (targetBolaoId ? (j.bolaoId || "bolao_salvo_1") !== targetBolaoId : false)
@@ -1762,22 +1823,61 @@ export default function App() {
     return Math.ceil(restante / (24 * 60 * 60 * 1000));
   };
 
-  // Define resultado oficial de um jogo pelo ADM
+  // Define resultado oficial de um jogo pelo ADM e salva automaticamente os 3 primeiros quando todos os jogos da rodada finalizam
   const definirResultadoJogo = (jogoId: string, res: EscolhaResultado) => {
     const atualizados = jogos.map((j) => {
       if (j.id === jogoId) {
-        return { ...j, resultadoOficial: j.resultadoOficial === res ? undefined : res };
+        const novoRes = j.resultadoOficial === res ? undefined : res;
+        return {
+          ...j,
+          resultadoOficial: novoRes,
+          encerrado: Boolean(novoRes),
+        };
       }
       return j;
     });
     saveJogos(atualizados);
+
+    const publicadosAtualizados = atualizados.filter((j) => j.publicado !== false);
+    const todosDefinidos =
+      publicadosAtualizados.length > 0 &&
+      publicadosAtualizados.every((j) => Boolean(j.resultadoOficial));
+
+    if (todosDefinidos) {
+      salvarRankingBolaoNoHistorico(true, false, publicadosAtualizados).catch(() => {});
+      mostrarAvisoAdm(
+        "🏆 Rodada do bolão finalizada! Os 3 primeiros colocados e os dados das partidas foram salvos automaticamente no Histórico!"
+      );
+    }
   };
 
   const confirmarResultadosETriagem = () => {
-    saveJogos(jogos);
+    const jogosFinalizados = jogos.map((j) => {
+      if (j.publicado === false) return j;
+      let resOficial = j.resultadoOficial;
+      if (!resOficial && j.placarCasa !== undefined && j.placarFora !== undefined) {
+        const numC = Number(j.placarCasa);
+        const numF = Number(j.placarFora);
+        if (!isNaN(numC) && !isNaN(numF)) {
+          if (numC > numF) resOficial = "CASA";
+          else if (numF > numC) resOficial = "FORA";
+          else resOficial = "EMPATE";
+        }
+      }
+      return {
+        ...j,
+        resultadoOficial: resOficial,
+        encerrado: Boolean(resOficial || j.encerrado),
+      };
+    });
+    saveJogos(jogosFinalizados);
     setTriagemSalvaAviso(true);
     setTimeout(() => setTriagemSalvaAviso(false), 5000);
-    alert("Resultados confirmados! A triagem e ranking automático de ganhadores foram atualizados com sucesso.");
+    const publicadosFinalizados = jogosFinalizados.filter((j) => j.publicado !== false);
+    salvarRankingBolaoNoHistorico(true, false, publicadosFinalizados).catch(() => {});
+    mostrarAvisoAdm(
+      "🏆 Rodada finalizada! Somente os 3 primeiros colocados e os dados das partidas foram salvos automaticamente no Histórico!"
+    );
   };
 
   // =========================================================================
@@ -1929,6 +2029,235 @@ export default function App() {
   const premio1 = premio80 * 0.5;
   const premio2 = premio80 * 0.3;
   const premio3 = premio80 * 0.2;
+
+  // Salva automaticamente no Histórico Permanente SOMENTE os 3 primeiros colocados (1º, 2º e 3º) com os dados das partidas ao término da rodada
+  const salvarRankingBolaoNoHistorico = async (
+    modoAuto = false,
+    criarNovoSnapshot = false,
+    jogosOverride?: Jogo[]
+  ) => {
+    setSalvandoHistoricoRanking(true);
+    try {
+      const agora = Date.now();
+      const dataFormatada = `${new Date().toLocaleDateString("pt-BR")} às ${new Date().toLocaleTimeString("pt-BR", {
+        hour: "2-digit",
+        minute: "2-digit",
+      })}`;
+
+      const jogosBase =
+        jogosOverride && jogosOverride.length > 0
+          ? jogosOverride
+          : jogosPublicados.length > 0
+          ? jogosPublicados
+          : jogos;
+
+      if (jogosBase.length === 0) return;
+
+      const jogosEncerradosCount = jogosBase.filter((j) => Boolean(j.resultadoOficial || j.encerrado)).length;
+
+      // Calcula pontuação atualizada contra jogosBase para garantir precisão imediata ao finalizar a rodada
+      const rankingCalculado = jogadores
+        .map((jg) => {
+          const apostasJogador = palpites.filter((p) => p.jogadorEmail === jg.email);
+          const isPago =
+            jg.status_pagamento === "pago" ||
+            jg.aprovado === true ||
+            jg.statusPagamento === "APROVADO" ||
+            apostasJogador.some((p) => p.pago);
+
+          let pontos = 0;
+          const totalApostas = apostasJogador.length;
+
+          apostasJogador.forEach((p) => {
+            const jgCorrespondente = jogosBase.find((j) => j.id === p.jogoId);
+            if (jgCorrespondente && jgCorrespondente.resultadoOficial) {
+              if (p.escolha === jgCorrespondente.resultadoOficial) {
+                pontos += 1;
+              }
+            }
+          });
+
+          return {
+            ...jg,
+            pontos,
+            totalApostas,
+            isPago,
+            apostas: apostasJogador,
+          };
+        })
+        .sort((a, b) => {
+          if (b.pontos !== a.pontos) return b.pontos - a.pontos;
+          if (a.isPago && !b.isPago) return -1;
+          if (!a.isPago && b.isPago) return 1;
+          return (a.nome || "").localeCompare(b.nome || "");
+        });
+
+      const bolaoIdBase =
+        jogosBase.find((j) => j.bolaoId)?.bolaoId ||
+        `bolao_${getHojeBrasilISO().replace(/[^a-zA-Z0-9]/g, "")}`;
+      const tituloBaseJogo = jogosBase.find((j) => j.tituloBolao)?.tituloBolao || "";
+
+      const idRegistro = criarNovoSnapshot
+        ? `rank_${bolaoIdBase}_${agora}`
+        : `rank_${bolaoIdBase}`;
+
+      const registroExistente = historicoRankings.find((h) => h.id === idRegistro);
+      const numeroRodadaSequencial = registroExistente
+        ? undefined
+        : historicoRankings.length + 1;
+
+      const tituloFinal =
+        tituloSalvarRanking.trim() ||
+        registroExistente?.tituloBolao ||
+        tituloBaseJogo ||
+        `Bolão #${numeroRodadaSequencial || historicoRankings.length + 1} • Rodada ${new Date().toLocaleDateString("pt-BR")}`;
+
+      // SOMENTE OS 3 PRIMEIROS COLOCADOS (1º, 2º e 3º lugar) + DADOS DAS PARTIDAS
+      const top3Ganhadores = rankingCalculado.slice(0, 3);
+
+      const rankingSnapshot: HistoricoRankingJogadorItem[] = top3Ganhadores.map((jg, index) => {
+        const isPrimeiro = index === 0 && jg.pontos > 0;
+        const isSegundo = index === 1 && jg.pontos > 0;
+        const isTerceiro = index === 2 && jg.pontos > 0;
+        let premioEstimado = 0;
+        if (jg.isPago) {
+          if (isPrimeiro) premioEstimado = premio1;
+          else if (isSegundo) premioEstimado = premio2;
+          else if (isTerceiro) premioEstimado = premio3;
+        }
+
+        const partidasApostadas: HistoricoRankingPartidaApostada[] = jogosBase
+          .map((match) => {
+            const palpiteMatch = (jg.apostas || []).find((ap: Palpite) => ap.jogoId === match.id);
+            if (!palpiteMatch) return null;
+            const resOficial = match.resultadoOficial;
+            return {
+              jogoId: String(match.id),
+              casa: match.casa,
+              fora: match.fora,
+              escudoCasa: match.escudoCasa,
+              escudoFora: match.escudoFora,
+              placarCasa: match.placarCasa ?? 0,
+              placarFora: match.placarFora ?? 0,
+              escolha: palpiteMatch.escolha,
+              resultadoOficial: resOficial,
+              acertou: Boolean(resOficial && palpiteMatch.escolha === resOficial),
+              data: match.data,
+              estadio: match.estadio,
+            };
+          })
+          .filter(Boolean) as HistoricoRankingPartidaApostada[];
+
+        return {
+          posicao: index + 1,
+          nome: jg.nome || "Jogador",
+          email: jg.email || "",
+          pix: jg.pix || "",
+          pontos: jg.pontos || 0,
+          totalApostas: jg.totalApostas || 0,
+          isPago: Boolean(jg.isPago),
+          premioEstimado: Number(premioEstimado.toFixed(2)),
+          partidasApostadas,
+        };
+      });
+
+      const jogosSnapshot: HistoricoRankingJogoItem[] = jogosBase.map((j) => ({
+        id: String(j.id),
+        casa: j.casa,
+        fora: j.fora,
+        escudoCasa: j.escudoCasa,
+        escudoFora: j.escudoFora,
+        placarCasa: j.placarCasa ?? 0,
+        placarFora: j.placarFora ?? 0,
+        resultadoOficial: j.resultadoOficial,
+        data: j.data,
+        data_jogo: j.data_jogo,
+        estadio: j.estadio,
+        encerrado: Boolean(j.encerrado || j.resultadoOficial),
+      }));
+
+      const novoItemHistorico: HistoricoRankingBolaoItem = {
+        id: idRegistro,
+        bolaoId: bolaoIdBase,
+        tituloBolao: tituloFinal,
+        dataRodada: dataFormatada,
+        timestamp: agora,
+        valorCota: Number(valorCotaNumerico.toFixed(2)),
+        totalArrecadado: Number(total.toFixed(2)),
+        premioTotal80: Number(premio80.toFixed(2)),
+        premio1: Number(premio1.toFixed(2)),
+        premio2: Number(premio2.toFixed(2)),
+        premio3: Number(premio3.toFixed(2)),
+        totalParticipantes: rankingCalculado.length,
+        totalPagos: pagos,
+        totalJogos: jogosBase.length,
+        totalJogosEncerrados: jogosEncerradosCount,
+        statusBolao: jogosEncerradosCount >= jogosBase.length ? "ENCERRADO" : "ARQUIVADO",
+        ranking: rankingSnapshot,
+        jogos: jogosSnapshot,
+      };
+
+      const novaLista = [
+        novoItemHistorico,
+        ...historicoRankings.filter((item) => item.id !== idRegistro),
+      ].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+
+      setHistoricoRankings(novaLista);
+      localStorage.setItem("elite_historico_rankings_v11", JSON.stringify(novaLista));
+      setBolaoHistoricoSelecionadoId(novoItemHistorico.id);
+      if (tituloSalvarRanking.trim()) {
+        setTituloSalvarRanking("");
+      }
+
+      await upsertHistoricoRankingBolaoInDb(novoItemHistorico);
+
+      if (!modoAuto) {
+        mostrarAvisoAdm(
+          `🏆 Top 3 de "${tituloFinal}" e dados das partidas salvos com sucesso no Histórico!`
+        );
+      }
+    } finally {
+      setSalvandoHistoricoRanking(false);
+    }
+  };
+
+  // Monitoramento 100% automático: assim que a rodada do bolão termina (todos os jogos publicados com resultado definido ou encerrados), salva automaticamente os 3 primeiros colocados + dados das partidas no histórico
+  useEffect(() => {
+    if (jogosPublicados.length === 0) return;
+    const todosJogosFinalizados = jogosPublicados.every((j) =>
+      Boolean(j.resultadoOficial || j.encerrado)
+    );
+    if (!todosJogosFinalizados) return;
+
+    const bolaoIdAtual =
+      jogosPublicados.find((j) => j.bolaoId)?.bolaoId ||
+      `bolao_${getHojeBrasilISO().replace(/[^a-zA-Z0-9]/g, "")}`;
+    const top3Assinatura = rankingGanhadores
+      .slice(0, 3)
+      .map((jg, idx) => `${idx + 1}:${jg.email}:${jg.pontos}:${jg.isPago ? 1 : 0}`)
+      .join("|");
+    const jogosAssinatura = jogosPublicados
+      .map((j) => `${j.id}:${j.placarCasa ?? 0}x${j.placarFora ?? 0}:${j.resultadoOficial || ""}`)
+      .join("|");
+
+    const assinaturaCompleta = `${bolaoIdAtual}__${jogosAssinatura}__${top3Assinatura}__${total.toFixed(2)}`;
+    if (ultimaAssinaturaRodadaSalvaRef.current === assinaturaCompleta) return;
+
+    ultimaAssinaturaRodadaSalvaRef.current = assinaturaCompleta;
+    salvarRankingBolaoNoHistorico(true, false, jogosPublicados).catch(() => {});
+  }, [jogosPublicados, rankingGanhadores, total]);
+
+  const excluirRankingDoHistoricoAdm = async (id: string, titulo: string) => {
+    if (!confirm(`Deseja excluir o histórico salvo de "${titulo}"?`)) return;
+    const novaLista = historicoRankings.filter((h) => h.id !== id);
+    setHistoricoRankings(novaLista);
+    localStorage.setItem("elite_historico_rankings_v11", JSON.stringify(novaLista));
+    if (bolaoHistoricoSelecionadoId === id) {
+      setBolaoHistoricoSelecionadoId(novaLista[0]?.id || "");
+    }
+    await deleteHistoricoRankingBolaoFromDb(id).catch(() => {});
+    mostrarAvisoAdm(`🗑️ Histórico "${titulo}" removido.`);
+  };
 
   const somaConfirmadosMovimentacao = depositosConfirmadosLista.reduce(
     (acc, dep) => acc + (Number(dep.valor) || valorCotaNumerico),
@@ -3643,13 +3972,203 @@ export default function App() {
   }
 
   // =========================================================================
-  // 4. PAINEL ADM COM TRIAGEM AUTOMÁTICA & CONFIRMAÇÃO DE RESULTADOS
+  // 4. PAINEL ADM COM MENU LATERAL DE HISTÓRICO DE RANKING POR BOLÃO RODADO
   // =========================================================================
   if (page === "admin") {
+    const bolaoHistoricoAtivo =
+      historicoRankings.find((h) => h.id === bolaoHistoricoSelecionadoId) ||
+      historicoRankings[0] ||
+      null;
+
     return (
-      <div className="min-h-screen bg-[#0A0A0A] text-white p-4 max-w-4xl mx-auto space-y-6 pb-24">
+      <div className="min-h-screen bg-[#0A0A0A] text-white p-3 sm:p-4 max-w-7xl mx-auto pb-24">
+        <div className="flex flex-col lg:flex-row gap-5 items-start">
+          {/* =============================================================== */}
+          {/* MENU LATERAL DO ADM (HISTÓRICO DE RANKING POR BOLÃO RODADO)     */}
+          {/* =============================================================== */}
+          <aside className="w-full lg:w-72 shrink-0 bg-zinc-900 border border-zinc-800 rounded-2xl p-3.5 space-y-3.5 lg:sticky lg:top-4 shadow-xl">
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+              <div className="flex items-center gap-2.5">
+                <img src={logoBolao} alt="" className="w-9 h-9 object-contain rounded-lg border border-zinc-800" />
+                <div>
+                  <div className="text-xs font-black text-[#FF6B00] uppercase tracking-wider">
+                    MENU LATERAL ADM
+                  </div>
+                  <div className="text-[10px] text-zinc-400">
+                    Navegação & Histórico de Bolões
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setMenuLateralAdmMobile(!menuLateralAdmMobile)}
+                className="lg:hidden text-xs bg-black border border-zinc-700 text-zinc-300 px-2.5 py-1 rounded-lg font-bold cursor-pointer"
+              >
+                {menuLateralAdmMobile ? "▲ Ocultar" : "▼ Abrir Menu"}
+              </button>
+            </div>
+
+            <div className={`${menuLateralAdmMobile ? "block" : "hidden"} lg:block space-y-3.5`}>
+              {/* Botões Principais do Menu Lateral */}
+              <div className="space-y-1.5">
+                <div className="text-[10px] font-black uppercase text-zinc-500 px-1">
+                  Visão Principal
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAbaMenuAdm("painel")}
+                  className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-black transition cursor-pointer flex items-center justify-between ${
+                    abaMenuAdm === "painel"
+                      ? "bg-[#FF6B00] text-black shadow-md shadow-[#FF6B00]/20"
+                      : "bg-black/60 hover:bg-zinc-800 text-zinc-200 border border-zinc-800"
+                  }`}
+                >
+                  <span className="flex items-center gap-2">
+                    <span>⚙️</span> Painel Geral & Controle
+                  </span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-black/20 font-bold">
+                    Ativo
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAbaMenuAdm("historico");
+                    if (!bolaoHistoricoSelecionadoId && historicoRankings.length > 0) {
+                      setBolaoHistoricoSelecionadoId(historicoRankings[0].id);
+                    }
+                  }}
+                  className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-black transition cursor-pointer flex items-center justify-between ${
+                    abaMenuAdm === "historico"
+                      ? "bg-[#FF6B00] text-black shadow-md shadow-[#FF6B00]/20"
+                      : "bg-black/60 hover:bg-zinc-800 text-zinc-200 border border-zinc-800"
+                  }`}
+                >
+                  <span className="flex items-center gap-2">
+                    <span>🏆</span> Histórico de Ranking
+                  </span>
+                  <span
+                    className={`text-[10px] px-1.5 py-0.5 rounded font-black ${
+                      abaMenuAdm === "historico"
+                        ? "bg-black text-[#FF6B00]"
+                        : "bg-[#FF6B00]/20 text-[#FF6B00]"
+                    }`}
+                  >
+                    {historicoRankings.length}
+                  </span>
+                </button>
+              </div>
+
+              {/* Status Automático do Histórico de Ranking (Top 3 + Dados da Partida) */}
+              <div className="bg-black/80 border border-emerald-500/40 rounded-xl p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-black uppercase text-emerald-400 flex items-center gap-1">
+                    <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                    Histórico 100% Automático
+                  </span>
+                  <span className="text-[9px] bg-emerald-950 text-emerald-300 border border-emerald-700/70 px-1.5 py-0.5 rounded font-bold">
+                    TOP 3 + PARTIDAS
+                  </span>
+                </div>
+                <p className="text-[10px] text-zinc-400 leading-relaxed">
+                  Ao finalizar a rodada do bolão, os <strong className="text-white">3 primeiros colocados (1º, 2º e 3º)</strong> e somente eles são salvos automaticamente aqui com os <strong className="text-white">dados das partidas</strong>.
+                </p>
+                <div className="text-[10px] bg-zinc-900/90 border border-zinc-800 rounded-lg px-2.5 py-1.5 flex items-center justify-between text-zinc-300">
+                  <span>Status da Rodada Atual:</span>
+                  <span className="font-black text-[#FF6B00]">
+                    {totalJogosEncerrados}/{jogosPublicados.length} jogos finalizados
+                  </span>
+                </div>
+              </div>
+
+              {/* Lista Lateral de Todos os Bolões Rodados Salvos (Top 3 + Partidas) */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between px-1">
+                  <span className="text-[10px] font-black uppercase text-zinc-400">
+                    📚 Bolões Finalizados ({historicoRankings.length})
+                  </span>
+                </div>
+
+                {historicoRankings.length === 0 ? (
+                  <div className="bg-black/50 border border-dashed border-zinc-800 rounded-xl p-3 text-center space-y-1">
+                    <div className="text-[11px] font-bold text-zinc-400">
+                      Aguardando término da rodada
+                    </div>
+                    <p className="text-[10px] text-zinc-500">
+                      Assim que a rodada do bolão for finalizada, os 3 primeiros colocados e os dados das partidas ficarão salvos automaticamente aqui!
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1">
+                    {historicoRankings.map((item, idx) => {
+                      const selecionado =
+                        abaMenuAdm === "historico" &&
+                        (bolaoHistoricoAtivo?.id === item.id || (!bolaoHistoricoSelecionadoId && idx === 0));
+                      const top3 = Array.isArray(item.ranking) ? item.ranking.slice(0, 3) : [];
+
+                      return (
+                        <div
+                          key={item.id}
+                          onClick={() => {
+                            setBolaoHistoricoSelecionadoId(item.id);
+                            setAbaMenuAdm("historico");
+                          }}
+                          className={`p-2.5 rounded-xl border transition cursor-pointer space-y-1.5 ${
+                            selecionado
+                              ? "bg-[#FF6B00]/15 border-[#FF6B00] shadow-md"
+                              : "bg-black/70 hover:bg-zinc-800/80 border-zinc-800"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-1">
+                            <span className="font-black text-xs text-white truncate">
+                              {item.tituloBolao}
+                            </span>
+                            <span className="text-[9px] bg-zinc-900 border border-zinc-700 text-[#FF6B00] px-1.5 py-0.5 rounded font-bold shrink-0">
+                              {item.jogos?.length || item.totalJogos || 0} jogos
+                            </span>
+                          </div>
+
+                          <div className="text-[10px] text-zinc-400 flex items-center justify-between">
+                            <span>📅 {item.dataRodada}</span>
+                            <span className="text-emerald-400 font-bold">
+                              Pote: R$ {Number(item.premioTotal80 || 0).toFixed(0)}
+                            </span>
+                          </div>
+
+                          {top3.length > 0 && (
+                            <div className="space-y-1 pt-0.5">
+                              {top3.map((ganhador, gIdx) => (
+                                <div
+                                  key={`${item.id}_top_${gIdx}`}
+                                  className="text-[10px] bg-zinc-900/90 border border-zinc-800 text-zinc-200 px-2 py-0.5 rounded flex items-center justify-between"
+                                >
+                                  <span className="truncate">
+                                    {gIdx === 0 ? "🥇 1º" : gIdx === 1 ? "🥈 2º" : "🥉 3º"}{" "}
+                                    <strong>{ganhador.nome}</strong>
+                                  </span>
+                                  <span className="font-black text-[#FF6B00] shrink-0 ml-1">
+                                    {ganhador.pontos} pts
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          </aside>
+
+          {/* =============================================================== */}
+          {/* CONTEÚDO PRINCIPAL DO ADM                                       */}
+          {/* =============================================================== */}
+          <div className="flex-1 min-w-0 w-full space-y-6">
         {/* Topo ADM */}
-        <div className="flex justify-between items-center border-b border-zinc-800 pb-3">
+        <div className="flex flex-wrap justify-between items-center gap-2 border-b border-zinc-800 pb-3">
           <div className="flex items-center gap-3">
             <img src={logoBolao} alt="" className="w-10 h-10 object-contain rounded-lg" />
             <div>
@@ -3664,6 +4183,24 @@ export default function App() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setAbaMenuAdm(abaMenuAdm === "historico" ? "painel" : "historico");
+              }}
+              className={`text-xs px-3.5 py-1.5 rounded-lg cursor-pointer font-black uppercase tracking-wider flex items-center gap-1.5 transition border ${
+                abaMenuAdm === "historico"
+                  ? "bg-amber-400 text-black border-amber-300 shadow-md"
+                  : "bg-zinc-900 hover:bg-zinc-800 text-amber-400 border-amber-500/50"
+              }`}
+            >
+              <span>🏆</span>
+              <span>
+                {abaMenuAdm === "historico"
+                  ? "← Voltar ao Painel ADM"
+                  : `Histórico de Ranking (${historicoRankings.length})`}
+              </span>
+            </button>
             <button
               type="button"
               onClick={() => {
@@ -3700,6 +4237,383 @@ export default function App() {
             >
               ✕
             </button>
+          </div>
+        )}
+
+        {/* ================================================================= */}
+        {/* VISÃO DO HISTÓRICO DE RANKING POR CADA BOLÃO RODADO (TOP 3 + PARTIDAS) */}
+        {/* ================================================================= */}
+        {abaMenuAdm === "historico" && (
+          <div className="bg-zinc-900 border-2 border-[#FF6B00]/70 rounded-2xl p-4 sm:p-5 space-y-5 shadow-2xl">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-zinc-800 pb-4">
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[10px] font-black uppercase tracking-wider bg-[#FF6B00] text-black px-2 py-0.5 rounded">
+                    HISTÓRICO AUTOMÁTICO AO FINALIZAR RODADA
+                  </span>
+                  <span className="text-[10px] text-emerald-400 font-bold">
+                    ⚡ Salva somente os 3 primeiros colocados + dados das partidas
+                  </span>
+                </div>
+                <h3 className="font-black text-base sm:text-lg text-white flex items-center gap-2 mt-1">
+                  <span>🏆</span> HISTÓRICO DE RANKING (TOP 3 & DADOS DAS PARTIDAS)
+                </h3>
+                <p className="text-xs text-zinc-400">
+                  Ao término de cada rodada do bolão, os 3 primeiros colocados (1º, 2º e 3º lugar) e os dados oficiais das partidas são arquivados automaticamente aqui.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setAbaMenuAdm("painel")}
+                  className="bg-zinc-800 hover:bg-zinc-700 text-white font-bold px-3.5 py-2.5 rounded-xl text-xs cursor-pointer transition"
+                >
+                  ⚙️ Voltar ao Painel Geral
+                </button>
+              </div>
+            </div>
+
+            {historicoRankings.length === 0 ? (
+              <div className="bg-black/70 border border-dashed border-zinc-800 rounded-2xl p-8 text-center space-y-3">
+                <div className="text-3xl">🏆</div>
+                <div className="text-sm font-black text-white">
+                  Nenhuma Rodada Finalizada no Histórico Ainda
+                </div>
+                <p className="text-xs text-zinc-400 max-w-md mx-auto">
+                  Assim que a rodada do bolão terminar e os resultados forem finalizados, os 3 primeiros colocados (1º, 2º e 3º lugar) e os dados das partidas serão salvos automaticamente aqui.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-5">
+                {/* Seletor Horizontal Rápido de Bolões Rodados */}
+                <div className="flex flex-wrap items-center gap-2 bg-black/60 p-2.5 rounded-xl border border-zinc-800">
+                  <span className="text-[10px] font-black uppercase text-zinc-400 px-2">
+                    Selecionar Bolão Finalizado:
+                  </span>
+                  {historicoRankings.map((h) => {
+                    const isAtivo = bolaoHistoricoAtivo?.id === h.id;
+                    return (
+                      <button
+                        key={h.id}
+                        type="button"
+                        onClick={() => setBolaoHistoricoSelecionadoId(h.id)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer transition flex items-center gap-1.5 ${
+                          isAtivo
+                            ? "bg-[#FF6B00] text-black font-black shadow-md"
+                            : "bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-800"
+                        }`}
+                      >
+                        <span>🏆</span>
+                        <span>{h.tituloBolao}</span>
+                        <span className="text-[10px] opacity-75">({h.dataRodada.split(" ")[0]})</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {bolaoHistoricoAtivo && (
+                  <div className="space-y-4">
+                    {/* Cabeçalho e Resumo Financeiro do Bolão Selecionado */}
+                    <div className="bg-black/80 border border-zinc-800 rounded-2xl p-4 space-y-3">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-800 pb-3">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h4 className="font-black text-base text-[#FF6B00]">
+                              {bolaoHistoricoAtivo.tituloBolao}
+                            </h4>
+                            <span className="text-[10px] bg-emerald-950 border border-emerald-700 text-emerald-300 px-2.5 py-0.5 rounded-full font-bold">
+                              ✅ Rodada Finalizada em: {bolaoHistoricoAtivo.dataRodada}
+                            </span>
+                          </div>
+                          <div className="text-[11px] text-zinc-400 mt-0.5">
+                            ID do Bolão: <span className="font-mono text-zinc-300">{bolaoHistoricoAtivo.bolaoId}</span> •{" "}
+                            {bolaoHistoricoAtivo.totalJogosEncerrados} de {bolaoHistoricoAtivo.totalJogos} partidas finalizadas •{" "}
+                            Somente Top 3 salvos
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              excluirRankingDoHistoricoAdm(
+                                bolaoHistoricoAtivo.id,
+                                bolaoHistoricoAtivo.tituloBolao
+                              )
+                            }
+                            className="text-xs bg-red-950/70 hover:bg-red-900 text-red-300 border border-red-800/70 px-3 py-1.5 rounded-lg font-bold cursor-pointer transition flex items-center gap-1"
+                          >
+                            <span>🗑️</span> Excluir este Histórico
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Resumo de Premiação daquele Bolão */}
+                      <div className="grid grid-cols-2 sm:grid-cols-6 gap-2 text-center">
+                        <div className="bg-zinc-900/90 border border-zinc-800 p-2.5 rounded-xl">
+                          <div className="text-[9px] text-zinc-400 uppercase font-bold">Premiados Salvos</div>
+                          <div className="text-sm font-black text-white">
+                            Top {Math.min(3, bolaoHistoricoAtivo.ranking.length)} (1º, 2º e 3º)
+                          </div>
+                        </div>
+                        <div className="bg-zinc-900/90 border border-zinc-800 p-2.5 rounded-xl">
+                          <div className="text-[9px] text-zinc-400 uppercase font-bold">Total Arrecadado</div>
+                          <div className="text-sm font-black text-white">
+                            R$ {Number(bolaoHistoricoAtivo.totalArrecadado || 0).toFixed(2)}
+                          </div>
+                        </div>
+                        <div className="bg-zinc-900/90 border border-[#FF6B00]/40 p-2.5 rounded-xl">
+                          <div className="text-[9px] text-[#FF6B00] uppercase font-bold">Pote 80%</div>
+                          <div className="text-sm font-black text-[#FF6B00]">
+                            R$ {Number(bolaoHistoricoAtivo.premioTotal80 || 0).toFixed(2)}
+                          </div>
+                        </div>
+                        <div className="bg-amber-500/10 border border-amber-500/40 p-2.5 rounded-xl">
+                          <div className="text-[9px] text-amber-300 uppercase font-bold">🥇 1º Lugar (50%)</div>
+                          <div className="text-sm font-black text-amber-400">
+                            R$ {Number(bolaoHistoricoAtivo.premio1 || 0).toFixed(2)}
+                          </div>
+                        </div>
+                        <div className="bg-zinc-900/90 border border-zinc-700 p-2.5 rounded-xl">
+                          <div className="text-[9px] text-zinc-300 uppercase font-bold">🥈 2º Lugar (30%)</div>
+                          <div className="text-sm font-black text-zinc-200">
+                            R$ {Number(bolaoHistoricoAtivo.premio2 || 0).toFixed(2)}
+                          </div>
+                        </div>
+                        <div className="bg-zinc-900/90 border border-amber-800/50 p-2.5 rounded-xl">
+                          <div className="text-[9px] text-amber-500 uppercase font-bold">🥉 3º Lugar (20%)</div>
+                          <div className="text-sm font-black text-amber-500">
+                            R$ {Number(bolaoHistoricoAtivo.premio3 || 0).toFixed(2)}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Lista de Classificação: SOMENTE OS 3 PRIMEIROS COLOCADOS + DADOS DAS PARTIDAS */}
+                    <div className="space-y-2.5">
+                      <div className="text-xs font-black uppercase text-white flex items-center justify-between">
+                        <span>🏆 Pódio Oficial da Rodada — Somente os 3 Primeiros Colocados ({Math.min(3, bolaoHistoricoAtivo.ranking.length)})</span>
+                        <span className="text-[10px] text-emerald-400">
+                          1º, 2º e 3º Lugares + Dados das Partidas
+                        </span>
+                      </div>
+
+                      {bolaoHistoricoAtivo.ranking.slice(0, 3).length === 0 ? (
+                        <div className="text-xs text-zinc-500 py-4 text-center border border-dashed border-zinc-800 rounded-xl">
+                          Nenhum participante registrado neste bolão.
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          {bolaoHistoricoAtivo.ranking.slice(0, 3).map((jg, index) => {
+                            const isPrimeiro = index === 0;
+                            const isSegundo = index === 1;
+                            const isTerceiro = index === 2;
+
+                            return (
+                              <div
+                                key={`${bolaoHistoricoAtivo.id}_${jg.email || index}`}
+                                className={`p-3.5 rounded-xl border space-y-3 ${
+                                  isPrimeiro
+                                    ? "bg-gradient-to-r from-amber-500/15 via-black to-black border-amber-500/60"
+                                    : isSegundo
+                                    ? "bg-black/80 border-zinc-600"
+                                    : "bg-black/80 border-amber-800/60"
+                                }`}
+                              >
+                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                  <div className="flex items-center gap-3">
+                                    <div
+                                      className={`w-9 h-9 rounded-full flex items-center justify-center font-black text-xs shrink-0 ${
+                                        isPrimeiro
+                                          ? "bg-amber-400 text-black"
+                                          : isSegundo
+                                          ? "bg-zinc-300 text-black"
+                                          : "bg-amber-700 text-white"
+                                      }`}
+                                    >
+                                      {index + 1}º
+                                    </div>
+                                    <div>
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <span className="font-black text-sm text-white">{jg.nome}</span>
+                                        <span
+                                          className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${
+                                            isPrimeiro
+                                              ? "bg-amber-400 text-black"
+                                              : isSegundo
+                                              ? "bg-zinc-300 text-black"
+                                              : "bg-amber-700 text-white"
+                                          }`}
+                                        >
+                                          {isPrimeiro
+                                            ? "🥇 1º Lugar (Campeão)"
+                                            : isSegundo
+                                            ? "🥈 2º Lugar (Vice)"
+                                            : "🥉 3º Lugar"}
+                                        </span>
+                                        <span
+                                          className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${
+                                            jg.isPago
+                                              ? "bg-green-950 text-green-400 border-green-700"
+                                              : "bg-red-950 text-red-400 border-red-800"
+                                          }`}
+                                        >
+                                          {jg.isPago ? "PAGO" : "PENDENTE"}
+                                        </span>
+                                      </div>
+                                      <div className="text-[11px] text-zinc-400 mt-0.5 flex flex-wrap items-center gap-2">
+                                        <span>
+                                          PIX: <strong className="font-mono text-zinc-200 select-all">{jg.pix || "Não informado"}</strong>
+                                        </span>
+                                        {jg.pix && (
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              navigator.clipboard.writeText(jg.pix);
+                                              mostrarAvisoAdm(`📋 Chave PIX de ${jg.nome} copiada!`);
+                                            }}
+                                            className="text-[9px] bg-zinc-800 hover:bg-zinc-700 text-[#FF6B00] px-2 py-0.5 rounded font-bold cursor-pointer"
+                                          >
+                                            Copiar PIX
+                                          </button>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  <div className="flex items-center gap-3 self-end sm:self-center">
+                                    <div className="text-right">
+                                      <div className="text-lg font-black text-[#FF6B00]">
+                                        {jg.pontos}{" "}
+                                        <span className="text-xs font-normal text-zinc-400">
+                                          / {bolaoHistoricoAtivo.totalJogos} pts
+                                        </span>
+                                      </div>
+                                      <div className="text-[9px] text-zinc-500 uppercase font-bold">
+                                        {jg.totalApostas} partidas apostadas
+                                      </div>
+                                    </div>
+
+                                    {jg.premioEstimado > 0 && (
+                                      <div className="bg-[#FF6B00]/10 border border-[#FF6B00]/40 px-3 py-1.5 rounded-lg text-right">
+                                        <div className="text-[9px] text-zinc-400 uppercase font-bold">Prêmio</div>
+                                        <div className="text-xs font-black text-[#FF6B00]">
+                                          R$ {Number(jg.premioEstimado).toFixed(2)}
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+
+                                {/* Dados das Partidas Apostadas por este Ganhador do Top 3 */}
+                                {jg.partidasApostadas && jg.partidasApostadas.length > 0 && (
+                                  <div className="pt-2 border-t border-zinc-800/80 space-y-1.5">
+                                    <div className="text-[10px] font-black uppercase text-zinc-400">
+                                      ⚽ Dados das Partidas deste Ganhador ({jg.partidasApostadas.length} jogos):
+                                    </div>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                                      {jg.partidasApostadas.map((part, pIdx) => (
+                                        <div
+                                          key={`${bolaoHistoricoAtivo.id}_${jg.email}_part_${part.jogoId || pIdx}`}
+                                          className={`px-2.5 py-1.5 rounded-lg border text-[11px] flex items-center justify-between gap-2 ${
+                                            part.acertou
+                                              ? "bg-green-950/30 border-green-700/70 text-green-200"
+                                              : "bg-zinc-900/70 border-zinc-800 text-zinc-300"
+                                          }`}
+                                        >
+                                          <div className="flex items-center gap-1.5 min-w-0">
+                                            <span className="font-bold text-white truncate">
+                                              {part.casa} {part.placarCasa ?? 0}x{part.placarFora ?? 0} {part.fora}
+                                            </span>
+                                          </div>
+                                          <div className="flex items-center gap-1.5 shrink-0">
+                                            <span className="text-[10px] bg-black px-1.5 py-0.5 rounded text-[#FF6B00] font-bold">
+                                              Palpite:{" "}
+                                              {part.escolha === "CASA"
+                                                ? part.casa
+                                                : part.escolha === "FORA"
+                                                ? part.fora
+                                                : "Empate"}
+                                            </span>
+                                            <span
+                                              className={`text-[9px] font-black px-1.5 py-0.5 rounded ${
+                                                part.acertou
+                                                  ? "bg-green-500 text-black"
+                                                  : "bg-red-900/80 text-red-200"
+                                              }`}
+                                            >
+                                              {part.acertou ? "✓ ACERTOU" : "✗ ERROU"}
+                                            </span>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Dados Completos das Partidas daquele Bolão Rodado */}
+                    {bolaoHistoricoAtivo.jogos && bolaoHistoricoAtivo.jogos.length > 0 && (
+                      <div className="pt-3 border-t border-zinc-800 space-y-2">
+                        <div className="text-xs font-black uppercase text-zinc-300 flex items-center justify-between">
+                          <span>⚽ Dados das Partidas da Rodada ({bolaoHistoricoAtivo.jogos.length} jogos):</span>
+                          <span className="text-[10px] text-zinc-400">Placares, confrontos e vencedores oficiais</span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {bolaoHistoricoAtivo.jogos.map((j, idx) => (
+                            <div
+                              key={`${bolaoHistoricoAtivo.id}_jogo_${j.id || idx}`}
+                              className="bg-black/70 border border-zinc-800 rounded-xl p-2.5 flex items-center justify-between gap-2 text-xs"
+                            >
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <span className="text-[10px] font-mono text-zinc-500">#{idx + 1}</span>
+                                <Escudo src={j.escudoCasa} nome={j.casa} size={22} />
+                                <span className="font-bold text-white truncate">{j.casa}</span>
+                                <span className="bg-zinc-900 border border-zinc-700 px-1.5 py-0.5 rounded font-mono text-[11px] font-black text-[#FF6B00]">
+                                  {j.placarCasa ?? 0} x {j.placarFora ?? 0}
+                                </span>
+                                <span className="font-bold text-white truncate">{j.fora}</span>
+                                <Escudo src={j.escudoFora} nome={j.fora} size={22} />
+                              </div>
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                {j.data && (
+                                  <span className="text-[9px] text-zinc-500 hidden md:inline">{j.data}</span>
+                                )}
+                                <span
+                                  className={`text-[9px] font-black px-2 py-0.5 rounded shrink-0 ${
+                                    j.resultadoOficial === "CASA"
+                                      ? "bg-green-950 text-green-400 border border-green-700"
+                                      : j.resultadoOficial === "FORA"
+                                      ? "bg-green-950 text-green-400 border border-green-700"
+                                      : j.resultadoOficial === "EMPATE"
+                                      ? "bg-amber-950 text-amber-300 border border-amber-700"
+                                      : "bg-zinc-900 text-zinc-500"
+                                  }`}
+                                >
+                                  {j.resultadoOficial === "CASA"
+                                    ? `✓ ${j.casa}`
+                                    : j.resultadoOficial === "FORA"
+                                    ? `✓ ${j.fora}`
+                                    : j.resultadoOficial === "EMPATE"
+                                    ? "✓ Empate"
+                                    : "Sem resultado"}
+                                </span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -3950,14 +4864,14 @@ export default function App() {
                 onClick={confirmarResultadosETriagem}
                 className="w-full bg-[#FF6B00] hover:bg-[#ff7b1a] text-black font-black py-3 rounded-xl cursor-pointer transition uppercase text-xs tracking-wider shadow-lg shadow-[#FF6B00]/20 flex items-center justify-center gap-2 mt-2"
               >
-                <span>🏁</span> CONFIRMAR RESULTADOS & PROCESSAR TRIAGEM AUTOMÁTICA
+                <span>🏁</span> FINALIZAR RODADA DO BOLÃO (SALVA TOP 3 + DADOS DAS PARTIDAS NO HISTÓRICO)
               </button>
 
               {triagemSalvaAviso && (
                 <div className="bg-green-950/80 border border-green-700 text-green-300 p-3 rounded-xl text-xs flex items-center gap-2">
                   <span>✅</span>
                   <div>
-                    <strong>Resultados oficiais gravados!</strong> A ordem dos ganhadores e quem mais pontuou foram calculados abaixo.
+                    <strong>Rodada finalizada!</strong> Os 3 primeiros colocados (1º, 2º e 3º) e os dados das partidas foram salvos automaticamente no Histórico de Ranking.
                   </div>
                 </div>
               )}
@@ -3969,18 +4883,27 @@ export default function App() {
         {/* SEÇÃO 2: TRIAGEM AUTOMÁTICA DE APOSTAS & ORDEM DOS GANHADORES */}
         {/* ================================================================= */}
         <div className="bg-zinc-900 p-4 rounded-xl border border-zinc-800 space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 border-b border-zinc-800 pb-2">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-800 pb-2">
             <div>
               <h3 className="font-black text-sm text-white flex items-center gap-2">
                 <span className="text-[#FF6B00] text-base">🏆</span> TRIAGEM AUTOMÁTICA: ORDEM DOS GANHADORES
               </h3>
               <p className="text-[11px] text-zinc-400">
-                Classificação em tempo real por maior número de acertos (vitória/empate).
+                Classificação em tempo real por maior número de acertos. Ao finalizar a rodada, os 3 primeiros colocados são salvos automaticamente no Histórico.
               </p>
             </div>
-            <span className="text-[10px] text-zinc-400 bg-black px-2 py-1 rounded border border-zinc-800">
-              Total de Participantes: {rankingGanhadores.length}
-            </span>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setAbaMenuAdm("historico")}
+                className="text-[10px] bg-zinc-800 hover:bg-zinc-700 text-amber-400 border border-amber-500/40 font-bold px-2.5 py-1.5 rounded-lg cursor-pointer transition"
+              >
+                📚 Ver Histórico Top 3 ({historicoRankings.length})
+              </button>
+              <span className="text-[10px] text-zinc-400 bg-black px-2 py-1 rounded border border-zinc-800">
+                Total de Participantes: {rankingGanhadores.length}
+              </span>
+            </div>
           </div>
 
           {rankingGanhadores.length === 0 ? (
@@ -5451,6 +6374,8 @@ export default function App() {
             </div>
           </div>
         )}
+          </div>
+        </div>
         <ModalAreaTransparencia />
       </div>
     );
