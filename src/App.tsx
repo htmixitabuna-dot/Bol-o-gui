@@ -38,6 +38,8 @@ import {
   deleteHistoricoRankingBolaoFromDb,
   saveConfigInDb,
   inicializarConfigAdminInDb,
+  sincronizarIntegridadeCompletaNoSupabase,
+  resetarPagamentosDaRodadaNoSupabase,
   compressImageToDataUrl,
   buscarJogosRodadaEspn,
   sincronizarTimesEJogosIniciaisNoSupabase,
@@ -143,10 +145,12 @@ export interface Jogo {
 }
 
 export interface Palpite {
+  id?: string;
   jogadorEmail: string;
   jogoId: string;
   escolha: EscolhaResultado;
   pago?: boolean;
+  bolaoPagoId?: string;
 }
 
 export default function App() {
@@ -175,9 +179,22 @@ export default function App() {
     }
   });
   const [user, setUser] = useState<any>(null);
-  const [config, setConfig] = useState<{ valor: number | string; valorCota?: number; precoCota?: number; linkPagamentoInfinitePay?: string; chavePix: string; nomePix: string; cidadePix: string; pixAdm: string }>(() => {
+  const [config, setConfig] = useState<{
+    valor: number | string;
+    valorCota?: number;
+    precoCota?: number;
+    linkPagamentoInfinitePay?: string;
+    chavePix: string;
+    nomePix: string;
+    cidadePix: string;
+    pixAdm: string;
+    cicloBolaoAtivoId?: string;
+    boloesEncerradosIds?: string[];
+  }>(() => {
     let inicialVal = VALOR_COTA;
     let inicialLink = "";
+    let inicialCiclo = "ciclo_bolao_v2_ativo";
+    let inicialEncerrados: string[] = [];
     try {
       const savedBolao = localStorage.getItem("supabase_doc_config/bolao");
       const savedCfg = localStorage.getItem("elite_config_v11");
@@ -185,6 +202,8 @@ export default function App() {
       const v = Number(parsed?.valorCota ?? parsed?.valor ?? parsed?.precoCota);
       if (!isNaN(v) && v > 0) inicialVal = v;
       if (parsed?.linkPagamentoInfinitePay) inicialLink = String(parsed.linkPagamentoInfinitePay);
+      if (parsed?.cicloBolaoAtivoId) inicialCiclo = String(parsed.cicloBolaoAtivoId);
+      if (Array.isArray(parsed?.boloesEncerradosIds)) inicialEncerrados = parsed.boloesEncerradosIds;
     } catch {
       // ignore
     }
@@ -197,6 +216,8 @@ export default function App() {
       nomePix: "IRAILSON DA SILVA",
       cidadePix: "ITABUNA",
       pixAdm: CHAVE_PIX_ALEATORIA,
+      cicloBolaoAtivoId: inicialCiclo,
+      boloesEncerradosIds: inicialEncerrados,
     };
   });
   const [valorPixAtual, setValorPixAtual] = useState<number>(() => {
@@ -265,8 +286,26 @@ export default function App() {
   const [escudoTime2, setEscudoTime2] = useState("");
   const [dataJ, setDataJ] = useState("16:00");
   const [estadio, setEstadio] = useState("Brasileirão Série A");
-  const [tituloNovoBolao, setTituloNovoBolao] = useState("Novo Bolão da Rodada");
-  const [bolaoEmPreparoId, setBolaoEmPreparoId] = useState("bolao_salvo_1");
+  const [tituloNovoBolao, setTituloNovoBolao] = useState(() => {
+    try {
+      const savedCfg = localStorage.getItem("elite_config_v11");
+      if (savedCfg) {
+        const parsed = JSON.parse(savedCfg);
+        if (parsed?.tituloNovoBolao) return String(parsed.tituloNovoBolao);
+      }
+    } catch {}
+    return "Novo Bolão da Rodada";
+  });
+  const [bolaoEmPreparoId, setBolaoEmPreparoId] = useState(() => {
+    try {
+      const savedCfg = localStorage.getItem("elite_config_v11");
+      if (savedCfg) {
+        const parsed = JSON.parse(savedCfg);
+        if (parsed?.bolaoEmPreparoId) return String(parsed.bolaoEmPreparoId);
+      }
+    } catch {}
+    return "bolao_salvo_1";
+  });
   const [bolaoSalvoAviso, setBolaoSalvoAviso] = useState(false);
 
   // Escolhas temporárias do jogador para a rodada atual
@@ -365,6 +404,12 @@ export default function App() {
   const [tituloSalvarRanking, setTituloSalvarRanking] = useState("");
   const [salvandoHistoricoRanking, setSalvandoHistoricoRanking] = useState(false);
   const ultimaAssinaturaRodadaSalvaRef = useRef<string>("");
+  const ultimaRodadaZeradaRef = useRef<string>("");
+
+  const cicloBolaoAtivoId = String(config.cicloBolaoAtivoId || "ciclo_bolao_v2_ativo").trim();
+  const boloesEncerradosSet = new Set<string>(
+    Array.isArray(config.boloesEncerradosIds) ? config.boloesEncerradosIds : []
+  );
 
   const mostrarAvisoAdm = (msg: string) => {
     setAvisoAdm(msg);
@@ -373,6 +418,20 @@ export default function App() {
 
   useEffect(() => {
     limparCacheJogosLocal();
+    inicializarConfigAdminInDb().catch(() => {});
+    sincronizarIntegridadeCompletaNoSupabase().catch(() => {});
+
+    // Limpeza única de saldos/depósitos antigos que ficaram presos antes da separação por ciclo de bolão
+    try {
+      if (localStorage.getItem("elite_reset_pagamentos_v2_done") !== "true") {
+        localStorage.setItem("elite_reset_pagamentos_v2_done", "true");
+        localStorage.removeItem("elite_depositos_v11");
+        localStorage.removeItem("elite_pix_confirmado_v11");
+        setDepositos([]);
+        setPagamentoConfirmadoLocal(false);
+        resetarPagamentosDaRodadaNoSupabase("ciclo_bolao_v2_ativo", ["bolao_1", "bolao_salvo_1"]).catch(() => {});
+      }
+    } catch {}
     try {
       const jd = localStorage.getItem("elite_jogadores_v11");
       const p = localStorage.getItem("elite_palpites_v11");
@@ -541,8 +600,18 @@ export default function App() {
         snapshot.forEach((docSnap) => {
           listaPalpites.push(docSnap.data() as Palpite);
         });
-        setPalpites(listaPalpites);
-        localStorage.setItem("elite_palpites_v11", JSON.stringify(listaPalpites));
+        setPalpites((prevLocal) => {
+          const idsNoBanco = new Set(listaPalpites.map((p) => p.id));
+          const locaisExtras = prevLocal.filter((loc) => {
+            if (!loc.id || idsNoBanco.has(loc.id)) return false;
+            if (isJogadorDeletedLocal(loc.jogadorEmail)) return false;
+            upsertPalpiteInDb(loc).catch(() => {});
+            return true;
+          });
+          const combinada = [...listaPalpites, ...locaisExtras];
+          localStorage.setItem("elite_palpites_v11", JSON.stringify(combinada));
+          return combinada;
+        });
       },
       () => {}
     );
@@ -577,6 +646,21 @@ export default function App() {
           setPayloadPixAtual(
             gerarPayloadPix("f0e74d2a-d610-4b76-842e-8b7e1a08047d", valorAtual, "IRAILSON DA SILVA", "ITABUNA")
           );
+          const novoCiclo = String(configDoc?.cicloBolaoAtivoId || prev.cicloBolaoAtivoId || "ciclo_bolao_v2_ativo").trim();
+          const novosEncerrados = Array.from(
+            new Set([
+              ...(Array.isArray(prev.boloesEncerradosIds) ? prev.boloesEncerradosIds : []),
+              ...(Array.isArray(configDoc?.boloesEncerradosIds) ? configDoc.boloesEncerradosIds : []),
+            ])
+          );
+          if (prev.cicloBolaoAtivoId && novoCiclo !== prev.cicloBolaoAtivoId) {
+            setDepositos([]);
+            setPagamentoConfirmadoLocal(false);
+            try {
+              localStorage.removeItem("elite_depositos_v11");
+              localStorage.removeItem("elite_pix_confirmado_v11");
+            } catch {}
+          }
           const next = {
             ...prev,
             ...(configDoc || {}),
@@ -588,6 +672,8 @@ export default function App() {
             pixAdm: CHAVE_PIX_ALEATORIA,
             nomePix: configDoc?.nomePix || prev.nomePix,
             cidadePix: configDoc?.cidadePix || prev.cidadePix,
+            cicloBolaoAtivoId: novoCiclo,
+            boloesEncerradosIds: novosEncerrados,
           };
           localStorage.setItem("elite_config_v11", JSON.stringify(next));
           return next;
@@ -605,8 +691,17 @@ export default function App() {
           listaPrem.push(docSnap.data() as ComprovantePremiacaoItem);
         });
         listaPrem.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-        setComprovantesPremiacao(listaPrem);
-        localStorage.setItem("elite_comprovantes_premiacao_v11", JSON.stringify(listaPrem));
+        setComprovantesPremiacao((prevLocal) => {
+          const idsBanco = new Set(listaPrem.map((x) => x.id));
+          const locaisExtras = prevLocal.filter((loc) => {
+            if (!loc.id || idsBanco.has(loc.id)) return false;
+            upsertComprovantePremiacaoInDb(loc).catch(() => {});
+            return true;
+          });
+          const combinada = [...listaPrem, ...locaisExtras].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+          localStorage.setItem("elite_comprovantes_premiacao_v11", JSON.stringify(combinada));
+          return combinada;
+        });
       },
       () => {}
     );
@@ -627,7 +722,11 @@ export default function App() {
         setHistoricoRankings((prevLocal) => {
           const idsBanco = new Set(listaHist.map((x) => x.id));
           const locaisExtras = prevLocal
-            .filter((loc) => loc.id && !idsBanco.has(loc.id))
+            .filter((loc) => {
+              if (!loc.id || idsBanco.has(loc.id)) return false;
+              upsertHistoricoRankingBolaoInDb(loc).catch(() => {});
+              return true;
+            })
             .map((loc) => ({
               ...loc,
               ranking: Array.isArray(loc?.ranking) ? loc.ranking.slice(0, 3) : [],
@@ -818,21 +917,25 @@ export default function App() {
           const jgConfirmado = {
             ...dadosJogador,
             id: docId,
+            pagou: true,
             status_pagamento: "pago",
             aprovado: true,
             aprovado_em: agoraIso,
             statusPagamento: "APROVADO",
             dataAprovacao: horaFormatada,
+            bolaoPagoId: cicloBolaoAtivoId,
+            valorPago: Number(config.valorCota ?? config.valor) || 10,
+            timestampDeposito: Date.now(),
           };
           await upsertJogadorInDb(jgConfirmado);
           setUser(jgConfirmado);
           localStorage.setItem("elite_user_v11", JSON.stringify(jgConfirmado));
 
-          // Marca automaticamente os palpites desse jogador como pagos
+          // Marca automaticamente os palpites desse jogador como pagos no ciclo atual
           const emailAlvo = (jgConfirmado.email || "").toLowerCase();
           palpites.forEach((p) => {
-            if ((p.jogadorEmail || "").toLowerCase() === emailAlvo && !p.pago) {
-              upsertPalpiteInDb({ ...p, pago: true }).catch(() => {});
+            if ((p.jogadorEmail || "").toLowerCase() === emailAlvo && (!p.pago || p.bolaoPagoId !== cicloBolaoAtivoId)) {
+              upsertPalpiteInDb({ ...p, pago: true, bolaoPagoId: cicloBolaoAtivoId }).catch(() => {});
             }
           });
         }
@@ -1051,7 +1154,7 @@ export default function App() {
       // Atualiza estado local e grava direto no registro do jogador no Supabase para aparecer na área do ADM (/admin)
       enviarComprovante(emailJogador, comprovanteBase64);
 
-      // Envia também para o endpoint /api/upload-comprovante
+      // Envia também para o endpoint /api/upload-comprovante com o identificador do bolão atual
       await fetch("/api/upload-comprovante", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1060,6 +1163,8 @@ export default function App() {
           nome: nomeJogador,
           email: emailJogador,
           comprovante: comprovanteBase64,
+          bolaoPagoId: cicloBolaoAtivoId,
+          timestampComprovante: Date.now(),
         }),
       }).catch(() => {});
 
@@ -1106,14 +1211,15 @@ export default function App() {
         userId: uid,
         valor: valorConfirmado,
         status: "CONFIRMADO",
+        bolaoPagoId: cicloBolaoAtivoId,
         chaveDestino: "f0e74d2a-d610-4b76-842e-8b7e1a08047d",
         createdAt: agoraIso,
-        nome: usuarioAtivo.nome || "Inho",
-        email: usuarioAtivo.email || "inhobahia29@gmail.com",
+        nome: usuarioAtivo.nome || "Jogador",
+        email: usuarioAtivo.email || "",
       };
 
       const novaListaDepositos = [
-        ...depositos.filter((d) => d.userId !== uid && d.id !== uid),
+        ...depositos.filter((d) => d.userId !== uid && d.id !== uid && d.bolaoPagoId === cicloBolaoAtivoId),
         novoDeposito,
       ];
       setDepositos(novaListaDepositos);
@@ -1122,11 +1228,15 @@ export default function App() {
       const jgConfirmado = {
         ...usuarioAtivo,
         id: uid,
+        pagou: true,
         status_pagamento: "pago",
         aprovado: true,
         aprovado_em: agoraIso,
         statusPagamento: "APROVADO",
         dataAprovacao: horaFormatada,
+        bolaoPagoId: cicloBolaoAtivoId,
+        valorPago: valorConfirmado,
+        timestampDeposito: Date.now(),
       };
       setUser(jgConfirmado);
       localStorage.setItem("elite_user_v11", JSON.stringify(jgConfirmado));
@@ -1145,7 +1255,7 @@ export default function App() {
       const emailAlvo = (jgConfirmado.email || "").toLowerCase();
       const palpitesAtualizados = palpites.map((p) => {
         if ((p.jogadorEmail || "").toLowerCase() === emailAlvo) {
-          const nextP = { ...p, pago: true };
+          const nextP = { ...p, pago: true, bolaoPagoId: cicloBolaoAtivoId };
           upsertPalpiteInDb(nextP).catch(() => {});
           return nextP;
         }
@@ -1160,13 +1270,14 @@ export default function App() {
         userId: auth.currentUser.uid,
         valor: valorConfirmado,
         status: "CONFIRMADO",
+        bolaoPagoId: cicloBolaoAtivoId,
         chaveDestino: "f0e74d2a-d610-4b76-842e-8b7e1a08047d",
         createdAt: serverTimestamp(),
-        nome: jgConfirmado.nome || "Inho",
-        email: jgConfirmado.email || "inhobahia29@gmail.com",
+        nome: jgConfirmado.nome || "Jogador",
+        email: jgConfirmado.email || "",
       }).catch(() => {});
 
-      await registrarDepositoConfirmadoInDb(jgConfirmado, valorConfirmado).catch(() => {});
+      await registrarDepositoConfirmadoInDb(jgConfirmado, valorConfirmado, cicloBolaoAtivoId).catch(() => {});
       await upsertJogadorInDb(jgConfirmado).catch(() => {});
     } finally {
       setConfirmandoJaPaguei(false);
@@ -1402,7 +1513,12 @@ export default function App() {
   const toggleStatusPago = (email: string) => {
     const atualizados = palpites.map((p: any) => {
       if (p.jogadorEmail === email) {
-        const nextP = { ...p, pago: !p.pago };
+        const novoPago = !p.pago;
+        const nextP = {
+          ...p,
+          pago: novoPago,
+          bolaoPagoId: novoPago ? cicloBolaoAtivoId : "",
+        };
         upsertPalpiteInDb(nextP).catch(() => {});
         return nextP;
       }
@@ -1413,10 +1529,10 @@ export default function App() {
   };
 
   const aprovarPagamento = (email: string) => {
-    // 1. Marca todos os palpites do jogador como pagos
+    // 1. Marca todos os palpites do jogador como pagos no bolão atual
     const palpitesAtualizados = palpites.map((p: any) => {
       if (p.jogadorEmail === email) {
-        const nextP = { ...p, pago: true };
+        const nextP = { ...p, pago: true, bolaoPagoId: cicloBolaoAtivoId };
         upsertPalpiteInDb(nextP).catch(() => {});
         return nextP;
       }
@@ -1425,14 +1541,21 @@ export default function App() {
     setPalpites(palpitesAtualizados);
     localStorage.setItem("elite_palpites_v11", JSON.stringify(palpitesAtualizados));
 
-    // 2. Atualiza o status do jogador para APROVADO
+    // 2. Atualiza o status do jogador para APROVADO vinculado ao bolão atual
     const horaAprovacao = new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+    const valorCotaAprov = Number(config.valorCota ?? config.valor) || 10;
     const jogadoresAtualizados = jogadores.map((jg: any) => {
       if (jg.email === email) {
         const nextJg = {
           ...jg,
+          pagou: true,
+          aprovado: true,
+          status_pagamento: "pago",
           statusPagamento: "APROVADO",
           dataAprovacao: horaAprovacao,
+          bolaoPagoId: cicloBolaoAtivoId,
+          valorPago: valorCotaAprov,
+          timestampDeposito: Date.now(),
         };
         upsertJogadorInDb(nextJg).catch(() => {});
         return nextJg;
@@ -1446,8 +1569,14 @@ export default function App() {
     if (user && user.email === email) {
       const userAtualizado = {
         ...user,
+        pagou: true,
+        aprovado: true,
+        status_pagamento: "pago",
         statusPagamento: "APROVADO",
         dataAprovacao: horaAprovacao,
+        bolaoPagoId: cicloBolaoAtivoId,
+        valorPago: valorCotaAprov,
+        timestampDeposito: Date.now(),
       };
       setUser(userAtualizado);
       localStorage.setItem("elite_user_v11", JSON.stringify(userAtualizado));
@@ -1462,7 +1591,7 @@ export default function App() {
   const recusarPagamento = (email: string) => {
     const palpitesAtualizados = palpites.map((p: any) => {
       if (p.jogadorEmail === email) {
-        const nextP = { ...p, pago: false };
+        const nextP = { ...p, pago: false, bolaoPagoId: "" };
         upsertPalpiteInDb(nextP).catch(() => {});
         return nextP;
       }
@@ -1473,7 +1602,15 @@ export default function App() {
 
     const jogadoresAtualizados = jogadores.map((jg: any) => {
       if (jg.email === email) {
-        const nextJg = { ...jg, statusPagamento: "RECUSADO" };
+        const nextJg = {
+          ...jg,
+          pagou: false,
+          aprovado: false,
+          status_pagamento: "pendente",
+          statusPagamento: "RECUSADO",
+          bolaoPagoId: "",
+          valorPago: 0,
+        };
         upsertJogadorInDb(nextJg).catch(() => {});
         return nextJg;
       }
@@ -1483,7 +1620,15 @@ export default function App() {
     localStorage.setItem("elite_jogadores_v11", JSON.stringify(jogadoresAtualizados));
 
     if (user && user.email === email) {
-      const userAtualizado = { ...user, statusPagamento: "RECUSADO" };
+      const userAtualizado = {
+        ...user,
+        pagou: false,
+        aprovado: false,
+        status_pagamento: "pendente",
+        statusPagamento: "RECUSADO",
+        bolaoPagoId: "",
+        valorPago: 0,
+      };
       setUser(userAtualizado);
       localStorage.setItem("elite_user_v11", JSON.stringify(userAtualizado));
     }
@@ -1506,10 +1651,14 @@ export default function App() {
       if ((jg.email || "").toLowerCase() === email.toLowerCase()) {
         const nextJg = {
           ...jg,
+          pagou: false,
+          aprovado: false,
+          status_pagamento: "pendente",
           comprovante: comprovanteBase64,
           timestampComprovante: agora,
           statusPagamento: "EM_ANALISE",
           dataEnvioComprovante: dataHoraFormatada,
+          bolaoPagoId: cicloBolaoAtivoId,
         };
         upsertJogadorInDb(nextJg).catch(() => {});
         return nextJg;
@@ -1522,10 +1671,14 @@ export default function App() {
     if (user && user.email === email) {
       const userAtualizado = {
         ...user,
+        pagou: false,
+        aprovado: false,
+        status_pagamento: "pendente",
         comprovante: comprovanteBase64,
         timestampComprovante: agora,
         statusPagamento: "EM_ANALISE",
         dataEnvioComprovante: dataHoraFormatada,
+        bolaoPagoId: cicloBolaoAtivoId,
       };
       setUser(userAtualizado);
       localStorage.setItem("elite_user_v11", JSON.stringify(userAtualizado));
@@ -1823,8 +1976,87 @@ export default function App() {
     return Math.ceil(restante / (24 * 60 * 60 * 1000));
   };
 
-  // Define resultado oficial de um jogo pelo ADM e salva automaticamente os 3 primeiros quando todos os jogos da rodada finalizam
-  const definirResultadoJogo = (jogoId: string, res: EscolhaResultado) => {
+  // Zera automaticamente o saldo e remove os participantes que fizeram depósito referente ao bolão finalizado da lista de depositantes
+  const zerarSaldoEDepositantesAposRodada = async (bolaoEncerradoIdOpcional?: string) => {
+    const novoCicloId = `ciclo_bolao_${Date.now()}`;
+    const bolaoAtualJogos = jogosPublicados.find((j) => j.bolaoId)?.bolaoId || "";
+    const idsParaEncerrar = [
+      cicloBolaoAtivoId,
+      bolaoEncerradoIdOpcional || "",
+      bolaoAtualJogos,
+    ].filter(Boolean);
+
+    const novosEncerrados = Array.from(
+      new Set([...(Array.isArray(config.boloesEncerradosIds) ? config.boloesEncerradosIds : []), ...idsParaEncerrar])
+    );
+
+    // 1. Limpa lista de depósitos, flags locais e avança o ciclo de pagamento para um novo bolão
+    setDepositos([]);
+    setPagamentoConfirmadoLocal(false);
+    try {
+      localStorage.removeItem("elite_depositos_v11");
+      localStorage.removeItem("elite_pix_confirmado_v11");
+    } catch {}
+
+    const novoConfig = {
+      ...config,
+      cicloBolaoAtivoId: novoCicloId,
+      boloesEncerradosIds: novosEncerrados,
+    };
+    saveConfig(novoConfig);
+
+    // 2. Remove todos os participantes que depositaram naquele bolão da lista de depositantes (só voltam se fizerem novo depósito em novo bolão)
+    const jogadoresZerados = jogadores.map((jg: any) => ({
+      ...jg,
+      pagou: false,
+      aprovado: false,
+      status_pagamento: "pendente",
+      statusPagamento: "PENDENTE",
+      bolaoPagoId: "",
+      valorPago: 0,
+      dataAprovacao: undefined,
+      aprovado_em: undefined,
+      comprovante: undefined,
+      timestampComprovante: undefined,
+      dataEnvioComprovante: undefined,
+    }));
+    setJogadores(jogadoresZerados);
+    localStorage.setItem("elite_jogadores_v11", JSON.stringify(jogadoresZerados));
+
+    if (user) {
+      const userZerado = {
+        ...user,
+        pagou: false,
+        aprovado: false,
+        status_pagamento: "pendente",
+        statusPagamento: "PENDENTE",
+        bolaoPagoId: "",
+        valorPago: 0,
+        dataAprovacao: undefined,
+        aprovado_em: undefined,
+        comprovante: undefined,
+        timestampComprovante: undefined,
+        dataEnvioComprovante: undefined,
+      };
+      setUser(userZerado);
+      localStorage.setItem("elite_user_v11", JSON.stringify(userZerado));
+    }
+
+    // 3. Desmarca o status pago dos palpites da rodada encerrada
+    const palpitesZerados = palpites.map((p: any) => ({
+      ...p,
+      pago: false,
+      bolaoPagoId: "",
+    }));
+    setPalpites(palpitesZerados);
+    localStorage.setItem("elite_palpites_v11", JSON.stringify(palpitesZerados));
+
+    // 4. Sincroniza o reset completo no Supabase
+    await resetarPagamentosDaRodadaNoSupabase(novoCicloId, idsParaEncerrar).catch(() => {});
+  };
+
+  // Define resultado oficial de um jogo pelo ADM e salva automaticamente os 3 primeiros + zera o saldo e lista de depositantes quando todos os jogos da rodada finalizam
+  const definirResultadoJogo = async (jogoId: string, res: EscolhaResultado) => {
     const atualizados = jogos.map((j) => {
       if (j.id === jogoId) {
         const novoRes = j.resultadoOficial === res ? undefined : res;
@@ -1844,14 +2076,16 @@ export default function App() {
       publicadosAtualizados.every((j) => Boolean(j.resultadoOficial));
 
     if (todosDefinidos) {
-      salvarRankingBolaoNoHistorico(true, false, publicadosAtualizados).catch(() => {});
+      const bolaoIdFim = publicadosAtualizados.find((j) => j.bolaoId)?.bolaoId || cicloBolaoAtivoId;
+      await salvarRankingBolaoNoHistorico(true, false, publicadosAtualizados).catch(() => {});
+      await zerarSaldoEDepositantesAposRodada(bolaoIdFim).catch(() => {});
       mostrarAvisoAdm(
-        "🏆 Rodada do bolão finalizada! Os 3 primeiros colocados e os dados das partidas foram salvos automaticamente no Histórico!"
+        "🏆 Rodada finalizada! Top 3 salvo no Histórico, saldo zerado e lista de depositantes limpa para o próximo bolão!"
       );
     }
   };
 
-  const confirmarResultadosETriagem = () => {
+  const confirmarResultadosETriagem = async () => {
     const jogosFinalizados = jogos.map((j) => {
       if (j.publicado === false) return j;
       let resOficial = j.resultadoOficial;
@@ -1874,10 +2108,43 @@ export default function App() {
     setTriagemSalvaAviso(true);
     setTimeout(() => setTriagemSalvaAviso(false), 5000);
     const publicadosFinalizados = jogosFinalizados.filter((j) => j.publicado !== false);
-    salvarRankingBolaoNoHistorico(true, false, publicadosFinalizados).catch(() => {});
+    const bolaoIdFim = publicadosFinalizados.find((j) => j.bolaoId)?.bolaoId || cicloBolaoAtivoId;
+    await salvarRankingBolaoNoHistorico(true, false, publicadosFinalizados).catch(() => {});
+    await zerarSaldoEDepositantesAposRodada(bolaoIdFim).catch(() => {});
     mostrarAvisoAdm(
-      "🏆 Rodada finalizada! Somente os 3 primeiros colocados e os dados das partidas foram salvos automaticamente no Histórico!"
+      "🏆 Rodada finalizada! Top 3 salvo no Histórico, saldo zerado e participantes removidos da lista de depositantes!"
     );
+  };
+
+  // Verifica se o participante realizou depósito válido referente ao bolão ATUAL (e não de um bolão já encerrado)
+  const isParticipanteDepositanteNoBolaoAtual = (jg: any): boolean => {
+    if (!jg) return false;
+    const bId = String(jg.bolaoPagoId || "").trim();
+    if (!bId || bId !== cicloBolaoAtivoId || boloesEncerradosSet.has(bId)) {
+      return false;
+    }
+    const apostasPagasNoCiclo = palpites.some(
+      (p: any) =>
+        (p.jogadorEmail || "").toLowerCase() === (jg.email || "").toLowerCase() &&
+        p.pago &&
+        p.bolaoPagoId === cicloBolaoAtivoId
+    );
+    return Boolean(
+      jg.pagou === true ||
+        jg.status_pagamento === "pago" ||
+        jg.aprovado === true ||
+        jg.statusPagamento === "APROVADO" ||
+        apostasPagasNoCiclo
+    );
+  };
+
+  const isParticipanteEmAnaliseNoBolaoAtual = (jg: any): boolean => {
+    if (!jg) return false;
+    const bId = String(jg.bolaoPagoId || "").trim();
+    if (!bId || bId !== cicloBolaoAtivoId || boloesEncerradosSet.has(bId)) {
+      return false;
+    }
+    return jg.statusPagamento === "EM_ANALISE" && !isParticipanteDepositanteNoBolaoAtual(jg);
   };
 
   // =========================================================================
@@ -1888,11 +2155,7 @@ export default function App() {
 
     const ranking = jogadores.map((jg) => {
       const apostasJogador = palpites.filter((p) => p.jogadorEmail === jg.email);
-      const isPago =
-        jg.status_pagamento === "pago" ||
-        jg.aprovado === true ||
-        jg.statusPagamento === "APROVADO" ||
-        apostasJogador.some((p) => p.pago);
+      const isPago = isParticipanteDepositanteNoBolaoAtual(jg);
 
       let pontos = 0;
       let totalApostas = apostasJogador.length;
@@ -1928,35 +2191,29 @@ export default function App() {
 
   const { ranking: rankingGanhadores, totalJogosEncerrados } = calcularTriagem();
 
-  // Cálculos Financeiros & Contabilizador de Depósitos (lendo valorCota dinâmico de config/bolao)
+  // Cálculos Financeiros & Contabilizador de Depósitos (restrito ao ciclo do bolão ativo; zera ao encerrar a rodada)
   const valorParsedConfig = parseFloat(String(config.valorCota ?? config.valor ?? valorPixAtual ?? 10).replace(",", "."));
   const valorCotaNumerico = !isNaN(valorParsedConfig) && valorParsedConfig > 0 ? valorParsedConfig : (Number(valorPixAtual) || 10);
   const payloadPixRender =
     payloadPixAtual ||
     gerarPayloadPix("f0e74d2a-d610-4b76-842e-8b7e1a08047d", valorCotaNumerico, "IRAILSON DA SILVA", "ITABUNA");
-  const jogadoresPagosLista = jogadores.filter(
-    (jg: any) =>
-      jg.status_pagamento === "pago" ||
-      jg.aprovado === true ||
-      jg.statusPagamento === "APROVADO" ||
-      palpites.some((p: any) => p.jogadorEmail === jg.email && p.pago)
-  );
-  const jogadoresEmAnaliseLista = jogadores.filter(
-    (jg: any) =>
-      jg.statusPagamento === "EM_ANALISE" &&
-      !jogadoresPagosLista.some((ap: any) => ap.email === jg.email)
-  );
 
-  // Depósitos confirmados na coleção depositos + jogadores aprovados
+  const jogadoresPagosLista = jogadores.filter((jg: any) => isParticipanteDepositanteNoBolaoAtual(jg));
+  const jogadoresEmAnaliseLista = jogadores.filter((jg: any) => isParticipanteEmAnaliseNoBolaoAtual(jg));
+
+  // Depósitos confirmados na coleção depositos exclusivamente do bolão atual
   const depositosConfirmadosColecao = depositos.filter(
-    (d: any) => d.status === "CONFIRMADO" || d.status === "APROVADO"
+    (d: any) =>
+      (d.status === "CONFIRMADO" || d.status === "APROVADO") &&
+      d.bolaoPagoId === cicloBolaoAtivoId &&
+      !boloesEncerradosSet.has(String(d.bolaoPagoId || ""))
   );
 
   // Lista de depósitos recentes (Confirmados + Sendo Depositados) para o Contabilizador do Jogador
   const movDepositosBase = [
     ...depositosConfirmadosColecao.map((d: any) => ({
-      nome: d.nome || user?.nome || "Inho",
-      email: d.email || user?.email || d.userId || "inho",
+      nome: d.nome || user?.nome || "Jogador",
+      email: d.email || user?.email || d.userId || "",
       userId: d.userId || d.id,
       status: "APROVADO" as const,
       valor: Number(d.valor) || valorCotaNumerico,
@@ -1986,41 +2243,27 @@ export default function App() {
         email: jg.email,
         userId: jg.id || getJogadorDocId(jg.email || ""),
         status: "APROVADO" as const,
-        valor: valorCotaNumerico,
+        valor: Number(jg.valorPago) || valorCotaNumerico,
         horario: jg.dataAprovacao ? `Aprovado às ${jg.dataAprovacao}` : "Confirmado",
-        ordem: (jg.timestampComprovante || 0) + 1,
+        ordem: (jg.timestampDeposito || jg.timestampComprovante || 0) + 1,
       })),
   ].sort((a, b) => b.ordem - a.ordem);
 
-  const movDepositos =
-    movDepositosBase.length > 0
-      ? movDepositosBase
-      : pagamentoConfirmadoLocal
-      ? [
-          {
-            nome: user?.nome || "Inho",
-            email: user?.email || "inhobahia29@gmail.com",
-            userId: auth.currentUser?.uid || "inho_jogador",
-            status: "APROVADO" as const,
-            valor: valorCotaNumerico,
-            horario: "Confirmado via PIX",
-            ordem: Date.now(),
-          },
-        ]
-      : [];
+  const movDepositos = movDepositosBase;
 
   const depositosConfirmadosLista = movDepositos.filter((dep) => dep.status === "APROVADO");
   const depositosEmAnaliseMovLista = movDepositos.filter((dep) => dep.status === "EM_ANALISE");
 
-  const pagos = Math.max(depositosConfirmadosLista.length, pagamentoConfirmadoLocal ? 1 : 0);
+  const pagos = depositosConfirmadosLista.length;
   const emAnaliseCount = depositosEmAnaliseMovLista.length;
-  const total =
-    depositosConfirmadosLista.length > 0
-      ? depositosConfirmadosLista.reduce((acc, dep) => acc + (Number(dep.valor) || valorCotaNumerico), 0)
-      : pagamentoConfirmadoLocal
-      ? valorCotaNumerico
-      : 0;
-  const totalSendoDepositado = depositosEmAnaliseMovLista.reduce((acc, dep) => acc + (Number(dep.valor) || valorCotaNumerico), 0);
+  const total = depositosConfirmadosLista.reduce(
+    (acc, dep) => acc + (Number(dep.valor) || valorCotaNumerico),
+    0
+  );
+  const totalSendoDepositado = depositosEmAnaliseMovLista.reduce(
+    (acc, dep) => acc + (Number(dep.valor) || valorCotaNumerico),
+    0
+  );
   const totalGeralDepositos = total + totalSendoDepositado;
   const banca20 = total * 0.2;
   const premio80 = total * 0.8;
@@ -2112,6 +2355,14 @@ export default function App() {
         tituloBaseJogo ||
         `Bolão #${numeroRodadaSequencial || historicoRankings.length + 1} • Rodada ${new Date().toLocaleDateString("pt-BR")}`;
 
+      // Preserva valores financeiros caso o saldo da rodada já tenha sido zerado após finalizar
+      const totalHist = total > 0 ? total : Number(registroExistente?.totalArrecadado) || 0;
+      const premio80Hist = premio80 > 0 ? premio80 : Number(registroExistente?.premioTotal80) || 0;
+      const premio1Hist = premio1 > 0 ? premio1 : Number(registroExistente?.premio1) || 0;
+      const premio2Hist = premio2 > 0 ? premio2 : Number(registroExistente?.premio2) || 0;
+      const premio3Hist = premio3 > 0 ? premio3 : Number(registroExistente?.premio3) || 0;
+      const pagosHist = pagos > 0 ? pagos : Number(registroExistente?.totalPagos) || 0;
+
       // SOMENTE OS 3 PRIMEIROS COLOCADOS (1º, 2º e 3º lugar) + DADOS DAS PARTIDAS
       const top3Ganhadores = rankingCalculado.slice(0, 3);
 
@@ -2119,11 +2370,15 @@ export default function App() {
         const isPrimeiro = index === 0 && jg.pontos > 0;
         const isSegundo = index === 1 && jg.pontos > 0;
         const isTerceiro = index === 2 && jg.pontos > 0;
+        const prevRankItem = registroExistente?.ranking?.find(
+          (r) => (r.email || "").toLowerCase() === (jg.email || "").toLowerCase()
+        );
+        const foiPagoNaRodada = Boolean(jg.isPago || prevRankItem?.isPago);
         let premioEstimado = 0;
-        if (jg.isPago) {
-          if (isPrimeiro) premioEstimado = premio1;
-          else if (isSegundo) premioEstimado = premio2;
-          else if (isTerceiro) premioEstimado = premio3;
+        if (foiPagoNaRodada) {
+          if (isPrimeiro) premioEstimado = premio1Hist;
+          else if (isSegundo) premioEstimado = premio2Hist;
+          else if (isTerceiro) premioEstimado = premio3Hist;
         }
 
         const partidasApostadas: HistoricoRankingPartidaApostada[] = jogosBase
@@ -2155,7 +2410,7 @@ export default function App() {
           pix: jg.pix || "",
           pontos: jg.pontos || 0,
           totalApostas: jg.totalApostas || 0,
-          isPago: Boolean(jg.isPago),
+          isPago: foiPagoNaRodada,
           premioEstimado: Number(premioEstimado.toFixed(2)),
           partidasApostadas,
         };
@@ -2183,13 +2438,13 @@ export default function App() {
         dataRodada: dataFormatada,
         timestamp: agora,
         valorCota: Number(valorCotaNumerico.toFixed(2)),
-        totalArrecadado: Number(total.toFixed(2)),
-        premioTotal80: Number(premio80.toFixed(2)),
-        premio1: Number(premio1.toFixed(2)),
-        premio2: Number(premio2.toFixed(2)),
-        premio3: Number(premio3.toFixed(2)),
+        totalArrecadado: Number(totalHist.toFixed(2)),
+        premioTotal80: Number(premio80Hist.toFixed(2)),
+        premio1: Number(premio1Hist.toFixed(2)),
+        premio2: Number(premio2Hist.toFixed(2)),
+        premio3: Number(premio3Hist.toFixed(2)),
         totalParticipantes: rankingCalculado.length,
-        totalPagos: pagos,
+        totalPagos: pagosHist,
         totalJogos: jogosBase.length,
         totalJogosEncerrados: jogosEncerradosCount,
         statusBolao: jogosEncerradosCount >= jogosBase.length ? "ENCERRADO" : "ARQUIVADO",
@@ -2221,7 +2476,7 @@ export default function App() {
     }
   };
 
-  // Monitoramento 100% automático: assim que a rodada do bolão termina (todos os jogos publicados com resultado definido ou encerrados), salva automaticamente os 3 primeiros colocados + dados das partidas no histórico
+  // Monitoramento 100% automático: assim que a rodada do bolão termina (todos os jogos publicados com resultado definido ou encerrados), salva automaticamente os 3 primeiros colocados + dados das partidas no histórico e zera o saldo e lista de depositantes
   useEffect(() => {
     if (jogosPublicados.length === 0) return;
     const todosJogosFinalizados = jogosPublicados.every((j) =>
@@ -2240,12 +2495,20 @@ export default function App() {
       .map((j) => `${j.id}:${j.placarCasa ?? 0}x${j.placarFora ?? 0}:${j.resultadoOficial || ""}`)
       .join("|");
 
-    const assinaturaCompleta = `${bolaoIdAtual}__${jogosAssinatura}__${top3Assinatura}__${total.toFixed(2)}`;
+    const assinaturaCompleta = `${bolaoIdAtual}__${jogosAssinatura}__${top3Assinatura}`;
     if (ultimaAssinaturaRodadaSalvaRef.current === assinaturaCompleta) return;
 
     ultimaAssinaturaRodadaSalvaRef.current = assinaturaCompleta;
-    salvarRankingBolaoNoHistorico(true, false, jogosPublicados).catch(() => {});
-  }, [jogosPublicados, rankingGanhadores, total]);
+    const chaveRodadaJogos = `${bolaoIdAtual}__${jogosPublicados.map((j) => j.id).join("_")}`;
+
+    (async () => {
+      await salvarRankingBolaoNoHistorico(true, false, jogosPublicados).catch(() => {});
+      if (ultimaRodadaZeradaRef.current !== chaveRodadaJogos && (total > 0 || movDepositos.length > 0)) {
+        ultimaRodadaZeradaRef.current = chaveRodadaJogos;
+        await zerarSaldoEDepositantesAposRodada(bolaoIdAtual).catch(() => {});
+      }
+    })();
+  }, [jogosPublicados, rankingGanhadores, total, movDepositos.length]);
 
   const excluirRankingDoHistoricoAdm = async (id: string, titulo: string) => {
     if (!confirm(`Deseja excluir o histórico salvo de "${titulo}"?`)) return;
@@ -2259,30 +2522,43 @@ export default function App() {
     mostrarAvisoAdm(`🗑️ Histórico "${titulo}" removido.`);
   };
 
-  const somaConfirmadosMovimentacao = depositosConfirmadosLista.reduce(
-    (acc, dep) => acc + (Number(dep.valor) || valorCotaNumerico),
-    0
-  );
+  const meuDepositoConfirmadoItem = user
+    ? depositosConfirmadosLista.find(
+        (dep) =>
+          (dep.email && user.email && dep.email.toLowerCase() === user.email.toLowerCase()) ||
+          (dep.userId && (dep.userId === user.id || dep.userId === getJogadorDocId(user.email || "")))
+      )
+    : undefined;
+
+  const meuDepositoEmAnaliseItem = user
+    ? depositosEmAnaliseMovLista.find(
+        (dep) =>
+          (dep.email && user.email && dep.email.toLowerCase() === user.email.toLowerCase()) ||
+          (dep.userId && (dep.userId === user.id || dep.userId === getJogadorDocId(user.email || "")))
+      )
+    : undefined;
 
   const isDepositoConfirmado = Boolean(
-    pagamentoConfirmadoLocal ||
-      somaConfirmadosMovimentacao > 0 ||
-      user?.status_pagamento === "pago" ||
-      user?.aprovado === true ||
-      user?.statusPagamento === "APROVADO" ||
-      (user && palpites.some((p: any) => (p.jogadorEmail || "").toLowerCase() === (user.email || "").toLowerCase() && p.pago))
+    user && (meuDepositoConfirmadoItem || isParticipanteDepositanteNoBolaoAtual(user))
+  );
+
+  const isDepositoEmAnalise = Boolean(
+    !isDepositoConfirmado && user && (meuDepositoEmAnaliseItem || isParticipanteEmAnaliseNoBolaoAtual(user))
   );
 
   const meuStatusDeposito = isDepositoConfirmado
     ? "APROVADO"
-    : user?.statusPagamento === "EM_ANALISE"
+    : isDepositoEmAnalise
     ? "EM_ANALISE"
-    : "APROVADO";
+    : "PENDENTE";
 
-  const valorMeuDepositoExibido =
-    somaConfirmadosMovimentacao > 0 ? somaConfirmadosMovimentacao : valorCotaNumerico;
+  const valorMeuDepositoExibido = isDepositoConfirmado
+    ? Number(meuDepositoConfirmadoItem?.valor || user?.valorPago) || valorCotaNumerico
+    : isDepositoEmAnalise
+    ? valorCotaNumerico
+    : 0;
 
-  const nomePrimeiroJogador = user?.nome?.split(" ")[0] || "Inho";
+  const nomePrimeiroJogador = user?.nome?.split(" ")[0] || "Jogador";
 
   const ModalPixDireto = () => {
     if (!modalPixAberto) return null;
@@ -2440,20 +2716,40 @@ export default function App() {
       </div>
 
       {/* Status do Depósito Individual do Jogador Conectado */}
-      <div className="p-3 rounded-xl border bg-green-950/50 border-green-600/80 text-green-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+      <div
+        className={`p-3 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs ${
+          isDepositoConfirmado
+            ? "bg-green-950/50 border-green-600/80 text-green-200"
+            : isDepositoEmAnalise
+            ? "bg-amber-950/50 border-amber-600/80 text-amber-200"
+            : "bg-black/70 border-zinc-800 text-zinc-300"
+        }`}
+      >
         <div className="flex items-center gap-2">
-          <span className="text-base">✅</span>
+          <span className="text-base">
+            {isDepositoConfirmado ? "✅" : isDepositoEmAnalise ? "⏳" : "⚪"}
+          </span>
           <div>
             <div className="font-black text-white">
               Seu Depósito ({nomePrimeiroJogador}):{" "}
-              <span className="text-green-400">
+              <span
+                className={
+                  isDepositoConfirmado
+                    ? "text-green-400"
+                    : isDepositoEmAnalise
+                    ? "text-amber-300"
+                    : "text-zinc-400"
+                }
+              >
                 R$ {valorMeuDepositoExibido.toFixed(2).replace(".", ",")}
               </span>
             </div>
-            <div className="text-[10px] text-green-300/90">
+            <div className="text-[10px] opacity-90">
               {isDepositoConfirmado
-                ? "Depósito confirmado! Sua aposta e participação estão liberadas."
-                : "PIX vai para InfinitePay - conta separada (Chave Aleatória)."}
+                ? "Depósito confirmado neste bolão! Sua aposta e participação estão liberadas."
+                : isDepositoEmAnalise
+                ? "Comprovante em análise pelo ADM para este bolão."
+                : "Saldo zerado para novo bolão. Faça seu depósito PIX para entrar na lista de depositantes."}
             </div>
           </div>
         </div>
@@ -2529,18 +2825,14 @@ export default function App() {
 
     const jaPago =
       !modoNovaAposta &&
-      Boolean(
-        isDepositoConfirmado ||
-          user.status_pagamento === "pago" ||
-          user.aprovado === true ||
-          user.statusPagamento === "APROVADO"
-      );
+      Boolean(isDepositoConfirmado || isParticipanteDepositanteNoBolaoAtual(user));
 
     const novosPalpites: Palpite[] = jogosComPalpite.map((j) => ({
       jogadorEmail: user.email,
       jogoId: j.id,
       escolha: getEscolhaDoJogo(j)!,
       pago: jaPago,
+      bolaoPagoId: jaPago ? cicloBolaoAtivoId : "",
     }));
 
     const outros = palpites.filter((p) => p.jogadorEmail !== user.email);
@@ -2949,12 +3241,7 @@ export default function App() {
     ? palpites.filter((p) => (p.jogadorEmail || "").toLowerCase() === (user.email || "").toLowerCase())
     : [];
   const isMinhaApostaAprovada = Boolean(
-    isDepositoConfirmado ||
-      (user &&
-        (user.status_pagamento === "pago" ||
-          user.aprovado === true ||
-          user.statusPagamento === "APROVADO" ||
-          meusPalpitesSalvos.some((p) => p.pago)))
+    isDepositoConfirmado || (user && isParticipanteDepositanteNoBolaoAtual(user))
   );
   const codigoAutenticidadeJogador = user
     ? `ELITE-${(user.nome || "JG")
@@ -4621,16 +4908,30 @@ export default function App() {
         <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-xl text-xs space-y-2">
           <div className="font-bold flex flex-wrap gap-2 justify-between border-b border-zinc-800 pb-2">
             <span>CADASTRADOS: {jogadores.length}</span>
-            <span>PAGOS: {pagos} de {jogadores.length}</span>
+            <span>DEPOSITANTES NO BOLÃO ATUAL: {pagos} de {jogadores.length}</span>
             <span>VALOR DA COTA: R$ {config.valor}</span>
-            <span>TOTAL: R$ {total.toFixed(2)}</span>
+            <span>SALDO ATUAL: R$ {total.toFixed(2)}</span>
             <span>BANCA 20%: R$ {banca20.toFixed(2)}</span>
             <span className="text-[#FF6B00]">PRÊMIO 80%: R$ {premio80.toFixed(2)}</span>
           </div>
-          <div className="text-[#FF6B00] font-bold flex flex-wrap gap-3 pt-1">
-            <span>🥇 1º (50%): R$ {premio1.toFixed(2)}</span>
-            <span>🥈 2º (30%): R$ {premio2.toFixed(2)}</span>
-            <span>🥉 3º (20%): R$ {premio3.toFixed(2)}</span>
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+            <div className="text-[#FF6B00] font-bold flex flex-wrap gap-3">
+              <span>🥇 1º (50%): R$ {premio1.toFixed(2)}</span>
+              <span>🥈 2º (30%): R$ {premio2.toFixed(2)}</span>
+              <span>🥉 3º (20%): R$ {premio3.toFixed(2)}</span>
+            </div>
+            <button
+              type="button"
+              onClick={async () => {
+                await zerarSaldoEDepositantesAposRodada();
+                mostrarAvisoAdm(
+                  "🔄 Saldo zerado e lista de depositantes limpa! Só voltarão os participantes que fizerem novo depósito para o novo bolão."
+                );
+              }}
+              className="text-[10px] bg-zinc-800 hover:bg-zinc-700 text-amber-300 border border-amber-500/50 px-3 py-1.5 rounded-lg font-black uppercase cursor-pointer transition flex items-center gap-1"
+            >
+              <span>🔄</span> Zerar Saldo e Lista de Depositantes
+            </button>
           </div>
         </div>
 
@@ -4698,11 +4999,7 @@ export default function App() {
                 })
                 .map((jg, idx) => {
                   const palpitesJg = palpites.filter((p) => p.jogadorEmail === jg.email);
-                  const isPagoJg =
-                    jg.status_pagamento === "pago" ||
-                    jg.aprovado === true ||
-                    jg.statusPagamento === "APROVADO" ||
-                    palpitesJg.some((p) => p.pago);
+                  const isPagoJg = isParticipanteDepositanteNoBolaoAtual(jg);
                   return (
                     <div
                       key={jg.email || idx}
@@ -5339,13 +5636,13 @@ export default function App() {
 
                       <div className="flex flex-wrap items-center gap-1.5">
                         {/* Status Automático do Pagamento PIX InfinitePay */}
-                        {jg.isPago || jg.status_pagamento === "pago" || jg.aprovado === true || jg.statusPagamento === "APROVADO" ? (
+                        {jg.isPago ? (
                           <span className="text-xs bg-green-950 text-green-400 border border-green-700 px-3 py-1.5 rounded-lg font-black flex items-center gap-1.5">
-                            <span>✅</span> PAGO AUTOMÁTICO (INFINITEPAY)
+                            <span>✅</span> PAGO NESTE BOLÃO
                           </span>
                         ) : (
                           <span className="text-xs bg-amber-950/80 text-amber-300 border border-amber-700/80 px-3 py-1.5 rounded-lg font-bold flex items-center gap-1.5">
-                            <span>⏳</span> AGUARDANDO RETORNO DO PIX
+                            <span>⏳</span> AGUARDANDO DEPÓSITO DO BOLÃO ATUAL
                           </span>
                         )}
 
@@ -6447,7 +6744,7 @@ export default function App() {
         </div>
 
         {/* NOTIFICAÇÃO OFICIAL DE PAGAMENTO APROVADO */}
-        {(user?.statusPagamento === "APROVADO" && palpites.some((p) => p.jogadorEmail === user?.email && p.pago)) ? (
+        {isMinhaApostaAprovada ? (
           <div className="mt-4 bg-gradient-to-r from-green-950 via-zinc-900 to-black border-2 border-green-500/80 text-green-300 p-4 rounded-2xl shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fade-in">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-green-500/20 border border-green-500 flex items-center justify-center text-xl shrink-0">

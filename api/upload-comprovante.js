@@ -122,11 +122,19 @@ export default async function handler(req, res) {
       } catch {}
     }
 
+    const agora = Number(body.timestampComprovante) || Date.now();
+    const horaEnvio = new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+    const dataHoraFormatada = body.dataEnvioComprovante || `${new Date().toLocaleDateString("pt-BR")} às ${horaEnvio}`;
+    const bolaoPagoId = String(body.bolaoPagoId || meta.bolaoPagoId || "").trim();
+
     const updatedMeta = {
       ...meta,
       email: jogadorEmail,
       comprovante: publicUrl,
-      statusPagamento: "pendente",
+      timestampComprovante: agora,
+      dataEnvioComprovante: dataHoraFormatada,
+      statusPagamento: "EM_ANALISE",
+      bolaoPagoId,
       updatedAt: new Date().toISOString(),
     };
 

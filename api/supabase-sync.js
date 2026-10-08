@@ -3,16 +3,24 @@ import { createClient } from "@supabase/supabase-js";
 function normalizeSupabaseUrl(raw) {
   let u = String(raw || "https://slaqxbccectdgmlokjos.supabase.co").trim();
   u = u.replace(/slaq[a-z]*lokjos\.supabase\.co/i, "slaqxbccectdgmlokjos.supabase.co");
+  u = u.replace(/\/rest\/v1\/?.*$/i, "");
   if (!/^https?:\/\//i.test(u)) {
     u = `https://${u}`;
   }
   return u.replace(/\/+$/, "");
 }
 
-const SUPABASE_URL = normalizeSupabaseUrl(process.env.NEXT_PUBLIC_SUPABASE_URL);
+const SUPABASE_URL = normalizeSupabaseUrl(
+  process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_REST_URL
+);
+const SUPABASE_REST_URL =
+  process.env.SUPABASE_REST_URL || "https://slaqxbccectdgmlokjos.supabase.co/rest/v1/";
 const SUPABASE_KEY =
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
   "sb_publishable_Tqbx1xWWObM_PYo9A8Lwzg_HP4Q5M1Y";
+const SUPABASE_SERVICE_ROLE_KEY =
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||
+  "sb_secret_eoy7344Q4e7XqhFDPf5ayg_DI1D2iT2";
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },

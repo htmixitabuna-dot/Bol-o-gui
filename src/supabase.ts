@@ -1,4 +1,5 @@
 import { createClient, SupabaseClient, RealtimeChannel } from '@supabase/supabase-js';
+import { PERMANENT_SUPABASE_CONFIG, PERMANENT_APP_INTEGRITY } from './config/appIntegrityConfig';
 
 declare const process: {
   env: {
@@ -13,10 +14,10 @@ declare const process: {
 const envMeta: Record<string, any> =
   typeof import.meta !== 'undefined' && (import.meta as any).env ? (import.meta as any).env : {};
 
-export const SUPABASE_DEFAULT_URL = 'https://slaqxbccectdgmlokjos.supabase.co';
-export const SUPABASE_DEFAULT_REST_URL = 'https://slaqxbccectdgmlokjos.supabase.co/rest/v1/';
-export const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_Tqbx1xWWObM_PYo9A8Lwzg_HP4Q5M1Y';
-export const SUPABASE_SECRET_KEY = 'sb_secret_eoy7344Q4e7XqhFDPf5ayg_DI1D2iT2';
+export const SUPABASE_DEFAULT_URL = PERMANENT_SUPABASE_CONFIG.NEXT_PUBLIC_SUPABASE_URL;
+export const SUPABASE_DEFAULT_REST_URL = PERMANENT_SUPABASE_CONFIG.SUPABASE_REST_URL;
+export const SUPABASE_PUBLISHABLE_KEY = PERMANENT_SUPABASE_CONFIG.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+export const SUPABASE_SECRET_KEY = PERMANENT_SUPABASE_CONFIG.SUPABASE_SERVICE_ROLE_KEY;
 
 const SAVED_KEYS_STORAGE_KEY = 'bolao_supabase_saved_keys_v1';
 
@@ -118,8 +119,8 @@ function hasValidSupabaseKey(): boolean {
   );
 }
 
-export const VALOR_COTA = 10;
-export const CHAVE_PIX_ALEATORIA = 'f0e74d2a-d610-4b76-842e-8b7e1a08047d';
+export const VALOR_COTA = PERMANENT_APP_INTEGRITY.valorCotaPadrao;
+export const CHAVE_PIX_ALEATORIA = PERMANENT_APP_INTEGRITY.chavePixAleatoria;
 
 export function gerarPayloadPix(chave: string, valor: number, merchant: string, city: string): string {
   const formatar = (id: string, val: string) => id + String(val.length).padStart(2, '0') + val;
@@ -413,18 +414,30 @@ export function normalizarLinhaUsuarioSupabase(rowProfile: any, rowJogador?: any
 
   const pix = String(extra.pix || extra.chavePix || telefone || finalEmail).trim().slice(0, 120);
 
-  const pagou = Boolean(
-    rowJogador?.pagou !== undefined
-      ? rowJogador.pagou
-      : extra.aprovado ||
-        extra.status_pagamento === 'pago' ||
-        extra.statusPagamento === 'APROVADO' ||
-        extra.pagou
-  );
+  const isExplicitUnpaid =
+    extra.pagou === false ||
+    extra.aprovado === false ||
+    extra.status_pagamento === 'pendente' ||
+    extra.statusPagamento === 'PENDENTE' ||
+    extra.statusPagamento === 'RECUSADO' ||
+    extra.statusPagamento === 'EM_ANALISE';
+
+  const pagou = isExplicitUnpaid
+    ? false
+    : Boolean(
+        rowJogador?.pagou !== undefined
+          ? rowJogador.pagou
+          : extra.aprovado ||
+            extra.status_pagamento === 'pago' ||
+            extra.statusPagamento === 'APROVADO' ||
+            extra.pagou
+      );
 
   const statusPagamento =
     extra.statusPagamento ||
     (pagou ? 'APROVADO' : extra.comprovante ? 'EM_ANALISE' : 'PENDENTE');
+
+  const bolaoPagoId = extra.bolaoPagoId ? String(extra.bolaoPagoId).trim() : '';
 
   return {
     ...extra,
@@ -444,6 +457,9 @@ export function normalizarLinhaUsuarioSupabase(rowProfile: any, rowJogador?: any
     aprovado: pagou,
     status_pagamento: pagou ? 'pago' : 'pendente',
     statusPagamento,
+    bolaoPagoId,
+    valorPago: pagou ? Number(extra.valorPago) || VALOR_COTA : 0,
+    dataAprovacao: pagou ? extra.dataAprovacao || undefined : undefined,
     comprovante: extra.comprovante || undefined,
     timestampComprovante: extra.timestampComprovante || undefined,
     dataEnvioComprovante: extra.dataEnvioComprovante || undefined,
@@ -550,14 +566,26 @@ export async function upsertJogadorInDb(j: any, _isNovo?: boolean): Promise<void
   const nome = String(j.nome || email.split('@')[0] || 'Jogador').trim().slice(0, 80);
   const pix = String(j.pix || j.chavePix || j.telefone || '').trim().slice(0, 120);
   const telefone = String(j.telefone || pix || '').trim().slice(0, 60);
-  const pagou = Boolean(
-    j.pagou ||
-      j.aprovado ||
-      j.status_pagamento === 'pago' ||
-      j.statusPagamento === 'APROVADO'
-  );
+  const isExplicitUnpaid =
+    j.pagou === false ||
+    j.aprovado === false ||
+    j.status_pagamento === 'pendente' ||
+    j.statusPagamento === 'PENDENTE' ||
+    j.statusPagamento === 'RECUSADO' ||
+    j.statusPagamento === 'EM_ANALISE';
+
+  const pagou = isExplicitUnpaid
+    ? false
+    : Boolean(
+        j.pagou ||
+          j.aprovado ||
+          j.status_pagamento === 'pago' ||
+          j.statusPagamento === 'APROVADO'
+      );
   const statusPagamento =
     j.statusPagamento || (pagou ? 'APROVADO' : j.comprovante ? 'EM_ANALISE' : 'PENDENTE');
+  const bolaoPagoId =
+    pagou || statusPagamento === 'EM_ANALISE' ? String(j.bolaoPagoId || '').trim() : '';
 
   const fullMeta = {
     ...j,
@@ -573,6 +601,9 @@ export async function upsertJogadorInDb(j: any, _isNovo?: boolean): Promise<void
     aprovado: pagou,
     status_pagamento: pagou ? 'pago' : 'pendente',
     statusPagamento,
+    bolaoPagoId,
+    valorPago: pagou ? Number(j.valorPago) || VALOR_COTA : 0,
+    dataAprovacao: pagou ? j.dataAprovacao || undefined : undefined,
     role: email === 'inhobahia29@gmail.com' ? 'admin' : j.role || 'player',
     is_admin: email === 'inhobahia29@gmail.com' ? true : Boolean(j.is_admin),
     updatedAt: new Date().toISOString(),
@@ -1176,6 +1207,7 @@ export async function listarPalpitesDoSupabase(): Promise<any[]> {
           jogoId,
           escolha: parsed.escolha || 'CASA',
           pago: Boolean(parsed.pago),
+          bolaoPagoId: parsed.bolaoPagoId ? String(parsed.bolaoPagoId) : undefined,
           updatedAt: String(parsed.updatedAt || row.created_at || new Date().toISOString()),
         });
       } catch {}
@@ -1200,6 +1232,7 @@ export async function upsertPalpiteInDb(p: any): Promise<void> {
     jogoId,
     escolha: p.escolha || 'CASA',
     pago: Boolean(p.pago),
+    bolaoPagoId: p.pago && p.bolaoPagoId ? String(p.bolaoPagoId) : '',
     updatedAt: new Date().toISOString(),
   };
 
@@ -1465,6 +1498,7 @@ export async function deleteHistoricoRankingBolaoFromDb(id: string): Promise<voi
 }
 
 const CONFIG_BOLAO_UUID = stringToUuid('config_bolao_elite_v1');
+const INTEGRIDADE_VAULT_UUID = stringToUuid('integridade_sistema_bolao_v1');
 
 async function carregarConfigBolaoDoSupabase(): Promise<Record<string, any> | null> {
   if (!hasValidSupabaseKey()) return null;
@@ -1477,6 +1511,12 @@ async function carregarConfigBolaoDoSupabase(): Promise<Record<string, any> | nu
     if (data && data[0]?.palpite) {
       const parsed = JSON.parse(data[0].palpite);
       if (parsed && parsed.__type === 'config_bolao') {
+        writeSavedKeysToLocal({
+          NEXT_PUBLIC_SUPABASE_URL: parsed.NEXT_PUBLIC_SUPABASE_URL || NEXT_PUBLIC_SUPABASE_URL,
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: parsed.NEXT_PUBLIC_SUPABASE_ANON_KEY || NEXT_PUBLIC_SUPABASE_ANON_KEY,
+          SUPABASE_REST_URL: parsed.SUPABASE_REST_URL || SUPABASE_DEFAULT_REST_URL,
+          SUPABASE_SERVICE_ROLE_KEY: parsed.SUPABASE_SERVICE_ROLE_KEY || SUPABASE_SERVICE_ROLE_KEY,
+        });
         return parsed;
       }
     }
@@ -1488,33 +1528,64 @@ export async function saveConfigInDb(config: Record<string, any>): Promise<void>
   try {
     const atual = (await carregarConfigBolaoDoSupabase()) || {};
     const merged = {
+      ...PERMANENT_APP_INTEGRITY,
       ...atual,
       ...config,
       NEXT_PUBLIC_SUPABASE_URL,
       NEXT_PUBLIC_SUPABASE_ANON_KEY,
       SUPABASE_REST_URL: SUPABASE_DEFAULT_REST_URL,
       SUPABASE_SERVICE_ROLE_KEY,
+      chavePix: CHAVE_PIX_ALEATORIA,
+      pixAdm: CHAVE_PIX_ALEATORIA,
       __type: 'config_bolao',
       updatedAt: new Date().toISOString(),
     };
+    writeSavedKeysToLocal({
+      NEXT_PUBLIC_SUPABASE_URL,
+      NEXT_PUBLIC_SUPABASE_ANON_KEY,
+      SUPABASE_REST_URL: SUPABASE_DEFAULT_REST_URL,
+      SUPABASE_SERVICE_ROLE_KEY,
+    });
     try {
       localStorage.setItem('bolao_config_cache_v1', JSON.stringify(merged));
     } catch {}
-    await supabase.from('apostas').upsert(
-      {
-        id: CONFIG_BOLAO_UUID,
-        user_id: null,
-        jogo_id: null,
-        palpite: JSON.stringify(merged),
-      },
-      { onConflict: 'id' }
-    );
+    await Promise.all([
+      supabase.from('apostas').upsert(
+        {
+          id: CONFIG_BOLAO_UUID,
+          user_id: null,
+          jogo_id: null,
+          palpite: JSON.stringify(merged),
+        },
+        { onConflict: 'id' }
+      ),
+      supabase.from('apostas').upsert(
+        {
+          id: INTEGRIDADE_VAULT_UUID,
+          user_id: null,
+          jogo_id: null,
+          palpite: JSON.stringify({
+            __type: 'integridade_sistema_bolao',
+            keys: {
+              NEXT_PUBLIC_SUPABASE_URL,
+              NEXT_PUBLIC_SUPABASE_ANON_KEY,
+              SUPABASE_REST_URL: SUPABASE_DEFAULT_REST_URL,
+              SUPABASE_SERVICE_ROLE_KEY,
+            },
+            appIntegrity: PERMANENT_APP_INTEGRITY,
+            configSnapshot: merged,
+            updatedAt: new Date().toISOString(),
+          }),
+        },
+        { onConflict: 'id' }
+      ),
+    ]);
     triggerListenersForCollection('config');
   } catch {}
 }
 
 export async function inicializarConfigAdminInDb(emailAdmin?: string): Promise<void> {
-  const cleanEmail = String(emailAdmin || 'inhobahia29@gmail.com').trim().toLowerCase();
+  const cleanEmail = String(emailAdmin || PERMANENT_APP_INTEGRITY.adminEmail).trim().toLowerCase();
   if (!cleanEmail) return;
   await saveConfigInDb({
     adminEmail: cleanEmail,
@@ -1526,14 +1597,104 @@ export async function inicializarConfigAdminInDb(emailAdmin?: string): Promise<v
   await sincronizarTimesEJogosIniciaisNoSupabase();
 }
 
+export async function sincronizarIntegridadeCompletaNoSupabase(): Promise<void> {
+  if (!hasValidSupabaseKey()) return;
+  try {
+    // 1. Garante que as chaves e configurações de integridade estejam gravadas no Supabase e no cache local
+    const remoteCfg = await carregarConfigBolaoDoSupabase();
+    let localCfg: Record<string, any> = {};
+    try {
+      const rawCfg =
+        typeof localStorage !== 'undefined'
+          ? localStorage.getItem('elite_config_v11') || localStorage.getItem('bolao_config_cache_v1')
+          : null;
+      if (rawCfg) localCfg = JSON.parse(rawCfg) || {};
+    } catch {}
+
+    await saveConfigInDb({
+      ...localCfg,
+      ...(remoteCfg || {}),
+      adminEmail: PERMANENT_APP_INTEGRITY.adminEmail,
+      NEXT_PUBLIC_SUPABASE_URL,
+      NEXT_PUBLIC_SUPABASE_ANON_KEY,
+      SUPABASE_REST_URL: SUPABASE_DEFAULT_REST_URL,
+      SUPABASE_SERVICE_ROLE_KEY,
+    });
+
+    if (typeof localStorage === 'undefined') return;
+
+    // 2. Sincroniza histórico de rankings (Top 3 + partidas) entre localStorage e Supabase
+    const remoteHist = await listarHistoricoRankingsDoSupabase();
+    const remoteHistIds = new Set(remoteHist.map((h) => h.id));
+    try {
+      const rawLocalHist = localStorage.getItem('elite_historico_rankings_v11');
+      if (rawLocalHist) {
+        const localHist = JSON.parse(rawLocalHist);
+        if (Array.isArray(localHist)) {
+          for (const item of localHist) {
+            if (item && item.id && !remoteHistIds.has(item.id)) {
+              await upsertHistoricoRankingBolaoInDb(item);
+            }
+          }
+        }
+      }
+    } catch {}
+
+    // 3. Sincroniza comprovantes de premiação entre localStorage e Supabase
+    const remotePrem = await listarComprovantesPremiacaoDoSupabase();
+    const remotePremIds = new Set(remotePrem.map((c) => c.id));
+    try {
+      const rawLocalPrem = localStorage.getItem('elite_comprovantes_premiacao_v11');
+      if (rawLocalPrem) {
+        const localPrem = JSON.parse(rawLocalPrem);
+        if (Array.isArray(localPrem)) {
+          for (const item of localPrem) {
+            if (item && item.id && !remotePremIds.has(item.id)) {
+              await upsertComprovantePremiacaoInDb(item);
+            }
+          }
+        }
+      }
+    } catch {}
+
+    // 4. Sincroniza palpites locais não enviados com o Supabase
+    const remotePalpites = await listarPalpitesDoSupabase();
+    const remotePalpiteIds = new Set(remotePalpites.map((p) => p.id));
+    try {
+      const rawLocalPalp = localStorage.getItem('elite_palpites_v11');
+      if (rawLocalPalp) {
+        const localPalp = JSON.parse(rawLocalPalp);
+        if (Array.isArray(localPalp)) {
+          for (const p of localPalp) {
+            if (p && p.id && !remotePalpiteIds.has(p.id) && !isJogadorDeletedLocal(p.jogadorEmail)) {
+              await upsertPalpiteInDb(p);
+            }
+          }
+        }
+      }
+    } catch {}
+  } catch {}
+}
+
+if (typeof window !== 'undefined') {
+  setTimeout(() => {
+    sincronizarIntegridadeCompletaNoSupabase().catch(() => {});
+  }, 500);
+}
+
 export async function registrarDepositoConfirmadoInDb(
   jogadorOuParams: any,
-  valorOpcional?: number
+  valorOpcional?: number,
+  bolaoPagoIdOpcional?: string
 ): Promise<void> {
   const cleanEmail = String(jogadorOuParams?.email || '').trim().toLowerCase();
   if (!cleanEmail) return;
 
   const existente = await buscarUsuarioNoSupabase(cleanEmail);
+  const bolaoPagoId = String(
+    bolaoPagoIdOpcional || jogadorOuParams?.bolaoPagoId || existente?.bolaoPagoId || ''
+  ).trim();
+
   await upsertJogadorInDb({
     ...(existente || {}),
     ...(jogadorOuParams || {}),
@@ -1542,8 +1703,79 @@ export async function registrarDepositoConfirmadoInDb(
     aprovado: true,
     status_pagamento: 'pago',
     statusPagamento: 'APROVADO',
+    bolaoPagoId,
     valorPago: valorOpcional ?? jogadorOuParams?.valor ?? VALOR_COTA,
+    timestampDeposito: Date.now(),
   });
+}
+
+// Zera o saldo e remove todos os participantes da lista de depositantes após o término da rodada do bolão
+export async function resetarPagamentosDaRodadaNoSupabase(
+  novoCicloBolaoId?: string,
+  boloesEncerradosLista?: string[]
+): Promise<void> {
+  if (!hasValidSupabaseKey()) return;
+
+  try {
+    if (novoCicloBolaoId) {
+      const cfgAtual = (await carregarConfigBolaoDoSupabase()) || {};
+      const encerradosAtuais = Array.isArray(cfgAtual.boloesEncerradosIds)
+        ? cfgAtual.boloesEncerradosIds
+        : [];
+      const novosEncerrados = Array.from(
+        new Set([...encerradosAtuais, ...(boloesEncerradosLista || [])].filter(Boolean))
+      );
+      await saveConfigInDb({
+        ...cfgAtual,
+        cicloBolaoAtivoId: novoCicloBolaoId,
+        boloesEncerradosIds: novosEncerrados,
+        ultimoResetFinanceiroEm: Date.now(),
+      });
+    }
+
+    const todosUsuarios = await listarUsuariosDoSupabase();
+    for (const u of todosUsuarios) {
+      if (
+        u.pagou ||
+        u.aprovado ||
+        u.status_pagamento === 'pago' ||
+        u.statusPagamento === 'APROVADO' ||
+        u.statusPagamento === 'EM_ANALISE' ||
+        u.comprovante ||
+        u.bolaoPagoId
+      ) {
+        await upsertJogadorInDb({
+          ...u,
+          pagou: false,
+          aprovado: false,
+          status_pagamento: 'pendente',
+          statusPagamento: 'PENDENTE',
+          bolaoPagoId: '',
+          valorPago: 0,
+          dataAprovacao: undefined,
+          aprovado_em: undefined,
+          comprovante: undefined,
+          timestampComprovante: undefined,
+          dataEnvioComprovante: undefined,
+        });
+      }
+    }
+
+    const todosPalpites = await listarPalpitesDoSupabase();
+    for (const p of todosPalpites) {
+      if (p.pago || p.bolaoPagoId) {
+        await upsertPalpiteInDb({
+          ...p,
+          pago: false,
+          bolaoPagoId: '',
+        });
+      }
+    }
+
+    triggerListenersForCollection('jogadores');
+    triggerListenersForCollection('palpites');
+    triggerListenersForCollection('config');
+  } catch {}
 }
 
 // ============================================================================
