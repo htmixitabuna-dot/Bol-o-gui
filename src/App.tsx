@@ -258,6 +258,10 @@ export default function App() {
   const [mostrarQrPixDireto, setMostrarQrPixDireto] = useState(false);
   const [enviandoComprovantePix, setEnviandoComprovantePix] = useState(false);
   const [comprovanteEnviadoAviso, setComprovanteEnviadoAviso] = useState(false);
+  const [carregandoDocumentoLocal, setCarregandoDocumentoLocal] = useState(false);
+  const [progressoComprovante, setProgressoComprovante] = useState<number>(0);
+  const [etapaProgressoComprovante, setEtapaProgressoComprovante] = useState<string>("");
+  const [nomeArquivoComprovante, setNomeArquivoComprovante] = useState<string>("");
   const [carregandoInfinitePay, setCarregandoInfinitePay] = useState(false);
   const [confirmandoJaPaguei, setConfirmandoJaPaguei] = useState(false);
   const [pagamentoConfirmadoLocal, setPagamentoConfirmadoLocal] = useState<boolean>(() => {
@@ -1260,26 +1264,18 @@ export default function App() {
       return;
     }
 
-    let usuarioAtivo = user;
-    if (!usuarioAtivo || !usuarioAtivo.email) {
-      try {
-        const salvo = localStorage.getItem("elite_user_v11");
-        if (salvo) {
-          usuarioAtivo = JSON.parse(salvo);
-          if (usuarioAtivo?.email) setUser(usuarioAtivo);
-        }
-      } catch {}
-    }
+    pausarPollingTemporariamente(45000);
+    setComprovanteEnviadoAviso(false);
+    setCarregandoDocumentoLocal(true);
+    setNomeArquivoComprovante(file.name || "comprovante_pagamento.jpg");
+    setProgressoComprovante(15);
+    setEtapaProgressoComprovante("⏳ Lendo documento selecionado (15%)...");
 
-    if (!usuarioAtivo || !usuarioAtivo.email) {
-      alert("Faça login ou cadastre-se para enviar seu comprovante de pagamento!");
-      setPage("loginJogador");
-      return;
-    }
-
-    pausarPollingTemporariamente(15000);
-    setEnviandoComprovantePix(true);
     try {
+      await new Promise((r) => setTimeout(r, 180));
+      setProgressoComprovante(45);
+      setEtapaProgressoComprovante("⚙️ Carregando e otimizando documento (45%)...");
+
       let comprovanteBase64 = "";
       try {
         comprovanteBase64 = await compressImageToDataUrl(file, 650, 0.68);
@@ -1293,19 +1289,73 @@ export default function App() {
       }
 
       if (!comprovanteBase64) {
+        setProgressoComprovante(0);
+        setEtapaProgressoComprovante("");
         alert("Não foi possível ler a imagem do comprovante. Tente outra foto ou print.");
         return;
       }
+
+      setProgressoComprovante(85);
+      setEtapaProgressoComprovante("📎 Preparando visualização do documento (85%)...");
+      await new Promise((r) => setTimeout(r, 180));
+
+      setTempComprovante(comprovanteBase64);
+      setProgressoComprovante(100);
+      setEtapaProgressoComprovante("✅ Documento carregado (100%)! Clique em ENVIAR PARA O ADM abaixo.");
+    } catch (err) {
+      console.error("Erro ao carregar documento:", err);
+      setProgressoComprovante(0);
+      setEtapaProgressoComprovante("");
+      alert("⚠️ Ocorreu um erro ao carregar o documento. Tente novamente.");
+    } finally {
+      setCarregandoDocumentoLocal(false);
+    }
+  };
+
+  const confirmarEnvioComprovanteParaAdm = async () => {
+    if (!tempComprovante) {
+      abrirSeletorComprovante();
+      return;
+    }
+
+    let usuarioAtivo = user;
+    if (!usuarioAtivo || !usuarioAtivo.email) {
+      try {
+        const salvo = localStorage.getItem("elite_user_v11");
+        if (salvo) {
+          usuarioAtivo = JSON.parse(salvo);
+          if (usuarioAtivo?.email) setUser(usuarioAtivo);
+        }
+      } catch {}
+    }
+
+    if (!usuarioAtivo || !usuarioAtivo.email) {
+      alert("Faça login ou cadastre-se para enviar seu comprovante de pagamento para o ADM!");
+      setPage("loginJogador");
+      return;
+    }
+
+    pausarPollingTemporariamente(20000);
+    setEnviandoComprovantePix(true);
+    setComprovanteEnviadoAviso(false);
+
+    try {
+      setProgressoComprovante(20);
+      setEtapaProgressoComprovante("⏳ Iniciando envio do documento para o ADM (20%)...");
+      await new Promise((r) => setTimeout(r, 220));
 
       const emailJogador = (usuarioAtivo.email || "").trim().toLowerCase();
       const nomeJogador = (usuarioAtivo.nome || "Jogador").trim();
       const jogadorId = usuarioAtivo.id || getJogadorDocId(emailJogador);
 
-      // Salva palpites selecionados na tela (se houver) e grava o comprovante direto no Supabase (jogadores + apostas)
+      setProgressoComprovante(50);
+      setEtapaProgressoComprovante("📤 Enviando comprovante para a Área do ADM (50%)...");
       await salvarPalpitesTemporariosSeHouver().catch(() => {});
-      await enviarComprovante(emailJogador, comprovanteBase64);
 
-      // Envia também para o endpoint /api/upload-comprovante caso esteja em ambiente serverless
+      setProgressoComprovante(75);
+      setEtapaProgressoComprovante("🗄️ Salvando documento na Central de Conferência do ADM (75%)...");
+      await enviarComprovante(emailJogador, tempComprovante);
+
       await fetch("/api/upload-comprovante", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1313,18 +1363,24 @@ export default function App() {
           jogadorId,
           nome: nomeJogador,
           email: emailJogador,
-          comprovante: comprovanteBase64,
+          comprovante: tempComprovante,
           bolaoPagoId: cicloBolaoAtivoId,
           timestampComprovante: Date.now(),
         }),
       }).catch(() => {});
 
+      setProgressoComprovante(100);
+      setEtapaProgressoComprovante("✅ Comprovante enviado com sucesso para o ADM (100%)!");
+      setTempComprovante("");
       setComprovanteEnviadoAviso(true);
-      setTimeout(() => setComprovanteEnviadoAviso(false), 10000);
-      alert("✅ Comprovante enviado com sucesso! Ele já está disponível na área do ADM para conferência.");
+      setTimeout(() => {
+        setComprovanteEnviadoAviso(false);
+      }, 12000);
+      alert("✅ Comprovante enviado com sucesso! Ele já chegou na área do ADM para conferência.");
     } catch (err) {
-      console.error("Erro ao enviar comprovante:", err);
-      alert("⚠️ Ocorreu um erro ao enviar a imagem. Tente novamente com um print da tela.");
+      console.error("Erro ao enviar comprovante para o ADM:", err);
+      setEtapaProgressoComprovante("⚠️ Erro ao enviar. Clique em ENVIAR PARA O ADM novamente.");
+      alert("⚠️ Ocorreu um erro ao enviar para o ADM. Tente novamente.");
     } finally {
       setEnviandoComprovantePix(false);
     }
@@ -2783,6 +2839,116 @@ export default function App() {
 
   const nomePrimeiroJogador = user?.nome?.split(" ")[0] || "Jogador";
 
+  const renderBarraProgressoEEnvioAdm = (compacto = false) => {
+    const mostrarBarra =
+      carregandoDocumentoLocal ||
+      enviandoComprovantePix ||
+      Boolean(tempComprovante) ||
+      comprovanteEnviadoAviso ||
+      progressoComprovante > 0;
+
+    return (
+      <div className="w-full space-y-2.5 text-left">
+        {/* Passo 1 e Passo 2: Selecionar Documento + Botão Enviar para o ADM */}
+        <div className={`grid grid-cols-1 ${compacto ? "sm:grid-cols-2" : "sm:grid-cols-2"} gap-2`}>
+          <button
+            type="button"
+            onClick={abrirSeletorComprovante}
+            disabled={carregandoDocumentoLocal || enviandoComprovantePix}
+            className="w-full bg-zinc-900 hover:bg-zinc-800 border-2 border-amber-500/80 text-amber-300 font-black py-2.5 px-3 rounded-xl text-[11px] uppercase tracking-wider cursor-pointer transition flex items-center justify-center gap-1.5 shadow"
+          >
+            <span>📁</span>
+            <span>
+              {carregandoDocumentoLocal
+                ? "CARREGANDO DOCUMENTO..."
+                : tempComprovante
+                ? "TROCAR DOCUMENTO"
+                : "1. SELECIONAR COMPROVANTE"}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={confirmarEnvioComprovanteParaAdm}
+            disabled={carregandoDocumentoLocal || enviandoComprovantePix}
+            className={`w-full font-black py-2.5 px-3 rounded-xl text-[11px] uppercase tracking-wider cursor-pointer transition flex items-center justify-center gap-1.5 shadow-lg ${
+              tempComprovante
+                ? "bg-green-500 hover:bg-green-400 text-black border-2 border-green-300 animate-pulse shadow-green-500/30"
+                : "bg-[#FF6B00] hover:bg-[#ff7b1a] text-black border-2 border-[#FF6B00]"
+            }`}
+          >
+            <span>📤</span>
+            <span>
+              {enviandoComprovantePix
+                ? `ENVIANDO P/ O ADM (${progressoComprovante}%)...`
+                : "2. ENVIAR PARA O ADM"}
+            </span>
+          </button>
+        </div>
+
+        {/* Barra de Carregamento do Documento / Envio */}
+        {mostrarBarra && (
+          <div className="bg-black/90 border border-zinc-700 rounded-xl p-3 space-y-2">
+            <div className="flex items-center justify-between gap-2 text-[11px]">
+              <span className="font-bold text-zinc-200 truncate">
+                {etapaProgressoComprovante ||
+                  (enviandoComprovantePix
+                    ? "Enviando documento para o ADM..."
+                    : tempComprovante
+                    ? "Documento carregado! Clique em ENVIAR PARA O ADM"
+                    : "Comprovante enviado ao ADM")}
+              </span>
+              <span className="font-black text-[#FF6B00] shrink-0 font-mono">
+                {progressoComprovante}%
+              </span>
+            </div>
+
+            <div className="w-full h-3.5 bg-zinc-900 rounded-full overflow-hidden border border-zinc-700 p-0.5">
+              <div
+                style={{ width: `${Math.min(100, Math.max(0, progressoComprovante))}%` }}
+                className={`h-full rounded-full transition-all duration-300 ${
+                  progressoComprovante >= 100 && !enviandoComprovantePix
+                    ? "bg-gradient-to-r from-green-500 to-emerald-400"
+                    : "bg-gradient-to-r from-[#FF6B00] via-amber-400 to-green-500"
+                }`}
+              />
+            </div>
+
+            {/* Prévia do documento carregado aguardando clique em ENVIAR PARA O ADM */}
+            {tempComprovante && (
+              <div className="pt-1 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 bg-zinc-950/90 border border-amber-500/60 p-2.5 rounded-xl">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <img
+                    src={tempComprovante}
+                    alt="Prévia do Comprovante"
+                    className="w-12 h-12 rounded-lg object-cover border border-amber-400 shrink-0"
+                  />
+                  <div className="min-w-0">
+                    <div className="text-[11px] font-black text-amber-300 truncate">
+                      📎 {nomeArquivoComprovante || "Comprovante anexado"}
+                    </div>
+                    <div className="text-[10px] text-zinc-300">
+                      Documento carregado! Clique no botão verde para enviar ao ADM.
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={confirmarEnvioComprovanteParaAdm}
+                  disabled={enviandoComprovantePix}
+                  className="bg-green-500 hover:bg-green-400 text-black font-black px-3.5 py-2 rounded-lg text-xs uppercase tracking-wider cursor-pointer shrink-0 shadow-md flex items-center justify-center gap-1.5"
+                >
+                  <span>📤</span>
+                  <span>{enviandoComprovantePix ? "ENVIANDO..." : "ENVIAR PARA O ADM"}</span>
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const ModalPixDireto = () => {
     if (!modalPixAberto) return null;
     return (
@@ -2841,20 +3007,8 @@ export default function App() {
             </button>
           </div>
 
-          {/* Botão para anexar e enviar o comprovante direto do modal PIX */}
-          <button
-            type="button"
-            onClick={abrirSeletorComprovante}
-            disabled={enviandoComprovantePix}
-            className="w-full bg-zinc-800 hover:bg-zinc-700 border-2 border-amber-500/80 text-amber-300 font-black py-3 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition flex items-center justify-center gap-2 shadow"
-          >
-            <span>📤</span>
-            <span>
-              {enviandoComprovantePix
-                ? "ENVIANDO COMPROVANTE P/ O ADM..."
-                : "ANEXAR E ENVIAR COMPROVANTE PIX P/ O ADM"}
-            </span>
-          </button>
+          {/* Barra de carregamento + Botão ENVIAR PARA O ADM */}
+          {renderBarraProgressoEEnvioAdm(true)}
 
           {/* Botão JÁ PAGUEI */}
           <button
@@ -2994,21 +3148,6 @@ export default function App() {
 
         {mostrarBotaoDepositar && (
           <div className="flex flex-wrap items-center gap-2 shrink-0">
-            <button
-              type="button"
-              onClick={abrirSeletorComprovante}
-              disabled={enviandoComprovantePix}
-              className="bg-zinc-900 hover:bg-zinc-800 border border-amber-500/80 text-amber-300 font-black px-3 py-2 rounded-lg text-[10px] uppercase tracking-wider cursor-pointer transition shadow flex items-center gap-1.5"
-            >
-              <span>📤</span>
-              <span>
-                {enviandoComprovantePix
-                  ? "ENVIANDO..."
-                  : user?.comprovante
-                  ? "REENVIAR COMPROVANTE"
-                  : "ENVIAR COMPROVANTE"}
-              </span>
-            </button>
             {user?.comprovante && (
               <button
                 type="button"
@@ -3028,6 +3167,9 @@ export default function App() {
           </div>
         )}
       </div>
+
+      {/* Barra de carregamento do documento + Botão ENVIAR PARA O ADM na área do jogador */}
+      {mostrarBotaoDepositar && renderBarraProgressoEEnvioAdm(false)}
 
       {/* Movimentação de Depósitos Recentes */}
       <div className="space-y-1.5 pt-1">
@@ -3176,22 +3318,8 @@ export default function App() {
             </div>
           )}
 
-          {/* Botão ENVIAR COMPROVANTE logo abaixo */}
-          <button
-            type="button"
-            onClick={abrirSeletorComprovante}
-            disabled={enviandoComprovantePix}
-            className="w-full bg-zinc-900 hover:bg-zinc-800 border-2 border-green-500/70 text-green-400 hover:text-green-300 font-black py-3 px-3 rounded-xl cursor-pointer transition text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 text-center shadow"
-          >
-            <span>📤</span>
-            <span>
-              {enviandoComprovantePix
-                ? "ENVIANDO COMPROVANTE..."
-                : user?.comprovante
-                ? "ENVIAR NOVO COMPROVANTE"
-                : "ENVIAR COMPROVANTE"}
-            </span>
-          </button>
+          {/* Barra de Carregamento + Botão ENVIAR PARA O ADM logo abaixo */}
+          {renderBarraProgressoEEnvioAdm(true)}
 
           {(comprovanteEnviadoAviso || user?.comprovante) && (
             <div className="bg-green-950/90 border border-green-500 text-green-200 text-[11px] font-bold p-2.5 rounded-lg flex items-center justify-between gap-2">
@@ -7734,56 +7862,12 @@ export default function App() {
                 </div>
               )}
 
-              {/* Opção para enviar / reenviar novo comprovante */}
+              {/* Opção para enviar / reenviar novo comprovante com Barra de Carregamento e Botão Enviar para o ADM */}
               <div className="pt-2 border-t border-zinc-800 space-y-2.5">
                 <label className="block text-xs font-bold text-white">
                   📤 {user?.comprovante ? "Substituir ou Enviar Novo Comprovante:" : "Enviar Comprovante de Pagamento:"}
                 </label>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={async (e) => {
-                    const file = e.target.files?.[0];
-                    if (!file) return;
-                    if (file.size > 5 * 1024 * 1024) {
-                      alert("Imagem muito grande, use arquivo até 5MB!");
-                      return;
-                    }
-                    try {
-                      const compressed = await compressImageToDataUrl(file, 800, 0.7);
-                      setTempComprovante(compressed);
-                      if (user?.email) {
-                        await salvarPalpitesTemporariosSeHouver().catch(() => {});
-                        await enviarComprovante(user.email, compressed);
-                      }
-                    } catch {
-                      handleFile(file, setTempComprovante);
-                    }
-                  }}
-                  className="w-full text-xs text-zinc-400 file:mr-2 file:py-2 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-black file:bg-[#FF6B00] file:text-black cursor-pointer"
-                />
-
-                {tempComprovante && (
-                  <div className="space-y-2 pt-1">
-                    <div className="relative w-28 h-28 rounded-lg overflow-hidden border border-zinc-700 bg-black mx-auto">
-                      <img src={tempComprovante} alt="Prévia" className="w-full h-full object-contain" />
-                    </div>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        if (user?.email) {
-                          await salvarPalpitesTemporariosSeHouver().catch(() => {});
-                          await enviarComprovante(user.email, tempComprovante);
-                        }
-                        setTempComprovante("");
-                        alert("✅ Comprovante gravado na sua pasta e enviado para a área do ADM para conferência!");
-                      }}
-                      className="w-full bg-green-600 hover:bg-green-500 text-black font-black py-2.5 rounded-xl cursor-pointer text-xs uppercase tracking-wider transition shadow-md"
-                    >
-                      💾 CONFIRMAR ENVIO DO COMPROVANTE P/ O ADM
-                    </button>
-                  </div>
-                )}
+                {renderBarraProgressoEEnvioAdm(false)}
               </div>
 
               <button
