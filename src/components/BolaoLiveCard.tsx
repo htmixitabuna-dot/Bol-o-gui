@@ -1,42 +1,39 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import {
-  buscarJogosRodadaEspn,
-  getHojeBrasilISO,
-  toBrasilDateAndTime,
-} from '../supabase';
 
-export interface JogoEspnItem {
-  id: string;
-  time_casa: string;
-  time_fora: string;
-  casa: string;
-  fora: string;
-  campeonato: string;
-  horario: string;
-  data: string;
-  estadio: string;
-  status: string;
-  tempoJogo: string;
-  aoVivo: boolean;
-  encerrado: boolean;
-  estadoPartida?: string;
-  placar_casa: string | number;
-  placar_fora: string | number;
-  escudoCasaUrl: string;
-  escudoForaUrl: string;
-}
+const ESPN_API =
+  'https://site.api.espn.com/apis/site/v2/sports/soccer/bra.1/scoreboard';
 
-export interface CanalItem {
+const STORAGE_KEY_REPRISE = 'bolao_reprise_atual';
+
+const CAPA_ESTADIO_TRANSMISSAO =
+  'https://images.unsplash.com/photo-1522778119026-d647f0596c20?auto=format&fit=crop&w=1200&q=80';
+
+export interface PartidaEspn {
   id: string;
-  nome: string;
-  videoId: string;
   timeCasa: string;
   timeFora: string;
-  placarCasa: number;
-  placarFora: number;
+  logoCasa: string;
+  logoFora: string;
+  placarCasa: string | number;
+  placarFora: string | number;
+  status: string;
+  minuto: string;
   campeonato: string;
-  escudoCasa: string;
-  escudoFora: string;
+  horario: string;
+  estadio: string;
+  aoVivo: boolean;
+  naoComecou: boolean;
+  encerrado: boolean;
+}
+
+export interface AlertaGolInfo {
+  id: string;
+  mensagem: string;
+  timeCasa: string;
+  timeFora: string;
+  placarCasa: string | number;
+  placarFora: string | number;
+  minuto: string;
 }
 
 export interface RepriseSalvaStorage {
@@ -47,19 +44,32 @@ export interface RepriseSalvaStorage {
   data: string | Date;
 }
 
-const STORAGE_KEY_REPRISE = 'bolao_reprise_atual';
+export interface DadosPalpiteLive {
+  timeCasa: string;
+  timeFora: string;
+  golsCasa: number;
+  golsFora: number;
+  placarPalpite: string;
+  escolha: 'CASA' | 'FORA' | 'EMPATE';
+  valor: number;
+  canal: string;
+  timestamp: number;
+}
+
+export interface BolaoLiveCardProps {
+  onConfirmarPalpite?: (dados: DadosPalpiteLive) => void;
+  admAbertoPorPadrao?: boolean;
+}
 
 export function extrairYoutubeID(url: string): string | null {
   if (!url || typeof url !== 'string') return null;
   let limpo = url.trim();
   if (!limpo) return null;
 
-  // Caso o usuário tenha colado diretamente o ID de 11 caracteres
   if (/^[a-zA-Z0-9_-]{11}$/.test(limpo)) {
     return limpo;
   }
 
-  // Caso tenha colado código <iframe src="..."> ou texto compartilhado com link no meio
   const srcMatch = limpo.match(/src=["']([^"']+)["']/i);
   if (srcMatch && srcMatch[1]) {
     limpo = srcMatch[1].trim();
@@ -71,27 +81,25 @@ export function extrairYoutubeID(url: string): string | null {
   }
 
   try {
-    const decodificado = decodeURIComponent(limpo);
-    limpo = decodificado;
+    limpo = decodeURIComponent(limpo);
   } catch {
     // ignore decode errors
   }
 
-  // Tentativa via URL API para capturar ?v=ID em qualquer posição da query string
   try {
     const urlComProtocolo = /^https?:\/\//i.test(limpo)
       ? limpo
       : `https://${limpo}`;
     const parsedUrl = new URL(urlComProtocolo);
-    const vParam = parsedUrl.searchParams.get('v') || parsedUrl.searchParams.get('vi');
+    const vParam =
+      parsedUrl.searchParams.get('v') || parsedUrl.searchParams.get('vi');
     if (vParam && /^[a-zA-Z0-9_-]{11}$/.test(vParam.slice(0, 11))) {
       return vParam.slice(0, 11);
     }
   } catch {
-    // fallback para regex
+    // fallback regex
   }
 
-  // Formatos: youtube.com/watch?v=ID, youtu.be/ID, youtube.com/live/ID, youtube.com/embed/ID, youtube.com/shorts/ID
   const padroes = [
     /(?:[?&]v=)([a-zA-Z0-9_-]{11})/,
     /(?:youtu\.be\/)([a-zA-Z0-9_-]{11})/,
@@ -114,25 +122,40 @@ export function extrairYoutubeID(url: string): string | null {
 }
 
 const ESCUDOS_CONHECIDOS: Record<string, string> = {
-  flamengo: 'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F819.png',
-  palmeiras: 'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F2029.png',
-  corinthians: 'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F874.png',
-  santos: 'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F2674.png',
-  vasco: 'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F3454.png',
-  'vasco da gama': 'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F3454.png',
-  fluminense: 'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F3445.png',
-  botafogo: 'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F6086.png',
-  'sao paulo': 'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F2026.png',
-  gremio: 'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F6273.png',
-  internacional: 'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F1936.png',
-  cruzeiro: 'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F2022.png',
-  'atletico-mg': 'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F7632.png',
-  bahia: 'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F9967.png',
-  fortaleza: 'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F6272.png',
-  ceara: 'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F3441.png',
-  vitoria: 'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F3457.png',
-  brasil: 'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fcountries%2F500%2Fbra.png',
-  argentina: 'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fcountries%2F500%2Farg.png',
+  flamengo:
+    'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F819.png',
+  palmeiras:
+    'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F2029.png',
+  corinthians:
+    'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F874.png',
+  santos:
+    'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F2674.png',
+  vasco:
+    'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F3454.png',
+  'vasco da gama':
+    'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F3454.png',
+  fluminense:
+    'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F3445.png',
+  botafogo:
+    'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F6086.png',
+  'sao paulo':
+    'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F2026.png',
+  gremio:
+    'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F6273.png',
+  internacional:
+    'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F1936.png',
+  cruzeiro:
+    'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F2022.png',
+  'atletico-mg':
+    'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F7632.png',
+  bahia:
+    'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F9967.png',
+  fortaleza:
+    'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F6272.png',
+  ceara:
+    'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F3441.png',
+  vitoria:
+    'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F3457.png',
 };
 
 function obterEscudoPorNome(nome: string): string {
@@ -149,78 +172,19 @@ function obterEscudoPorNome(nome: string): string {
   return chaveParcial ? ESCUDOS_CONHECIDOS[chaveParcial] : '';
 }
 
-export const CANAIS: CanalItem[] = [
-  {
-    id: 'cazetv',
-    nome: 'CazéTV',
-    videoId: 'K6oCrMQCXJU',
-    timeCasa: 'Vasco',
-    timeFora: 'Fluminense',
-    placarCasa: 2,
-    placarFora: 1,
-    campeonato: 'Brasileirão Série A • Maracanã',
-    escudoCasa: ESCUDOS_CONHECIDOS['vasco'],
-    escudoFora: ESCUDOS_CONHECIDOS['fluminense'],
-  },
-  {
-    id: 'fifa',
-    nome: 'FIFA+',
-    videoId: 'IsLDe3K9Pf4',
-    timeCasa: 'Corinthians',
-    timeFora: 'Palmeiras',
-    placarCasa: 1,
-    placarFora: 0,
-    campeonato: 'Clássico • Derby Paulista',
-    escudoCasa: ESCUDOS_CONHECIDOS['corinthians'],
-    escudoFora: ESCUDOS_CONHECIDOS['palmeiras'],
-  },
-  {
-    id: 'nsports',
-    nome: 'N Sports',
-    videoId: 'l_2qXr8wCnk',
-    timeCasa: 'Santos',
-    timeFora: 'Flamengo',
-    placarCasa: 2,
-    placarFora: 2,
-    campeonato: 'Brasileirão Série A • Vila Belmiro',
-    escudoCasa: ESCUDOS_CONHECIDOS['santos'],
-    escudoFora: ESCUDOS_CONHECIDOS['flamengo'],
-  },
-  {
-    id: 'goat',
-    nome: 'Canal GOAT',
-    videoId: 'CTNlXPwPHbA',
-    timeCasa: 'Flamengo',
-    timeFora: 'Palmeiras',
-    placarCasa: 1,
-    placarFora: 1,
-    campeonato: 'Transmissão Oficial • Canal GOAT',
-    escudoCasa: ESCUDOS_CONHECIDOS['flamengo'],
-    escudoFora: ESCUDOS_CONHECIDOS['palmeiras'],
-  },
-];
-
-export interface DadosPalpiteLive {
-  timeCasa: string;
-  timeFora: string;
-  golsCasa: number;
-  golsFora: number;
-  placarPalpite: string;
-  escolha: 'CASA' | 'FORA' | 'EMPATE';
-  valor: number;
-  canal: string;
-  timestamp: number;
-}
-
-export interface BolaoLiveCardProps {
-  onConfirmarPalpite?: (dados: DadosPalpiteLive) => void;
-  admAbertoPorPadrao?: boolean;
-}
-
-function converterHorarioParaMinutos(horarioStr: string): number {
-  const match = String(horarioStr || '').match(/(\d{1,2}):(\d{2})/);
-  if (!match) return 9999;
-  return Number(match[1]) * 60 + Number(match[2]);
+function formatarHorarioEvento(dateIso?: string): string {
+  if (!dateIso) return '19:30';
+  try {
+    const dt = new Date(dateIso);
+    if (isNaN(dt.getTime())) return '19:30';
+    return dt.toLocaleTimeString('pt-BR', {
+      timeZone: 'America/Sao_Paulo',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return '19:30';
+  }
 }
 
 function lerRepriseSalvaLocalStorage(): RepriseSalvaStorage | null {
@@ -247,12 +211,12 @@ function BolaoLiveCardInner({
     onConfirmarPalpiteRef.current = onConfirmarPalpite;
   }, [onConfirmarPalpite]);
 
-  // Estado da Reprise salva pelo ADM no localStorage (`bolao_reprise_atual`)
+  // Estado da Reprise salva no localStorage (prioridade sobre a API da ESPN)
   const [repriseSalva, setRepriseSalva] = useState<RepriseSalvaStorage | null>(
     () => lerRepriseSalvaLocalStorage()
   );
 
-  // Estado do Painel ADM (escondido por padrão, abre ao clicar em "⚙️ ADM" ou se admAbertoPorPadrao=true)
+  // Estado do Painel ADM
   const [painelAdmAberto, setPainelAdmAberto] = useState<boolean>(
     Boolean(admAbertoPorPadrao)
   );
@@ -269,25 +233,229 @@ function BolaoLiveCardInner({
   const [erroAdm, setErroAdm] = useState<string>('');
   const inputUrlRef = useRef<HTMLInputElement | null>(null);
 
-  // Estado do modo Ao Vivo normal com os 4 canais
-  const [canalAtivo, setCanalAtivo] = useState<CanalItem>(CANAIS[0]);
+  // Estados da API da ESPN Ao Vivo + Goal Alerts
+  const [jogosEspn, setJogosEspn] = useState<PartidaEspn[]>([]);
+  const [partida, setPartida] = useState<PartidaEspn | null>(null);
+  const [buscandoJogos, setBuscandoJogos] = useState<boolean>(true);
+  const [alertaGol, setAlertaGol] = useState<AlertaGolInfo | null>(null);
+  const placaresAnterioresRef = useRef<
+    Record<string, { casa: string; fora: string }>
+  >({});
 
-  // Estado das partidas reais da ESPN (Brasileirão Série A)
-  const [jogosAtivosEspn, setJogosAtivosEspn] = useState<JogoEspnItem[]>([]);
-  const [proximosJogosHoje, setProximosJogosHoje] = useState<JogoEspnItem[]>([]);
-  const [indiceJogoEspn, setIndiceJogoEspn] = useState<number>(0);
-  const [carregandoEspn, setCarregandoEspn] = useState<boolean>(true);
-  const [ultimaSincronizacao, setUltimaSincronizacao] = useState<string>('');
-
-  const [escolhaVencedor, setEscolhaVencedor] = useState<'CASA' | 'EMPATE' | 'FORA'>('CASA');
+  const [escolhaVencedor, setEscolhaVencedor] = useState<
+    'CASA' | 'EMPATE' | 'FORA'
+  >('CASA');
   const [apostaConfirmada, setApostaConfirmada] = useState<boolean>(false);
 
-  const [erroEscudoCasa, setErroEscudoCasa] = useState<boolean>(false);
-  const [erroEscudoFora, setErroEscudoFora] = useState<boolean>(false);
+  const [erroLogoCasa, setErroLogoCasa] = useState<boolean>(false);
+  const [erroLogoFora, setErroLogoFora] = useState<boolean>(false);
+
+  // Dispara alerta vermelho "GOOOL! Novo placar" e oculta automaticamente após 9s
+  const dispararAlertaGol = useCallback((info: AlertaGolInfo) => {
+    setAlertaGol(info);
+  }, []);
+
+  useEffect(() => {
+    if (!alertaGol) return;
+    const t = window.setTimeout(() => {
+      setAlertaGol(null);
+    }, 9000);
+    return () => window.clearTimeout(t);
+  }, [alertaGol]);
+
+  // Busca os jogos ao vivo / próximos na ESPN_API via fetch nativo
+  const buscarJogosEspn = useCallback(async () => {
+    try {
+      const response = await fetch(ESPN_API);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const data = await response.json();
+      const events = Array.isArray(data?.events) ? data.events : [];
+      const nomeCampeonatoPadrao =
+        data?.leagues?.[0]?.name || 'Brasileirão Série A';
+
+      const listaPartidas: PartidaEspn[] = events
+        .map((event: any, idx: number): PartidaEspn | null => {
+          const competition = event?.competitions?.[0];
+          const competitors = competition?.competitors || [];
+          const compCasa = competitors[0];
+          const compFora = competitors[1];
+
+          if (!compCasa || !compFora) return null;
+
+          const timeCasa =
+            compCasa?.team?.displayName ||
+            compCasa?.team?.shortDisplayName ||
+            compCasa?.team?.name ||
+            'Time Casa';
+          const timeFora =
+            compFora?.team?.displayName ||
+            compFora?.team?.shortDisplayName ||
+            compFora?.team?.name ||
+            'Time Fora';
+
+          const logoCasa =
+            compCasa?.team?.logo ||
+            compCasa?.team?.logos?.[0]?.href ||
+            obterEscudoPorNome(timeCasa);
+          const logoFora =
+            compFora?.team?.logo ||
+            compFora?.team?.logos?.[0]?.href ||
+            obterEscudoPorNome(timeFora);
+
+          const placarCasa = String(compCasa?.score ?? '0');
+          const placarFora = String(compFora?.score ?? '0');
+
+          const state = String(
+            event?.status?.type?.state ||
+              competition?.status?.type?.state ||
+              'pre'
+          ).toLowerCase();
+
+          const aoVivo = state === 'in';
+          const encerrado = state === 'post';
+          const naoComecou = !aoVivo && !encerrado;
+
+          const horario = formatarHorarioEvento(
+            event?.date || competition?.date
+          );
+
+          const rawDetail = String(
+            event?.status?.type?.detail ||
+              event?.status?.type?.shortDetail ||
+              competition?.status?.type?.detail ||
+              ''
+          ).trim();
+
+          const displayClock = String(
+            event?.status?.displayClock || ''
+          ).trim();
+
+          let status = rawDetail || horario;
+          let minuto = displayClock || rawDetail || horario;
+
+          if (aoVivo) {
+            if (displayClock) {
+              status = `AO VIVO ${displayClock}`;
+              minuto = displayClock;
+            } else if (!/ao vivo/i.test(rawDetail)) {
+              status = `AO VIVO ${rawDetail}`.trim();
+              minuto = rawDetail || 'Em andamento';
+            } else {
+              status = rawDetail.toUpperCase();
+              minuto = rawDetail;
+            }
+          } else if (encerrado) {
+            status = rawDetail || 'FT';
+            minuto = 'Encerrado (90\')';
+          } else {
+            status = horario;
+            minuto = `Início às ${horario}`;
+          }
+
+          const estadio =
+            competition?.venue?.fullName ||
+            competition?.venue?.address?.city ||
+            'Estádio Brasileirão';
+
+          const idEvento = String(event?.id || `espn_${idx}`);
+
+          // Verifica mudança de placar na API para disparar Goal Alert ("GOOOL! Novo placar")
+          const placarAnterior = placaresAnterioresRef.current[idEvento];
+          if (
+            placarAnterior &&
+            (placarAnterior.casa !== placarCasa ||
+              placarAnterior.fora !== placarFora)
+          ) {
+            dispararAlertaGol({
+              id: `${idEvento}_${Date.now()}`,
+              mensagem: `GOOOL! Novo placar: ${timeCasa} ${placarCasa} - ${placarFora} ${timeFora}`,
+              timeCasa,
+              timeFora,
+              placarCasa,
+              placarFora,
+              minuto,
+            });
+          }
+          placaresAnterioresRef.current[idEvento] = {
+            casa: placarCasa,
+            fora: placarFora,
+          };
+
+          return {
+            id: idEvento,
+            timeCasa,
+            timeFora,
+            logoCasa,
+            logoFora,
+            placarCasa,
+            placarFora,
+            status,
+            minuto,
+            campeonato: nomeCampeonatoPadrao,
+            horario,
+            estadio,
+            aoVivo,
+            naoComecou,
+            encerrado,
+          };
+        })
+        .filter((item: PartidaEspn | null): item is PartidaEspn =>
+          Boolean(item)
+        );
+
+      setJogosEspn(listaPartidas);
+
+      setPartida((prev) => {
+        if (listaPartidas.length === 0) return null;
+        if (prev) {
+          const atualizada = listaPartidas.find((p) => p.id === prev.id);
+          if (atualizada) {
+            if (
+              String(prev.placarCasa) !== String(atualizada.placarCasa) ||
+              String(prev.placarFora) !== String(atualizada.placarFora)
+            ) {
+              dispararAlertaGol({
+                id: `${atualizada.id}_${Date.now()}`,
+                mensagem: `GOOOL! Novo placar: ${atualizada.timeCasa} ${atualizada.placarCasa} - ${atualizada.placarFora} ${atualizada.timeFora}`,
+                timeCasa: atualizada.timeCasa,
+                timeFora: atualizada.timeFora,
+                placarCasa: atualizada.placarCasa,
+                placarFora: atualizada.placarFora,
+                minuto: atualizada.minuto,
+              });
+            }
+            return atualizada;
+          }
+        }
+        const primeiraAoVivo = listaPartidas.find((p) => p.aoVivo);
+        return primeiraAoVivo || listaPartidas[0];
+      });
+    } catch {
+      // Mantém estado anterior em caso de oscilação de rede
+    } finally {
+      setBuscandoJogos(false);
+    }
+  }, [dispararAlertaGol]);
+
+  // useEffect para fazer fetch na ESPN_API assim que o componente carregar + setInterval de 30s
+  useEffect(() => {
+    buscarJogosEspn();
+    const timer = window.setInterval(() => {
+      buscarJogosEspn();
+    }, 30000);
+    return () => window.clearInterval(timer);
+  }, [buscarJogosEspn]);
 
   // Salva e ativa a reprise imediatamente (tanto ao colar quanto ao clicar em Salvar Reprise)
   const salvarEAtivarReprise = useCallback(
-    (urlBruta: string, casaAtual: string, foraAtual: string, origemColagem = false) => {
+    (
+      urlBruta: string,
+      casaAtual: string,
+      foraAtual: string,
+      origemColagem = false
+    ) => {
       const textoLimpo = (urlBruta || '').trim();
       setInputYoutubeUrl(textoLimpo);
       setErroAdm('');
@@ -302,8 +470,16 @@ function BolaoLiveCardInner({
         return false;
       }
 
-      const casaFinal = (casaAtual || '').trim() || repriseSalva?.timeCasa || 'Time Casa';
-      const foraFinal = (foraAtual || '').trim() || repriseSalva?.timeFora || 'Time Fora';
+      const casaFinal =
+        (casaAtual || '').trim() ||
+        repriseSalva?.timeCasa ||
+        partida?.timeCasa ||
+        'Time Casa';
+      const foraFinal =
+        (foraAtual || '').trim() ||
+        repriseSalva?.timeFora ||
+        partida?.timeFora ||
+        'Time Fora';
 
       const dadosReprise: RepriseSalvaStorage = {
         youtubeUrl: textoLimpo,
@@ -321,16 +497,15 @@ function BolaoLiveCardInner({
       }
 
       setRepriseSalva(dadosReprise);
-      setErroEscudoCasa(false);
-      setErroEscudoFora(false);
+      setErroLogoCasa(false);
+      setErroLogoFora(false);
       setApostaConfirmada(false);
       setFeedbackAdm(
         origemColagem
-          ? `✅ Link colado com sucesso! Vídeo carregado no player.`
+          ? '✅ Link colado com sucesso! Reprise ativa no player.'
           : `✅ Reprise "${casaFinal} x ${foraFinal}" salva e carregada no player!`
       );
 
-      // Tenta detectar automaticamente os nomes dos times pelo título do vídeo no YouTube se os campos estiverem vazios
       if (!casaAtual.trim() && !foraAtual.trim()) {
         fetch(
           `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${idExtraido}&format=json`
@@ -370,15 +545,19 @@ function BolaoLiveCardInner({
 
       return true;
     },
-    [repriseSalva?.timeCasa, repriseSalva?.timeFora]
+    [
+      repriseSalva?.timeCasa,
+      repriseSalva?.timeFora,
+      partida?.timeCasa,
+      partida?.timeFora,
+    ]
   );
 
-  // Função para colar link da área de transferência pelo botão
+  // Botão Colar Link no ADM
   const handleColarLinkYoutube = useCallback(async () => {
     setErroAdm('');
     setFeedbackAdm('');
 
-    // 1. Tenta ler diretamente da área de transferência do navegador
     if (typeof navigator !== 'undefined' && navigator.clipboard?.readText) {
       try {
         const textoClip = await navigator.clipboard.readText();
@@ -397,11 +576,10 @@ function BolaoLiveCardInner({
           return;
         }
       } catch {
-        // Caso o iframe bloqueie navigator.clipboard.readText, usa os fallbacks abaixo
+        // fallback abaixo
       }
     }
 
-    // 2. Foca no input e tenta execCommand('paste')
     if (inputUrlRef.current) {
       inputUrlRef.current.focus();
       inputUrlRef.current.select();
@@ -421,16 +599,15 @@ function BolaoLiveCardInner({
       }
     }
 
-    // 3. Mantém o campo focado e pronto para Ctrl+V ou toque longo -> Colar
     if (inputUrlRef.current) {
       inputUrlRef.current.focus();
     }
     setFeedbackAdm(
-      '📲 Campo selecionado! Agora segure o dedo na caixa abaixo e toque em "Colar" (ou aperte Ctrl+V).'
+      '📲 Campo selecionado! Segure o dedo na caixa abaixo e toque em "Colar" (ou aperte Ctrl+V).'
     );
   }, [inputTimeCasa, inputTimeFora, salvarEAtivarReprise]);
 
-  // Captura Ctrl+V / Colar em qualquer lugar quando o Painel ADM estiver aberto
+  // Captura Ctrl+V quando o Painel ADM estiver aberto
   useEffect(() => {
     if (!painelAdmAberto) return;
 
@@ -440,7 +617,6 @@ function BolaoLiveCardInner({
 
     const onGlobalPaste = (e: ClipboardEvent) => {
       const target = e.target as HTMLElement | null;
-      // Se o usuário estiver colando nos campos de Time Casa ou Time Fora, não intercepta
       if (
         target &&
         target.tagName === 'INPUT' &&
@@ -489,94 +665,6 @@ function BolaoLiveCardInner({
     };
   }, []);
 
-  const carregarJogosEspn = useCallback(async () => {
-    try {
-      const hojeIso = getHojeBrasilISO();
-      const lista = await buscarJogosRodadaEspn(hojeIso);
-      const todosHoje: JogoEspnItem[] = Array.isArray(lista) ? lista : [];
-
-      todosHoje.sort(
-        (a, b) =>
-          converterHorarioParaMinutos(a.horario) -
-          converterHorarioParaMinutos(b.horario)
-      );
-
-      const brAgora = toBrasilDateAndTime(new Date());
-      const minutosAgora = converterHorarioParaMinutos(brAgora.timeStr);
-
-      const emAndamento = todosHoje.filter((j) => {
-        if (j.aoVivo || j.estadoPartida === 'in') return true;
-        if (j.encerrado || j.estadoPartida === 'post') return false;
-        const minJogo = converterHorarioParaMinutos(j.horario);
-        return minutosAgora >= minJogo && minutosAgora <= minJogo + 135;
-      });
-
-      const agendados = todosHoje.filter(
-        (j) =>
-          !j.aoVivo &&
-          !j.encerrado &&
-          converterHorarioParaMinutos(j.horario) > minutosAgora
-      );
-
-      setJogosAtivosEspn(emAndamento);
-      setProximosJogosHoje(agendados);
-
-      if (emAndamento.length > 0) {
-        let melhorIndice = 0;
-        let menorDiferenca = Infinity;
-        emAndamento.forEach((jg, idx) => {
-          const diff = Math.abs(
-            minutosAgora - converterHorarioParaMinutos(jg.horario)
-          );
-          if (diff <= menorDiferenca) {
-            menorDiferenca = diff;
-            melhorIndice = idx;
-          }
-        });
-        setIndiceJogoEspn((prev) =>
-          prev < emAndamento.length ? prev : melhorIndice
-        );
-      } else {
-        setIndiceJogoEspn(0);
-      }
-
-      setUltimaSincronizacao(
-        new Date().toLocaleTimeString('pt-BR', {
-          hour: '2-digit',
-          minute: '2-digit',
-        })
-      );
-    } catch {
-      setJogosAtivosEspn([]);
-      setProximosJogosHoje([]);
-    } finally {
-      setCarregandoEspn(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    carregarJogosEspn();
-    const interval = window.setInterval(() => {
-      carregarJogosEspn();
-    }, 30000);
-    return () => window.clearInterval(interval);
-  }, [carregarJogosEspn]);
-
-  useEffect(() => {
-    if (jogosAtivosEspn.length <= 1) return;
-    const rotacao = window.setInterval(() => {
-      setIndiceJogoEspn((prev) => (prev + 1) % jogosAtivosEspn.length);
-      setErroEscudoCasa(false);
-      setErroEscudoFora(false);
-    }, 20000);
-    return () => window.clearInterval(rotacao);
-  }, [jogosAtivosEspn.length]);
-
-  const jogoEspnAtual: JogoEspnItem | null =
-    jogosAtivosEspn.length > 0
-      ? jogosAtivosEspn[indiceJogoEspn % jogosAtivosEspn.length]
-      : null;
-
   const handleSalvarRepriseAdm = (e: React.FormEvent) => {
     e.preventDefault();
     salvarEAtivarReprise(inputYoutubeUrl, inputTimeCasa, inputTimeFora, false);
@@ -594,61 +682,29 @@ function BolaoLiveCardInner({
     setInputTimeCasa('');
     setInputTimeFora('');
     setErroAdm('');
-    setFeedbackAdm('🗑️ Reprise removida com sucesso!');
-    setErroEscudoCasa(false);
-    setErroEscudoFora(false);
+    setFeedbackAdm('🔴 Reprise removida! Exibindo jogos da ESPN.');
+    setErroLogoCasa(false);
+    setErroLogoFora(false);
   };
 
-  const selecionarCanalAoVivo = (canal: CanalItem) => {
-    if (repriseSalva) {
-      try {
-        localStorage.removeItem(STORAGE_KEY_REPRISE);
-        window.dispatchEvent(new CustomEvent('bolao-reprise-updated'));
-      } catch {
-        // ignore
-      }
-      setRepriseSalva(null);
-    }
-    setCanalAtivo(canal);
-    setErroEscudoCasa(false);
-    setErroEscudoFora(false);
-    setApostaConfirmada(false);
-  };
-
-  // Determina o ID do YouTube e a URL do embed
+  // Se tiver reprise salva no localStorage, ela tem prioridade sobre a API da ESPN
   const idRepriseSalva = repriseSalva
     ? extrairYoutubeID(repriseSalva.youtubeUrl)
     : null;
   const modoRepriseAtivo = Boolean(repriseSalva && idRepriseSalva);
 
-  const iframeEmbedUrl = modoRepriseAtivo
-    ? `https://www.youtube.com/embed/${idRepriseSalva}?autoplay=0&playsinline=1&rel=0`
-    : `https://www.youtube.com/embed/${canalAtivo.videoId}?autoplay=0&playsinline=1&rel=0`;
-
-  // Times exibidos na área de confronto e aposta
   const timeCasaExibido = modoRepriseAtivo
     ? repriseSalva!.timeCasa
-    : jogoEspnAtual
-    ? jogoEspnAtual.time_casa || jogoEspnAtual.casa
-    : canalAtivo.timeCasa;
-
+    : partida?.timeCasa || 'Time Casa';
   const timeForaExibido = modoRepriseAtivo
     ? repriseSalva!.timeFora
-    : jogoEspnAtual
-    ? jogoEspnAtual.time_fora || jogoEspnAtual.fora
-    : canalAtivo.timeFora;
-
-  const escudoCasaExibido = modoRepriseAtivo
-    ? obterEscudoPorNome(repriseSalva!.timeCasa)
-    : jogoEspnAtual
-    ? jogoEspnAtual.escudoCasaUrl
-    : canalAtivo.escudoCasa;
-
-  const escudoForaExibido = modoRepriseAtivo
-    ? obterEscudoPorNome(repriseSalva!.timeFora)
-    : jogoEspnAtual
-    ? jogoEspnAtual.escudoForaUrl
-    : canalAtivo.escudoFora;
+    : partida?.timeFora || 'Time Fora';
+  const logoCasaExibido = modoRepriseAtivo
+    ? obterEscudoPorNome(repriseSalva!.timeCasa) || partida?.logoCasa || ''
+    : partida?.logoCasa || '';
+  const logoForaExibido = modoRepriseAtivo
+    ? obterEscudoPorNome(repriseSalva!.timeFora) || partida?.logoFora || ''
+    : partida?.logoFora || '';
 
   const siglaTime = (nome: string) =>
     (nome || '').replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase() || 'FC';
@@ -672,7 +728,7 @@ function BolaoLiveCardInner({
           : 'Empate',
       escolha: escolhaVencedor,
       valor: 10,
-      canal: modoRepriseAtivo ? 'Reprise ADM' : canalAtivo.nome,
+      canal: modoRepriseAtivo ? 'Reprise YouTube' : 'ESPN Brasileirão',
       timestamp: Date.now(),
     };
 
@@ -695,11 +751,24 @@ function BolaoLiveCardInner({
       {/* TOPO DO COMPONENTE COM BOTÃO PEQUENO "⚙️ ADM" */}
       <div className="bg-[#0A0A0A] border-b border-[#222222] px-3.5 py-2 flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
-          <span className="bg-amber-400 text-black text-[10px] font-black px-2.5 py-0.5 rounded-full uppercase tracking-wider shrink-0">
-            REPRISE
-          </span>
+          {modoRepriseAtivo ? (
+            <span className="bg-amber-400 text-black text-[10px] font-black px-2.5 py-0.5 rounded-full uppercase tracking-wider shrink-0">
+              REPRISE
+            </span>
+          ) : partida?.aoVivo ? (
+            <span className="bg-[#C41E3A] text-white text-[10px] font-black px-2.5 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1 shrink-0 animate-pulse">
+              <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
+              AO VIVO
+            </span>
+          ) : (
+            <span className="bg-[#111111] border border-[#C41E3A] text-white text-[10px] font-black px-2.5 py-0.5 rounded-full uppercase tracking-wider shrink-0">
+              ESPN
+            </span>
+          )}
           <span className="text-xs font-extrabold text-white truncate">
-            {timeCasaExibido} x {timeForaExibido}
+            {buscandoJogos && !modoRepriseAtivo && !partida
+              ? 'Buscando jogos ao vivo...'
+              : `${timeCasaExibido} x ${timeForaExibido}`}
           </span>
         </div>
 
@@ -710,11 +779,20 @@ function BolaoLiveCardInner({
             setPainelAdmAberto(abrindo);
             setErroAdm('');
             setFeedbackAdm('');
-            if (abrindo && typeof navigator !== 'undefined' && navigator.clipboard?.readText) {
+            if (
+              abrindo &&
+              typeof navigator !== 'undefined' &&
+              navigator.clipboard?.readText
+            ) {
               try {
                 const clip = await navigator.clipboard.readText();
                 if (clip && extrairYoutubeID(clip)) {
-                  salvarEAtivarReprise(clip.trim(), inputTimeCasa, inputTimeFora, true);
+                  salvarEAtivarReprise(
+                    clip.trim(),
+                    inputTimeCasa,
+                    inputTimeFora,
+                    true
+                  );
                 }
               } catch {
                 // ignore clipboard permission on open
@@ -733,14 +811,14 @@ function BolaoLiveCardInner({
         </button>
       </div>
 
-      {/* PAINEL ADM INTERNO (SÓ ABRE QUANDO CLICAR EM ⚙️ ADM, COM BORDER AMARELO) */}
+      {/* PAINEL ADM DE REPRISE POR CIMA (COM BORDER AMARELO) */}
       {painelAdmAberto && (
         <div className="p-3.5 bg-[#0A0A0A] border-b-2 border-amber-400 space-y-3">
           <div className="border-2 border-amber-400 rounded-xl p-3.5 bg-[#111111] space-y-3">
             <div className="flex items-center justify-between border-b border-amber-400/30 pb-2">
               <span className="text-xs font-black uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
                 <span>⚙️</span>
-                <span>Painel ADM • Configurar Reprise YouTube</span>
+                <span>Painel ADM • Reprise YouTube (Prioridade)</span>
               </span>
               <button
                 type="button"
@@ -785,7 +863,12 @@ function BolaoLiveCardInner({
                       const val = e.target.value;
                       setInputYoutubeUrl(val);
                       if (extrairYoutubeID(val)) {
-                        salvarEAtivarReprise(val, inputTimeCasa, inputTimeFora, true);
+                        salvarEAtivarReprise(
+                          val,
+                          inputTimeCasa,
+                          inputTimeFora,
+                          true
+                        );
                       }
                     }}
                     onPaste={(e) => {
@@ -876,245 +959,432 @@ function BolaoLiveCardInner({
                 <button
                   type="button"
                   onClick={handleLimparRepriseVoltarAoVivo}
-                  className="w-full bg-zinc-900 hover:bg-zinc-800 text-amber-400 border border-amber-400/60 font-black py-2.5 px-3 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition"
+                  className="w-full bg-[#0A0A0A] hover:bg-zinc-900 text-amber-400 border border-amber-400 font-black py-2.5 px-3 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition"
+                >
+                  🔴 Voltar ao Ao Vivo
+                </button>
+              </div>
+
+              {modoRepriseAtivo && (
+                <button
+                  type="button"
+                  onClick={handleLimparRepriseVoltarAoVivo}
+                  className="w-full bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-700 font-bold py-2 px-3 rounded-lg text-[11px] uppercase cursor-pointer transition"
                 >
                   🗑️ Limpar Reprise
                 </button>
-              </div>
+              )}
             </form>
           </div>
         </div>
       )}
 
-      {/* 1. ÁREA DO PLAYER DE VÍDEO DENTRO DO CARD (w-full h-[210px]) */}
-      <div className="relative w-full h-[210px] overflow-hidden bg-black border-b border-[#C41E3A]">
-        {/* Badge sobre o player: AMARELO "REPRISE" */}
-        <div className="absolute top-2.5 left-2.5 z-20 flex items-center gap-2 pointer-events-none">
-          <span className="bg-amber-400 text-black text-xs font-black px-3 py-1 rounded-full uppercase tracking-wider shadow-lg flex items-center gap-1.5">
-            <span>📼</span>
-            <span>REPRISE</span>
-          </span>
-          <span className="bg-black/85 border border-[#C41E3A] text-white text-[10px] font-bold px-2.5 py-0.5 rounded-full">
-            {modoRepriseAtivo
-              ? `${repriseSalva!.timeCasa} x ${repriseSalva!.timeFora}`
-              : canalAtivo.nome}
-          </span>
-        </div>
+      {/* 1. ÁREA DO VÍDEO (w-full h-[210px]): REPRISE SALVA TEM PRIORIDADE SOBRE A API DA ESPN */}
+      <div className="relative w-full h-[210px] overflow-hidden bg-[#0A0A0A] border-b border-[#C41E3A]">
+        {modoRepriseAtivo ? (
+          <>
+            <div className="absolute top-2.5 left-2.5 z-20 flex items-center gap-2 pointer-events-none">
+              <span className="bg-amber-400 text-black text-xs font-black px-3 py-1 rounded-full uppercase tracking-wider shadow-lg flex items-center gap-1.5">
+                <span>📼</span>
+                <span>REPRISE</span>
+              </span>
+              <span className="bg-black/85 border border-amber-400 text-white text-[10px] font-bold px-2.5 py-0.5 rounded-full">
+                {repriseSalva!.timeCasa} x {repriseSalva!.timeFora}
+              </span>
+            </div>
 
-        <iframe
-          key={iframeEmbedUrl}
-          src={iframeEmbedUrl}
-          title={
-            modoRepriseAtivo
-              ? `Reprise: ${repriseSalva!.timeCasa} x ${repriseSalva!.timeFora}`
-              : `Transmissão: ${canalAtivo.timeCasa} x ${canalAtivo.timeFora}`
-          }
-          className="w-full h-[210px] border-0 block bg-black"
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-          referrerPolicy="strict-origin-when-cross-origin"
-          allowFullScreen
-        />
+            <iframe
+              key={idRepriseSalva}
+              src={`https://www.youtube.com/embed/${idRepriseSalva}?autoplay=0&playsinline=1&rel=0`}
+              title={`Reprise: ${repriseSalva!.timeCasa} x ${repriseSalva!.timeFora}`}
+              className="w-full h-[210px] border-0 block bg-black"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+              referrerPolicy="strict-origin-when-cross-origin"
+              allowFullScreen
+            />
+          </>
+        ) : buscandoJogos && !partida ? (
+          <div className="w-full h-[210px] flex flex-col items-center justify-center bg-[#0A0A0A] gap-2.5 p-4 text-center">
+            <div className="w-8 h-8 rounded-full border-2 border-[#C41E3A] border-t-transparent animate-spin" />
+            <span className="text-xs sm:text-sm font-black uppercase tracking-wider text-white">
+              Buscando jogos ao vivo...
+            </span>
+          </div>
+        ) : (
+          /* CAPA DO JOGO COM IMAGEM DO ESTÁDIO + ESCUDOS DOS TIMES + BADGE AO VIVO PULSANTE */
+          <div className="relative w-full h-[210px] flex flex-col justify-between p-3.5 select-none">
+            <img
+              src={CAPA_ESTADIO_TRANSMISSAO}
+              alt="Estádio Brasileirão"
+              className="absolute inset-0 w-full h-full object-cover opacity-35 scale-105"
+            />
+            <div className="absolute inset-0 bg-gradient-to-t from-[#0A0A0A] via-[#0A0A0A]/65 to-black/80" />
+
+            {/* Topo sobre a capa: Badge AO VIVO vermelho pulsante se status for ao vivo */}
+            <div className="relative z-10 flex items-center justify-between gap-2">
+              {partida?.aoVivo ? (
+                <span className="bg-[#C41E3A] text-white text-xs font-black px-3 py-1 rounded-full uppercase tracking-wider shadow-lg flex items-center gap-1.5 animate-pulse">
+                  <span className="w-2 h-2 rounded-full bg-white animate-ping" />
+                  <span>{partida.status}</span>
+                </span>
+              ) : (
+                <span className="bg-black/85 border border-[#C41E3A] text-white text-[11px] font-black px-3 py-1 rounded-full uppercase tracking-wider">
+                  {partida?.encerrado
+                    ? `ENCERRADO • ${partida.status}`
+                    : `HOJE • ${partida?.horario || '--:--'}`}
+                </span>
+              )}
+
+              <span className="bg-black/85 border border-[#222222] text-zinc-200 text-[10px] font-bold px-2.5 py-1 rounded-full truncate max-w-[180px]">
+                🏟️ {partida?.estadio || 'Brasileirão Série A'}
+              </span>
+            </div>
+
+            {/* Centro da Capa do Jogo: Confronto Visual com Logos da ESPN */}
+            {partida ? (
+              <div className="relative z-10 flex items-center justify-center gap-5 sm:gap-8 my-auto">
+                <div className="flex flex-col items-center gap-1.5 w-28 text-center">
+                  <div className="w-16 h-16 rounded-full bg-black/80 border-2 border-[#C41E3A] p-2 flex items-center justify-center shadow-[0_0_25px_rgba(196,30,58,0.4)]">
+                    {!erroLogoCasa && partida.logoCasa ? (
+                      <img
+                        src={partida.logoCasa}
+                        alt={partida.timeCasa}
+                        onError={() => setErroLogoCasa(true)}
+                        className="w-full h-full object-contain"
+                      />
+                    ) : (
+                      <span className="text-sm font-black text-white">
+                        {siglaTime(partida.timeCasa)}
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-xs font-black text-white truncate w-full drop-shadow">
+                    {partida.timeCasa}
+                  </span>
+                </div>
+
+                <div className="flex flex-col items-center justify-center">
+                  <span className="bg-[#C41E3A] text-white text-xs font-black px-3 py-1 rounded-lg uppercase tracking-widest shadow-lg">
+                    VS
+                  </span>
+                </div>
+
+                <div className="flex flex-col items-center gap-1.5 w-28 text-center">
+                  <div className="w-16 h-16 rounded-full bg-black/80 border-2 border-[#C41E3A] p-2 flex items-center justify-center shadow-[0_0_25px_rgba(196,30,58,0.4)]">
+                    {!erroLogoFora && partida.logoFora ? (
+                      <img
+                        src={partida.logoFora}
+                        alt={partida.timeFora}
+                        onError={() => setErroLogoFora(true)}
+                        className="w-full h-full object-contain"
+                      />
+                    ) : (
+                      <span className="text-sm font-black text-white">
+                        {siglaTime(partida.timeFora)}
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-xs font-black text-white truncate w-full drop-shadow">
+                    {partida.timeFora}
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div className="relative z-10 my-auto text-center">
+                <p className="text-xs font-bold text-zinc-300">
+                  Nenhum confronto retornado pela ESPN no momento.
+                </p>
+              </div>
+            )}
+
+            {/* Rodapé da Capa */}
+            <div className="relative z-10 flex items-center justify-between text-[10px] text-zinc-300 font-bold">
+              <span>⚽ Brasileirão Série A • ESPN API</span>
+              <span className="text-[#C41E3A] font-black uppercase">
+                Atualização a cada 30s
+              </span>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Faixa informativa quando está em modo REPRISE */}
-      {modoRepriseAtivo && (
-        <div className="bg-amber-400/15 border-b border-amber-400/40 px-3.5 py-2 flex items-center justify-between gap-2 text-[11px]">
-          <span className="text-amber-300 font-bold truncate">
-            📼 Reprise de Jogo: <strong>{repriseSalva!.timeCasa} x {repriseSalva!.timeFora}</strong>
-          </span>
-          <span className="text-[10px] text-amber-400 font-mono shrink-0">
-            Gravado
-          </span>
+      {/* ALERTA DE GOL ("GOOOL! Novo placar") QUANDO O PLACAR MUDA NA API */}
+      {alertaGol && (
+        <div className="bg-[#C41E3A] border-b border-white/25 px-3.5 py-2.5 flex items-center justify-between gap-2 animate-pulse shadow-[0_0_25px_rgba(196,30,58,0.65)]">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-base shrink-0 animate-bounce">⚽</span>
+            <div className="min-w-0">
+              <div className="text-xs sm:text-sm font-black uppercase tracking-wider text-white truncate">
+                GOOOL! Novo placar
+              </div>
+              <div className="text-[11px] font-bold text-white/95 truncate">
+                {alertaGol.timeCasa} {alertaGol.placarCasa} x{' '}
+                {alertaGol.placarFora} {alertaGol.timeFora} ({alertaGol.minuto})
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setAlertaGol(null)}
+            className="text-xs font-black text-white/90 hover:text-white bg-black/30 px-2 py-1 rounded-lg cursor-pointer shrink-0"
+            title="Fechar alerta de gol"
+          >
+            ✕
+          </button>
         </div>
       )}
 
-      {/* CONTEÚDO INTERNO DO CARD */}
-      <div className="p-4 space-y-4">
-        {/* 2. CANAIS DO PLAYER */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between gap-1">
-            <span className="text-[11px] font-extrabold uppercase tracking-wider text-white">
-              📼 Canais de Reprises
+      {/* 2. PLACAR ESTILO ESPN EMBAIXO DO VÍDEO (FUNDO #111) */}
+      <div className="bg-[#111111] border-b border-[#222222] p-3.5 text-center">
+        {buscandoJogos && !partida && !modoRepriseAtivo ? (
+          <div className="py-3 text-xs font-bold text-zinc-300">
+            Buscando jogos ao vivo...
+          </div>
+        ) : (
+          <div className="flex items-center justify-between gap-2">
+            {/* Esquerda: logoCasa + nomeCasa */}
+            <div className="flex flex-col items-center flex-1 min-w-0">
+              <div className="w-12 h-12 rounded-full bg-[#0A0A0A] border border-[#222222] p-1.5 flex items-center justify-center shadow-md">
+                {!erroLogoCasa && logoCasaExibido ? (
+                  <img
+                    src={logoCasaExibido}
+                    alt={timeCasaExibido}
+                    onError={() => setErroLogoCasa(true)}
+                    className="w-full h-full object-contain"
+                  />
+                ) : (
+                  <span className="text-xs font-black text-white">
+                    {siglaTime(timeCasaExibido)}
+                  </span>
+                )}
+              </div>
+              <span className="mt-1.5 text-xs sm:text-sm font-extrabold text-white truncate max-w-full">
+                {timeCasaExibido}
+              </span>
+            </div>
+
+            {/* Centro: placarCasa - placarFora em caixa vermelha #C41E3A (ou VS + horário se não começou) + status + estádio */}
+            <div className="flex flex-col items-center shrink-0 px-2 max-w-[175px]">
+              {modoRepriseAtivo ? (
+                <>
+                  <div className="bg-[#C41E3A] text-white font-black text-base sm:text-lg px-4 py-1.5 rounded-xl tracking-wider shadow-md uppercase">
+                    REPRISE
+                  </div>
+                  <span className="text-[10px] text-amber-400 font-black uppercase tracking-wider mt-1">
+                    TRANSMISSÃO GRAVADA
+                  </span>
+                  <span className="text-[10px] text-zinc-400 font-semibold truncate max-w-full mt-0.5">
+                    {partida?.estadio || 'Brasileirão Série A'}
+                  </span>
+                </>
+              ) : partida?.naoComecou ? (
+                <>
+                  <div className="bg-[#C41E3A] text-white font-black text-lg sm:text-xl px-4 py-1 rounded-xl tracking-widest shadow-md">
+                    VS
+                  </div>
+                  <span className="text-[11px] text-white font-black uppercase tracking-wider mt-1">
+                    ⏰ {partida.horario}
+                  </span>
+                  <span className="text-[10px] text-zinc-400 font-semibold truncate max-w-full mt-0.5">
+                    {partida.estadio}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <div className="bg-[#C41E3A] text-white font-black text-xl sm:text-2xl px-4 py-1 rounded-xl tracking-widest shadow-md font-mono">
+                    {partida?.placarCasa ?? 0} - {partida?.placarFora ?? 0}
+                  </div>
+                  <span
+                    className={`text-[10px] font-black uppercase tracking-wider mt-1 ${
+                      partida?.aoVivo
+                        ? 'text-[#C41E3A] animate-pulse'
+                        : 'text-white/90'
+                    }`}
+                  >
+                    {partida?.status || 'AO VIVO'}
+                  </span>
+                  <span className="text-[10px] text-zinc-400 font-semibold truncate max-w-full mt-0.5">
+                    {partida?.estadio || 'Estádio Brasileirão'}
+                  </span>
+                </>
+              )}
+            </div>
+
+            {/* Direita: nomeFora + logoFora */}
+            <div className="flex flex-col items-center flex-1 min-w-0">
+              <div className="w-12 h-12 rounded-full bg-[#0A0A0A] border border-[#222222] p-1.5 flex items-center justify-center shadow-md">
+                {!erroLogoFora && logoForaExibido ? (
+                  <img
+                    src={logoForaExibido}
+                    alt={timeForaExibido}
+                    onError={() => setErroLogoFora(true)}
+                    className="w-full h-full object-contain"
+                  />
+                ) : (
+                  <span className="text-xs font-black text-white">
+                    {siglaTime(timeForaExibido)}
+                  </span>
+                )}
+              </div>
+              <span className="mt-1.5 text-xs sm:text-sm font-extrabold text-white truncate max-w-full">
+                {timeForaExibido}
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 2.5. MATCH SUMMARY (RESUMO DA PARTIDA ABAIXO DO PLACAR: ESTÁDIO, CAMPEONATO E MINUTO) */}
+      <div className="bg-[#0A0A0A] border-b border-[#222222] px-3.5 py-2.5">
+        <div className="grid grid-cols-3 gap-2 text-center">
+          <div className="bg-[#111111] border border-[#222222] rounded-xl px-2 py-1.5 flex flex-col items-center justify-center min-w-0">
+            <span className="text-[9px] font-bold uppercase tracking-wider text-zinc-400">
+              🏟️ Estádio
             </span>
-            <span className="text-[10px] font-bold text-white/70">
-              {modoRepriseAtivo
-                ? `Reprise: ${repriseSalva!.timeCasa} x ${repriseSalva!.timeFora}`
-                : `${canalAtivo.nome} • Reprise: ${canalAtivo.timeCasa} x ${canalAtivo.timeFora}`}
+            <span className="text-[11px] font-extrabold text-white truncate w-full mt-0.5">
+              {partida?.estadio || 'Brasileirão'}
             </span>
           </div>
 
-          <div className="grid grid-cols-2 gap-2">
-            {CANAIS.map((canal) => {
-              const ativo = !modoRepriseAtivo && canalAtivo.id === canal.id;
-              return (
-                <button
-                  key={canal.id}
-                  type="button"
-                  onClick={() => selecionarCanalAoVivo(canal)}
-                  className={`w-full py-2.5 px-2.5 rounded-xl text-[11px] sm:text-xs font-bold border border-[#C41E3A] transition-all duration-200 cursor-pointer flex items-center justify-center gap-1.5 truncate ${
-                    ativo
-                      ? 'bg-[#C41E3A] text-white shadow-[0_0_15px_rgba(196,30,58,0.45)]'
-                      : 'bg-[#0A0A0A] hover:bg-[#C41E3A]/20 text-white'
-                  }`}
-                >
-                  <span
-                    className={`w-2 h-2 rounded-full shrink-0 ${
-                      ativo ? 'bg-white animate-pulse' : 'bg-[#C41E3A]'
-                    }`}
-                  />
-                  <span className="truncate">{canal.nome}</span>
-                </button>
-              );
-            })}
+          <div className="bg-[#111111] border border-[#222222] rounded-xl px-2 py-1.5 flex flex-col items-center justify-center min-w-0">
+            <span className="text-[9px] font-bold uppercase tracking-wider text-zinc-400">
+              🏆 Campeonato
+            </span>
+            <span className="text-[11px] font-extrabold text-white truncate w-full mt-0.5">
+              {partida?.campeonato || 'Brasileirão Série A'}
+            </span>
+          </div>
+
+          <div className="bg-[#111111] border border-[#C41E3A]/60 rounded-xl px-2 py-1.5 flex flex-col items-center justify-center min-w-0">
+            <span className="text-[9px] font-bold uppercase tracking-wider text-[#C41E3A]">
+              ⏱️ Minuto
+            </span>
+            <span className="text-[11px] font-black text-white truncate w-full mt-0.5">
+              {modoRepriseAtivo
+                ? 'Reprise'
+                : partida?.minuto || partida?.status || '--'}
+            </span>
           </div>
         </div>
+      </div>
 
-        {/* 3. PLACAR ESTILO ESPN (ATUALIZA VIA ESPN OU MOSTRA O CONFRONTO DA REPRISE) */}
-        <div className="bg-[#111111] border border-[#222222] rounded-[16px] p-3.5 text-center space-y-2.5">
-          <div className="flex items-center justify-between border-b border-[#222222] pb-2">
-            <span className="text-[10px] font-extrabold uppercase tracking-wider text-zinc-300">
-              {modoRepriseAtivo
-                ? '📼 Confronto da Reprise'
-                : '⚽ Placar Brasileirão Série A (ESPN)'}
+      {/* CONTEÚDO INTERNO DO CARD */}
+      <div className="p-4 space-y-4">
+        {/* 3. LISTA DE JOGOS DA ESPN (VIRA OS CANAIS EMBAIXO DO VÍDEO) */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[11px] font-extrabold uppercase tracking-wider text-white">
+              ⚽ Jogos Brasileirão (ESPN)
             </span>
             <button
               type="button"
-              onClick={() => carregarJogosEspn()}
+              onClick={() => {
+                setBuscandoJogos(true);
+                buscarJogosEspn();
+              }}
               className="text-[10px] font-bold text-[#C41E3A] hover:underline cursor-pointer"
             >
-              🔄 Atualizar {ultimaSincronizacao ? `(${ultimaSincronizacao})` : ''}
+              🔄 Atualizar Placar
             </button>
           </div>
 
-          {modoRepriseAtivo ? (
-            <div className="flex items-center justify-between gap-2 pt-1">
-              <div className="flex flex-col items-center flex-1 min-w-0">
-                <div className="w-12 h-12 rounded-full bg-zinc-950 border border-[#222222] p-1.5 flex items-center justify-center shadow-md">
-                  {!erroEscudoCasa && escudoCasaExibido ? (
-                    <img
-                      src={escudoCasaExibido}
-                      alt={timeCasaExibido}
-                      onError={() => setErroEscudoCasa(true)}
-                      className="w-full h-full object-contain"
-                    />
-                  ) : (
-                    <span className="text-xs font-black text-white">
-                      {siglaTime(timeCasaExibido)}
-                    </span>
-                  )}
-                </div>
-                <span className="mt-1.5 text-xs sm:text-sm font-extrabold text-white truncate max-w-full">
-                  {timeCasaExibido}
-                </span>
-              </div>
-
-              <div className="flex flex-col items-center shrink-0 px-2">
-                <div className="bg-amber-400 text-black font-black text-xs sm:text-sm px-3.5 py-1.5 rounded-xl tracking-wider shadow-md uppercase">
-                  REPRISE
-                </div>
-                <span className="text-[10px] text-amber-300 font-bold uppercase tracking-wider mt-1">
-                  Jogo Gravado
-                </span>
-              </div>
-
-              <div className="flex flex-col items-center flex-1 min-w-0">
-                <div className="w-12 h-12 rounded-full bg-zinc-950 border border-[#222222] p-1.5 flex items-center justify-center shadow-md">
-                  {!erroEscudoFora && escudoForaExibido ? (
-                    <img
-                      src={escudoForaExibido}
-                      alt={timeForaExibido}
-                      onError={() => setErroEscudoFora(true)}
-                      className="w-full h-full object-contain"
-                    />
-                  ) : (
-                    <span className="text-xs font-black text-white">
-                      {siglaTime(timeForaExibido)}
-                    </span>
-                  )}
-                </div>
-                <span className="mt-1.5 text-xs sm:text-sm font-extrabold text-white truncate max-w-full">
-                  {timeForaExibido}
-                </span>
-              </div>
+          {buscandoJogos && jogosEspn.length === 0 ? (
+            <div className="bg-[#111111] border border-[#222222] rounded-xl p-3 text-center text-xs text-zinc-300 font-bold">
+              Buscando jogos ao vivo...
             </div>
-          ) : carregandoEspn ? (
-            <div className="py-3 text-xs text-zinc-400 font-bold">
-              Consultando jogos do Brasileirão Série A na ESPN...
+          ) : jogosEspn.length === 0 ? (
+            <div className="bg-[#111111] border border-[#222222] rounded-xl p-3 text-center text-xs text-zinc-400">
+              Nenhum jogo encontrado no placar da ESPN no momento.
             </div>
-          ) : jogoEspnAtual ? (
-            <>
-              <div className="flex items-center justify-between gap-2 pt-1">
-                <div className="flex flex-col items-center flex-1 min-w-0">
-                  <div className="w-12 h-12 rounded-full bg-zinc-950 border border-[#222222] p-1.5 flex items-center justify-center shadow-md">
-                    {!erroEscudoCasa && jogoEspnAtual.escudoCasaUrl ? (
-                      <img
-                        src={jogoEspnAtual.escudoCasaUrl}
-                        alt={jogoEspnAtual.time_casa}
-                        onError={() => setErroEscudoCasa(true)}
-                        className="w-full h-full object-contain"
-                      />
-                    ) : (
-                      <span className="text-xs font-black text-white">
-                        {siglaTime(jogoEspnAtual.time_casa)}
-                      </span>
-                    )}
-                  </div>
-                  <span className="mt-1.5 text-xs sm:text-sm font-extrabold text-white truncate max-w-full">
-                    {jogoEspnAtual.time_casa}
-                  </span>
-                </div>
-
-                <div className="flex flex-col items-center shrink-0 px-2">
-                  <div className="bg-[#C41E3A] text-white font-black text-xl sm:text-2xl px-4 py-1.5 rounded-xl tracking-widest shadow-md font-mono">
-                    {jogoEspnAtual.placar_casa ?? 0} - {jogoEspnAtual.placar_fora ?? 0}
-                  </div>
-                  <span className="text-[10px] text-white/80 font-bold uppercase tracking-wider mt-1">
-                    {jogoEspnAtual.tempoJogo ||
-                      jogoEspnAtual.status ||
-                      `Horário ${jogoEspnAtual.horario}`}
-                  </span>
-                </div>
-
-                <div className="flex flex-col items-center flex-1 min-w-0">
-                  <div className="w-12 h-12 rounded-full bg-zinc-950 border border-[#222222] p-1.5 flex items-center justify-center shadow-md">
-                    {!erroEscudoFora && jogoEspnAtual.escudoForaUrl ? (
-                      <img
-                        src={jogoEspnAtual.escudoForaUrl}
-                        alt={jogoEspnAtual.time_fora}
-                        onError={() => setErroEscudoFora(true)}
-                        className="w-full h-full object-contain"
-                      />
-                    ) : (
-                      <span className="text-xs font-black text-white">
-                        {siglaTime(jogoEspnAtual.time_fora)}
-                      </span>
-                    )}
-                  </div>
-                  <span className="mt-1.5 text-xs sm:text-sm font-extrabold text-white truncate max-w-full">
-                    {jogoEspnAtual.time_fora}
-                  </span>
-                </div>
-              </div>
-
-              <p className="text-[11px] sm:text-xs text-white/90 font-semibold border-t border-[#222222] pt-2">
-                Brasileirão Série A • {jogoEspnAtual.estadio} • Horário:{' '}
-                {jogoEspnAtual.horario}
-              </p>
-            </>
           ) : (
-            <div className="py-2.5 px-2 space-y-1">
-              <div className="text-xs sm:text-sm font-black uppercase text-white">
-                Sem jogos no momento
-              </div>
-              <p className="text-[11px] text-zinc-400 leading-relaxed">
-                Nenhuma partida do Brasileirão Série A em andamento na ESPN agora. O placar mudará automaticamente de acordo com o horário do jogo.
-              </p>
-              {proximosJogosHoje.length > 0 && (
-                <div className="inline-block text-[10px] text-[#C41E3A] font-bold bg-black border border-[#222222] px-3 py-1 rounded-full mt-1">
-                  Próximo jogo hoje às {proximosJogosHoje[0].horario}:{' '}
-                  {proximosJogosHoje[0].time_casa} x {proximosJogosHoje[0].time_fora}
-                </div>
-              )}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-56 overflow-y-auto pr-0.5">
+              {jogosEspn.map((item) => {
+                const selecionado = partida?.id === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => {
+                      setPartida({
+                        id: item.id,
+                        timeCasa: item.timeCasa,
+                        timeFora: item.timeFora,
+                        logoCasa: item.logoCasa,
+                        logoFora: item.logoFora,
+                        placarCasa: item.placarCasa,
+                        placarFora: item.placarFora,
+                        status: item.status,
+                        minuto: item.minuto,
+                        campeonato: item.campeonato,
+                        horario: item.horario,
+                        estadio: item.estadio,
+                        aoVivo: item.aoVivo,
+                        naoComecou: item.naoComecou,
+                        encerrado: item.encerrado,
+                      });
+                      setErroLogoCasa(false);
+                      setErroLogoFora(false);
+                      setApostaConfirmada(false);
+                    }}
+                    className={`w-full p-2.5 rounded-xl text-xs font-bold border transition-all duration-200 cursor-pointer flex items-center justify-between gap-2 ${
+                      selecionado
+                        ? 'bg-[#C41E3A] text-white border-[#C41E3A] shadow-[0_0_15px_rgba(196,30,58,0.45)]'
+                        : 'bg-[#111111] hover:bg-[#C41E3A]/20 text-white border-[#222222] hover:border-[#C41E3A]'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      {item.logoCasa ? (
+                        <img
+                          src={item.logoCasa}
+                          alt={item.timeCasa}
+                          className="w-5 h-5 object-contain shrink-0"
+                        />
+                      ) : (
+                        <span className="text-[10px] font-black">
+                          {siglaTime(item.timeCasa)}
+                        </span>
+                      )}
+                      <span className="truncate max-w-[68px]">
+                        {item.timeCasa}
+                      </span>
+                      <span className="text-[10px] font-black opacity-80">
+                        x
+                      </span>
+                      <span className="truncate max-w-[68px]">
+                        {item.timeFora}
+                      </span>
+                      {item.logoFora ? (
+                        <img
+                          src={item.logoFora}
+                          alt={item.timeFora}
+                          className="w-5 h-5 object-contain shrink-0"
+                        />
+                      ) : (
+                        <span className="text-[10px] font-black">
+                          {siglaTime(item.timeFora)}
+                        </span>
+                      )}
+                    </div>
+
+                    <span
+                      className={`text-[10px] font-black px-2 py-0.5 rounded shrink-0 flex items-center gap-1 ${
+                        selecionado
+                          ? 'bg-black/40 text-white'
+                          : item.aoVivo
+                          ? 'bg-[#C41E3A] text-white animate-pulse'
+                          : 'bg-[#0A0A0A] text-zinc-300 border border-[#222222]'
+                      }`}
+                    >
+                      {item.aoVivo && (
+                        <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
+                      )}
+                      {item.naoComecou
+                        ? item.horario
+                        : `${item.placarCasa}-${item.placarFora} • ${item.status}`}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>
