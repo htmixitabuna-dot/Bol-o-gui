@@ -26,84 +26,145 @@ export interface JogoEspnItem {
   escudoForaUrl: string;
 }
 
-export interface RepriseYoutubeItem {
+export interface CanalItem {
   id: string;
-  canal: string;
+  nome: string;
   videoId: string;
   timeCasa: string;
   timeFora: string;
   placarCasa: number;
   placarFora: number;
   campeonato: string;
-  descricaoReprise: string;
   escudoCasa: string;
   escudoFora: string;
 }
 
-export const REPRISES_YOUTUBE: RepriseYoutubeItem[] = [
+export interface RepriseSalvaStorage {
+  youtubeUrl: string;
+  youtubeId?: string;
+  timeCasa: string;
+  timeFora: string;
+  data: string | Date;
+}
+
+const STORAGE_KEY_REPRISE = 'bolao_reprise_atual';
+
+export function extrairYoutubeID(url: string): string | null {
+  if (!url || typeof url !== 'string') return null;
+  const limpo = url.trim();
+  if (!limpo) return null;
+
+  // Caso o usuário tenha colado diretamente o ID de 11 caracteres
+  if (/^[a-zA-Z0-9_-]{11}$/.test(limpo)) {
+    return limpo;
+  }
+
+  // Formatos: youtube.com/watch?v=ID, youtu.be/ID, youtube.com/live/ID, youtube.com/embed/ID, youtube.com/shorts/ID
+  const padroes = [
+    /(?:youtube\.com\/watch\?.*v=)([a-zA-Z0-9_-]{11})/,
+    /(?:youtu\.be\/)([a-zA-Z0-9_-]{11})/,
+    /(?:youtube\.com\/live\/)([a-zA-Z0-9_-]{11})/,
+    /(?:youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/,
+    /(?:youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/,
+    /(?:youtube\.com\/v\/)([a-zA-Z0-9_-]{11})/,
+  ];
+
+  for (const regex of padroes) {
+    const match = limpo.match(regex);
+    if (match && match[1]) {
+      return match[1];
+    }
+  }
+
+  return null;
+}
+
+const ESCUDOS_CONHECIDOS: Record<string, string> = {
+  flamengo: 'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F819.png',
+  palmeiras: 'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F2029.png',
+  corinthians: 'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F874.png',
+  santos: 'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F2674.png',
+  vasco: 'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F3454.png',
+  'vasco da gama': 'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F3454.png',
+  fluminense: 'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F3445.png',
+  botafogo: 'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F6086.png',
+  'sao paulo': 'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F2026.png',
+  gremio: 'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F6273.png',
+  internacional: 'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F1936.png',
+  cruzeiro: 'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F2022.png',
+  'atletico-mg': 'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F7632.png',
+  bahia: 'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F9967.png',
+  fortaleza: 'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F6272.png',
+  ceara: 'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F3441.png',
+  vitoria: 'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F3457.png',
+  brasil: 'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fcountries%2F500%2Fbra.png',
+  argentina: 'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fcountries%2F500%2Farg.png',
+};
+
+function obterEscudoPorNome(nome: string): string {
+  const norm = (nome || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+  if (!norm) return '';
+  if (ESCUDOS_CONHECIDOS[norm]) return ESCUDOS_CONHECIDOS[norm];
+  const chaveParcial = Object.keys(ESCUDOS_CONHECIDOS).find(
+    (k) => norm.includes(k) || k.includes(norm)
+  );
+  return chaveParcial ? ESCUDOS_CONHECIDOS[chaveParcial] : '';
+}
+
+export const CANAIS: CanalItem[] = [
   {
-    id: 'goat_fla_pal',
-    canal: 'Canal GOAT (YouTube)',
-    videoId: 'CTNlXPwPHbA',
-    timeCasa: 'Flamengo',
-    timeFora: 'Palmeiras',
-    placarCasa: 1,
+    id: 'cazetv',
+    nome: 'CazéTV',
+    videoId: 'K6oCrMQCXJU',
+    timeCasa: 'Vasco',
+    timeFora: 'Fluminense',
+    placarCasa: 2,
     placarFora: 1,
-    campeonato: 'Final • Jogo Completo',
-    descricaoReprise: 'Reprise de jogo anterior: Flamengo x Palmeiras (Transmissão Canal GOAT)',
-    escudoCasa:
-      'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F819.png',
-    escudoFora:
-      'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F2029.png',
+    campeonato: 'Brasileirão Série A • Maracanã',
+    escudoCasa: ESCUDOS_CONHECIDOS['vasco'],
+    escudoFora: ESCUDOS_CONHECIDOS['fluminense'],
   },
   {
-    id: 'derby_cor_pal',
-    canal: 'Paulistão / Tradição (YouTube)',
+    id: 'fifa',
+    nome: 'FIFA+',
     videoId: 'IsLDe3K9Pf4',
     timeCasa: 'Corinthians',
     timeFora: 'Palmeiras',
-    placarCasa: 0,
+    placarCasa: 1,
     placarFora: 0,
-    campeonato: 'Final • Derby Paulista Completo',
-    descricaoReprise: 'Reprise de jogo anterior: Corinthians x Palmeiras (Jogo Completo)',
-    escudoCasa:
-      'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F874.png',
-    escudoFora:
-      'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F2029.png',
+    campeonato: 'Clássico • Derby Paulista',
+    escudoCasa: ESCUDOS_CONHECIDOS['corinthians'],
+    escudoFora: ESCUDOS_CONHECIDOS['palmeiras'],
   },
   {
-    id: 'brasileirao_san_fla',
-    canal: 'Transmissão Brasileirão (YouTube)',
+    id: 'nsports',
+    nome: 'N Sports',
     videoId: 'l_2qXr8wCnk',
     timeCasa: 'Santos',
     timeFora: 'Flamengo',
     placarCasa: 2,
     placarFora: 2,
-    campeonato: 'Brasileirão Série A • Jogo Completo',
-    descricaoReprise: 'Reprise de jogo anterior: Santos x Flamengo (Brasileirão Série A)',
-    escudoCasa:
-      'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F2674.png',
-    escudoFora:
-      'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F819.png',
+    campeonato: 'Brasileirão Série A • Vila Belmiro',
+    escudoCasa: ESCUDOS_CONHECIDOS['santos'],
+    escudoFora: ESCUDOS_CONHECIDOS['flamengo'],
   },
   {
-    id: 'goat_cea_for',
-    canal: 'Canal GOAT Clássicos (YouTube)',
-    videoId: 'ZiLdsJWExG4',
-    timeCasa: 'Ceará',
-    timeFora: 'Fortaleza',
+    id: 'goat',
+    nome: 'Canal GOAT',
+    videoId: 'CTNlXPwPHbA',
+    timeCasa: 'Flamengo',
+    timeFora: 'Palmeiras',
     placarCasa: 1,
     placarFora: 1,
-    campeonato: 'Clássico-Rei • Jogo Completo',
-    descricaoReprise: 'Reprise de jogo anterior: Ceará x Fortaleza (Transmissão Canal GOAT)',
-    escudoCasa:
-      'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F3441.png',
-    escudoFora:
-      'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F6272.png',
+    campeonato: 'Transmissão Oficial • Canal GOAT',
+    escudoCasa: ESCUDOS_CONHECIDOS['flamengo'],
+    escudoFora: ESCUDOS_CONHECIDOS['palmeiras'],
   },
 ];
-
-export const CANAIS = REPRISES_YOUTUBE;
 
 export interface DadosPalpiteLive {
   timeCasa: string;
@@ -127,7 +188,44 @@ function converterHorarioParaMinutos(horarioStr: string): number {
   return Number(match[1]) * 60 + Number(match[2]);
 }
 
+function lerRepriseSalvaLocalStorage(): RepriseSalvaStorage | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_REPRISE);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.youtubeUrl && extrairYoutubeID(parsed.youtubeUrl)) {
+      return parsed;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export function BolaoLiveCard({ onConfirmarPalpite }: BolaoLiveCardProps) {
+  // Estado da Reprise salva pelo ADM no localStorage (`bolao_reprise_atual`)
+  const [repriseSalva, setRepriseSalva] = useState<RepriseSalvaStorage | null>(
+    () => lerRepriseSalvaLocalStorage()
+  );
+
+  // Estado do Painel ADM (escondido por padrão, abre ao clicar em "⚙️ ADM")
+  const [painelAdmAberto, setPainelAdmAberto] = useState<boolean>(false);
+  const [inputYoutubeUrl, setInputYoutubeUrl] = useState<string>(
+    () => lerRepriseSalvaLocalStorage()?.youtubeUrl || ''
+  );
+  const [inputTimeCasa, setInputTimeCasa] = useState<string>(
+    () => lerRepriseSalvaLocalStorage()?.timeCasa || ''
+  );
+  const [inputTimeFora, setInputTimeFora] = useState<string>(
+    () => lerRepriseSalvaLocalStorage()?.timeFora || ''
+  );
+  const [feedbackAdm, setFeedbackAdm] = useState<string>('');
+  const [erroAdm, setErroAdm] = useState<string>('');
+
+  // Estado do modo Ao Vivo normal com os 4 canais
+  const [canalAtivo, setCanalAtivo] = useState<CanalItem>(CANAIS[0]);
+
   // Estado das partidas reais da ESPN (Brasileirão Série A)
   const [jogosAtivosEspn, setJogosAtivosEspn] = useState<JogoEspnItem[]>([]);
   const [proximosJogosHoje, setProximosJogosHoje] = useState<JogoEspnItem[]>([]);
@@ -135,16 +233,23 @@ export function BolaoLiveCard({ onConfirmarPalpite }: BolaoLiveCardProps) {
   const [carregandoEspn, setCarregandoEspn] = useState<boolean>(true);
   const [ultimaSincronizacao, setUltimaSincronizacao] = useState<string>('');
 
-  // Estado das Reprises de Jogos Anteriores (YouTube)
-  const [assistindoReprise, setAssistindoReprise] = useState<boolean>(true);
-  const [repriseAtiva, setRepriseAtiva] = useState<RepriseYoutubeItem>(REPRISES_YOUTUBE[0]);
-  const [autoplayReprise, setAutoplayReprise] = useState<boolean>(false);
-
   const [escolhaVencedor, setEscolhaVencedor] = useState<'CASA' | 'EMPATE' | 'FORA'>('CASA');
   const [apostaConfirmada, setApostaConfirmada] = useState<boolean>(false);
 
   const [erroEscudoCasa, setErroEscudoCasa] = useState<boolean>(false);
   const [erroEscudoFora, setErroEscudoFora] = useState<boolean>(false);
+
+  // Sincroniza caso o localStorage mude em outra aba
+  useEffect(() => {
+    const onStorage = (ev: StorageEvent) => {
+      if (ev.key === STORAGE_KEY_REPRISE) {
+        const atual = lerRepriseSalvaLocalStorage();
+        setRepriseSalva(atual);
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
 
   const carregarJogosEspn = useCallback(async () => {
     try {
@@ -161,7 +266,6 @@ export function BolaoLiveCard({ onConfirmarPalpite }: BolaoLiveCardProps) {
       const brAgora = toBrasilDateAndTime(new Date());
       const minutosAgora = converterHorarioParaMinutos(brAgora.timeStr);
 
-      // Filtra apenas jogos do Brasileirão Série A que estão acontecendo neste momento na ESPN
       const emAndamento = todosHoje.filter((j) => {
         if (j.aoVivo || j.estadoPartida === 'in') return true;
         if (j.encerrado || j.estadoPartida === 'post') return false;
@@ -220,7 +324,6 @@ export function BolaoLiveCard({ onConfirmarPalpite }: BolaoLiveCardProps) {
     return () => window.clearInterval(interval);
   }, [carregarJogosEspn]);
 
-  // Se houver mais de um jogo acontecendo simultaneamente na ESPN, alterna pelo horário
   useEffect(() => {
     if (jogosAtivosEspn.length <= 1) return;
     const rotacao = window.setInterval(() => {
@@ -236,22 +339,113 @@ export function BolaoLiveCard({ onConfirmarPalpite }: BolaoLiveCardProps) {
       ? jogosAtivosEspn[indiceJogoEspn % jogosAtivosEspn.length]
       : null;
 
-  const selecionarReprise = (item: RepriseYoutubeItem) => {
-    setRepriseAtiva(item);
-    setAssistindoReprise(true);
-    setAutoplayReprise(true);
+  const handleSalvarRepriseAdm = (e: React.FormEvent) => {
+    e.preventDefault();
+    setErroAdm('');
+    setFeedbackAdm('');
+
+    const idExtraido = extrairYoutubeID(inputYoutubeUrl);
+    if (!idExtraido) {
+      setErroAdm(
+        'Link do YouTube inválido. Use o formato https://www.youtube.com/watch?v=XXXX ou https://youtu.be/XXXX'
+      );
+      return;
+    }
+
+    const casaLimpo = inputTimeCasa.trim() || 'Time Casa';
+    const foraLimpo = inputTimeFora.trim() || 'Time Fora';
+
+    const dadosReprise: RepriseSalvaStorage = {
+      youtubeUrl: inputYoutubeUrl.trim(),
+      timeCasa: casaLimpo,
+      timeFora: foraLimpo,
+      data: new Date().toISOString(),
+    };
+
+    try {
+      localStorage.setItem(STORAGE_KEY_REPRISE, JSON.stringify(dadosReprise));
+    } catch {
+      // ignore storage errors
+    }
+
+    setRepriseSalva(dadosReprise);
+    setErroEscudoCasa(false);
+    setErroEscudoFora(false);
+    setApostaConfirmada(false);
+    setFeedbackAdm(
+      `✅ Reprise "${casaLimpo} x ${foraLimpo}" salva e carregada no player!`
+    );
+  };
+
+  const handleLimparRepriseVoltarAoVivo = () => {
+    try {
+      localStorage.removeItem(STORAGE_KEY_REPRISE);
+    } catch {
+      // ignore
+    }
+    setRepriseSalva(null);
+    setInputYoutubeUrl('');
+    setInputTimeCasa('');
+    setInputTimeFora('');
+    setErroAdm('');
+    setFeedbackAdm('🔴 Reprise removida! Player voltou ao modo Ao Vivo.');
+    setErroEscudoCasa(false);
+    setErroEscudoFora(false);
+  };
+
+  const selecionarCanalAoVivo = (canal: CanalItem) => {
+    // Se clicar em um canal ao vivo, volta para o canal selecionado
+    if (repriseSalva) {
+      try {
+        localStorage.removeItem(STORAGE_KEY_REPRISE);
+      } catch {
+        // ignore
+      }
+      setRepriseSalva(null);
+    }
+    setCanalAtivo(canal);
+    setErroEscudoCasa(false);
+    setErroEscudoFora(false);
     setApostaConfirmada(false);
   };
 
+  // Determina o ID do YouTube e a URL do embed
+  const idRepriseSalva = repriseSalva
+    ? extrairYoutubeID(repriseSalva.youtubeUrl)
+    : null;
+  const modoRepriseAtivo = Boolean(repriseSalva && idRepriseSalva);
+
+  const iframeEmbedUrl = modoRepriseAtivo
+    ? `https://www.youtube.com/embed/${idRepriseSalva}?autoplay=0&playsinline=1&rel=0`
+    : `https://www.youtube.com/embed/${canalAtivo.videoId}?autoplay=0&playsinline=1&rel=0`;
+
+  // Times exibidos na área de confronto e aposta
+  const timeCasaExibido = modoRepriseAtivo
+    ? repriseSalva!.timeCasa
+    : jogoEspnAtual
+    ? jogoEspnAtual.time_casa || jogoEspnAtual.casa
+    : canalAtivo.timeCasa;
+
+  const timeForaExibido = modoRepriseAtivo
+    ? repriseSalva!.timeFora
+    : jogoEspnAtual
+    ? jogoEspnAtual.time_fora || jogoEspnAtual.fora
+    : canalAtivo.timeFora;
+
+  const escudoCasaExibido = modoRepriseAtivo
+    ? obterEscudoPorNome(repriseSalva!.timeCasa)
+    : jogoEspnAtual
+    ? jogoEspnAtual.escudoCasaUrl
+    : canalAtivo.escudoCasa;
+
+  const escudoForaExibido = modoRepriseAtivo
+    ? obterEscudoPorNome(repriseSalva!.timeFora)
+    : jogoEspnAtual
+    ? jogoEspnAtual.escudoForaUrl
+    : canalAtivo.escudoFora;
+
   const siglaTime = (nome: string) =>
     (nome || '').replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase() || 'FC';
-
-  const timeCasaAposta = jogoEspnAtual
-    ? jogoEspnAtual.time_casa || jogoEspnAtual.casa
-    : repriseAtiva.timeCasa;
-  const timeForaAposta = jogoEspnAtual
-    ? jogoEspnAtual.time_fora || jogoEspnAtual.fora
-    : repriseAtiva.timeFora;
 
   const handleApostarAgora = () => {
     setApostaConfirmada(true);
@@ -260,19 +454,19 @@ export function BolaoLiveCard({ onConfirmarPalpite }: BolaoLiveCardProps) {
     const golsForaNum = escolhaVencedor === 'FORA' ? 1 : 0;
 
     const dadosPalpite: DadosPalpiteLive = {
-      timeCasa: timeCasaAposta,
-      timeFora: timeForaAposta,
+      timeCasa: timeCasaExibido,
+      timeFora: timeForaExibido,
       golsCasa: golsCasaNum,
       golsFora: golsForaNum,
       placarPalpite:
         escolhaVencedor === 'CASA'
-          ? `Vitória ${timeCasaAposta}`
+          ? `Vitória ${timeCasaExibido}`
           : escolhaVencedor === 'FORA'
-          ? `Vitória ${timeForaAposta}`
+          ? `Vitória ${timeForaExibido}`
           : 'Empate',
       escolha: escolhaVencedor,
       valor: 10,
-      canal: jogoEspnAtual ? 'ESPN Brasileirão Série A' : repriseAtiva.canal,
+      canal: modoRepriseAtivo ? 'Reprise ADM' : canalAtivo.nome,
       timestamp: Date.now(),
     };
 
@@ -290,120 +484,243 @@ export function BolaoLiveCard({ onConfirmarPalpite }: BolaoLiveCardProps) {
     }
   };
 
-  const youtubeEmbedSrc = `https://www.youtube.com/embed/${repriseAtiva.videoId}?playsinline=1&modestbranding=1&rel=0${
-    autoplayReprise ? '&autoplay=1' : ''
-  }`;
-
   return (
     <div className="w-full bg-[#0A0A0A] text-white border border-[#C41E3A] rounded-[16px] overflow-hidden shadow-[0_12px_35px_rgba(196,30,58,0.18)]">
-      {/* 1. ÁREA DE VÍDEO DE REPRISE DE JOGOS ANTERIORES (w-full h-[210px]) */}
-      <div className="relative w-full h-[210px] rounded-t-[16px] overflow-hidden bg-black border-b border-[#C41E3A]">
-        {/* Aviso fixo no topo informando claramente que é REPRISE de determinado jogo */}
-        <div className="absolute top-2.5 left-2.5 right-2.5 z-20 flex flex-wrap items-center justify-between gap-1.5 pointer-events-none">
-          <span className="bg-amber-500 text-black text-[10px] font-black px-2.5 py-1 rounded-full uppercase tracking-wider shadow-lg flex items-center gap-1">
-            <span>📼</span>
-            <span>REPRISE: {repriseAtiva.timeCasa} x {repriseAtiva.timeFora}</span>
-          </span>
-          <span className="bg-black/90 border border-[#C41E3A] text-white text-[10px] font-bold px-2.5 py-0.5 rounded-full">
-            {repriseAtiva.canal}
+      {/* TOPO DO COMPONENTE COM BOTÃO PEQUENO "⚙️ ADM" */}
+      <div className="bg-[#0A0A0A] border-b border-[#222222] px-3.5 py-2 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          {modoRepriseAtivo ? (
+            <span className="bg-amber-400 text-black text-[10px] font-black px-2.5 py-0.5 rounded-full uppercase tracking-wider shrink-0">
+              REPRISE
+            </span>
+          ) : (
+            <span className="bg-[#C41E3A] text-white text-[10px] font-black px-2.5 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1 shrink-0">
+              <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+              AO VIVO
+            </span>
+          )}
+          <span className="text-xs font-extrabold text-white truncate">
+            {timeCasaExibido} x {timeForaExibido}
           </span>
         </div>
 
-        {assistindoReprise ? (
-          <iframe
-            key={`${repriseAtiva.id}_${autoplayReprise ? 'play' : 'init'}`}
-            src={youtubeEmbedSrc}
-            title={repriseAtiva.descricaoReprise}
-            className="w-full h-[210px] border-0 block bg-black"
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-            referrerPolicy="strict-origin-when-cross-origin"
-            allowFullScreen
-          />
-        ) : (
-          <div className="w-full h-[210px] flex flex-col items-center justify-center p-4 text-center space-y-2 bg-black">
-            <span className="text-2xl">📼</span>
-            <div className="text-xs sm:text-sm font-black uppercase text-white">
-              Reprise Pausada
+        <button
+          type="button"
+          onClick={() => {
+            setPainelAdmAberto((prev) => !prev);
+            setErroAdm('');
+            setFeedbackAdm('');
+          }}
+          className={`text-[11px] font-extrabold px-2.5 py-1 rounded-lg border transition cursor-pointer shrink-0 flex items-center gap-1 ${
+            painelAdmAberto
+              ? 'bg-amber-400 text-black border-amber-300'
+              : 'bg-[#111111] hover:bg-zinc-800 text-amber-400 border-amber-400/60'
+          }`}
+          title="Abrir controle ADM de Reprise"
+        >
+          <span>⚙️</span>
+          <span>ADM</span>
+        </button>
+      </div>
+
+      {/* PAINEL ADM INTERNO (SÓ ABRE QUANDO CLICAR EM ⚙️ ADM, COM BORDER AMARELO) */}
+      {painelAdmAberto && (
+        <div className="p-3.5 bg-[#0A0A0A] border-b-2 border-amber-400 space-y-3">
+          <div className="border-2 border-amber-400 rounded-xl p-3.5 bg-[#111111] space-y-3">
+            <div className="flex items-center justify-between border-b border-amber-400/30 pb-2">
+              <span className="text-xs font-black uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
+                <span>⚙️</span>
+                <span>Painel ADM • Configurar Reprise YouTube</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setPainelAdmAberto(false)}
+                className="text-xs text-zinc-400 hover:text-white font-bold cursor-pointer"
+              >
+                ✕
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={() => {
-                setAssistindoReprise(true);
-                setAutoplayReprise(true);
-              }}
-              className="bg-[#C41E3A] hover:bg-[#a81830] text-white text-xs font-black px-4 py-2 rounded-xl cursor-pointer transition"
-            >
-              ▶️ Assistir Reprise: {repriseAtiva.timeCasa} x {repriseAtiva.timeFora}
-            </button>
-          </div>
-        )}
-      </div>
 
-      {/* FAIXA DE AVISO CLARO DE REPRISE DO JOGO SELECIONADO */}
-      <div className="bg-amber-500/15 border-b border-amber-500/40 px-3.5 py-2 flex items-center justify-between gap-2 text-[11px]">
-        <div className="flex items-center gap-1.5 min-w-0">
-          <span className="text-amber-400 font-black shrink-0">📼 AVISO:</span>
-          <span className="text-amber-200 font-bold truncate">
-            {repriseAtiva.descricaoReprise}
+            <form onSubmit={handleSalvarRepriseAdm} className="space-y-2.5">
+              <div>
+                <label className="block text-[10px] font-bold uppercase text-amber-300 mb-1">
+                  Cole o link do YouTube da reprise
+                </label>
+                <input
+                  type="text"
+                  value={inputYoutubeUrl}
+                  onChange={(e) => setInputYoutubeUrl(e.target.value)}
+                  placeholder="https://www.youtube.com/watch?v=XXXX"
+                  className="w-full bg-[#0A0A0A] border border-amber-400/60 focus:border-amber-400 rounded-lg px-3 py-2 text-xs text-white font-mono outline-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-zinc-300 mb-1">
+                    Time Casa
+                  </label>
+                  <input
+                    type="text"
+                    value={inputTimeCasa}
+                    onChange={(e) => setInputTimeCasa(e.target.value)}
+                    placeholder="Ex: Flamengo"
+                    className="w-full bg-[#0A0A0A] border border-amber-400/60 focus:border-amber-400 rounded-lg px-3 py-2 text-xs text-white font-bold outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-zinc-300 mb-1">
+                    Time Fora
+                  </label>
+                  <input
+                    type="text"
+                    value={inputTimeFora}
+                    onChange={(e) => setInputTimeFora(e.target.value)}
+                    placeholder="Ex: Vasco"
+                    className="w-full bg-[#0A0A0A] border border-amber-400/60 focus:border-amber-400 rounded-lg px-3 py-2 text-xs text-white font-bold outline-none"
+                  />
+                </div>
+              </div>
+
+              {erroAdm && (
+                <div className="bg-red-950/80 border border-red-500 text-red-200 text-[11px] font-bold px-3 py-2 rounded-lg">
+                  ⚠️ {erroAdm}
+                </div>
+              )}
+
+              {feedbackAdm && (
+                <div className="bg-emerald-950/80 border border-emerald-500 text-emerald-200 text-[11px] font-bold px-3 py-2 rounded-lg">
+                  {feedbackAdm}
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                <button
+                  type="submit"
+                  className="w-full bg-[#C41E3A] hover:bg-[#a81830] text-white font-black py-2.5 px-3 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition shadow-md"
+                >
+                  💾 Salvar Reprise
+                </button>
+                <button
+                  type="button"
+                  onClick={handleLimparRepriseVoltarAoVivo}
+                  className="w-full bg-[#0A0A0A] hover:bg-zinc-900 text-amber-400 border border-amber-400 font-black py-2.5 px-3 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition"
+                >
+                  🔴 Voltar ao Ao Vivo
+                </button>
+              </div>
+
+              {modoRepriseAtivo && (
+                <button
+                  type="button"
+                  onClick={handleLimparRepriseVoltarAoVivo}
+                  className="w-full bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-700 font-bold py-2 px-3 rounded-lg text-[11px] uppercase cursor-pointer transition"
+                >
+                  🗑️ Limpar Reprise
+                </button>
+              )}
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 1. ÁREA DO PLAYER DE VÍDEO DENTRO DO CARD (w-full h-[210px]) */}
+      <div className="relative w-full h-[210px] overflow-hidden bg-black border-b border-[#C41E3A]">
+        {/* Badge sobre o player: AMARELO "REPRISE" se tiver reprise salva, ou "AO VIVO" normal */}
+        <div className="absolute top-2.5 left-2.5 z-20 flex items-center gap-2 pointer-events-none">
+          {modoRepriseAtivo ? (
+            <span className="bg-amber-400 text-black text-xs font-black px-3 py-1 rounded-full uppercase tracking-wider shadow-lg flex items-center gap-1.5">
+              <span>📼</span>
+              <span>REPRISE</span>
+            </span>
+          ) : (
+            <span className="bg-[#C41E3A] text-white text-xs font-extrabold px-3 py-1 rounded-full uppercase tracking-wider shadow-lg flex items-center gap-1.5 animate-pulse">
+              <span className="w-2 h-2 rounded-full bg-white animate-ping" />
+              <span>AO VIVO</span>
+            </span>
+          )}
+          <span className="bg-black/85 border border-[#C41E3A] text-white text-[10px] font-bold px-2.5 py-0.5 rounded-full">
+            {modoRepriseAtivo
+              ? `${repriseSalva!.timeCasa} x ${repriseSalva!.timeFora}`
+              : canalAtivo.nome}
           </span>
         </div>
-        <span className="text-[10px] font-mono font-extrabold text-amber-300 shrink-0">
-          Placar Final: {repriseAtiva.placarCasa}x{repriseAtiva.placarFora}
-        </span>
+
+        <iframe
+          key={iframeEmbedUrl}
+          src={iframeEmbedUrl}
+          title={
+            modoRepriseAtivo
+              ? `Reprise: ${repriseSalva!.timeCasa} x ${repriseSalva!.timeFora}`
+              : `Transmissão: ${canalAtivo.timeCasa} x ${canalAtivo.timeFora}`
+          }
+          className="w-full h-[210px] border-0 block bg-black"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+          referrerPolicy="strict-origin-when-cross-origin"
+          allowFullScreen
+        />
       </div>
+
+      {/* Faixa informativa quando está em modo REPRISE */}
+      {modoRepriseAtivo && (
+        <div className="bg-amber-400/15 border-b border-amber-400/40 px-3.5 py-2 flex items-center justify-between gap-2 text-[11px]">
+          <span className="text-amber-300 font-bold truncate">
+            📼 Reprise de Jogo: <strong>{repriseSalva!.timeCasa} x {repriseSalva!.timeFora}</strong>
+          </span>
+          <span className="text-[10px] text-amber-400 font-mono shrink-0">
+            Gravado
+          </span>
+        </div>
+      )}
 
       {/* CONTEÚDO INTERNO DO CARD */}
       <div className="p-4 space-y-4">
-        {/* 2. SELETOR DE REPRISES DE JOGOS ANTERIORES (CANAIS DO YOUTUBE QUE REALMENTE PASSAM) */}
+        {/* 2. CANAIS DO PLAYER */}
         <div className="space-y-2">
           <div className="flex items-center justify-between gap-1">
             <span className="text-[11px] font-extrabold uppercase tracking-wider text-white">
-              📼 Assistir Reprise de Jogos Anteriores (YouTube)
+              📺 Canais de Transmissão
             </span>
-            <span className="text-[10px] font-bold text-amber-400">
-              Jogos Completos
+            <span className="text-[10px] font-bold text-white/70">
+              {modoRepriseAtivo
+                ? `Reprise: ${repriseSalva!.timeCasa} x ${repriseSalva!.timeFora}`
+                : `${canalAtivo.nome} • ${canalAtivo.timeCasa} x ${canalAtivo.timeFora}`}
             </span>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            {REPRISES_YOUTUBE.map((rep) => {
-              const ativo = repriseAtiva.id === rep.id && assistindoReprise;
+          <div className="grid grid-cols-2 gap-2">
+            {CANAIS.map((canal) => {
+              const ativo = !modoRepriseAtivo && canalAtivo.id === canal.id;
               return (
                 <button
-                  key={rep.id}
+                  key={canal.id}
                   type="button"
-                  onClick={() => selecionarReprise(rep)}
-                  className={`w-full p-2.5 rounded-xl text-left border transition-all duration-200 cursor-pointer flex flex-col gap-0.5 ${
+                  onClick={() => selecionarCanalAoVivo(canal)}
+                  className={`w-full py-2.5 px-2.5 rounded-xl text-[11px] sm:text-xs font-bold border border-[#C41E3A] transition-all duration-200 cursor-pointer flex items-center justify-center gap-1.5 truncate ${
                     ativo
-                      ? 'bg-[#C41E3A] text-white border-[#C41E3A] shadow-[0_0_15px_rgba(196,30,58,0.45)]'
-                      : 'bg-[#111111] hover:bg-[#C41E3A]/20 text-white border-[#222222] hover:border-[#C41E3A]'
+                      ? 'bg-[#C41E3A] text-white shadow-[0_0_15px_rgba(196,30,58,0.45)]'
+                      : 'bg-[#0A0A0A] hover:bg-[#C41E3A]/20 text-white'
                   }`}
                 >
-                  <div className="flex items-center justify-between gap-1">
-                    <span className="text-[10px] font-black uppercase tracking-wider text-amber-300">
-                      ▶️ Reprise • {rep.canal.replace(' (YouTube)', '')}
-                    </span>
-                    <span className="text-[10px] font-mono font-black bg-black/50 px-1.5 py-0.5 rounded">
-                      {rep.placarCasa}x{rep.placarFora}
-                    </span>
-                  </div>
-                  <div className="text-xs font-extrabold text-white truncate">
-                    {rep.timeCasa} x {rep.timeFora}
-                  </div>
-                  <div className="text-[10px] text-white/75 truncate">
-                    {rep.campeonato}
-                  </div>
+                  <span
+                    className={`w-2 h-2 rounded-full shrink-0 ${
+                      ativo ? 'bg-white animate-pulse' : 'bg-[#C41E3A]'
+                    }`}
+                  />
+                  <span className="truncate">{canal.nome}</span>
                 </button>
               );
             })}
           </div>
         </div>
 
-        {/* 3. PAINEL ESPN BRASILEIRÃO SÉRIE A (TEMPO REAL PELO HORÁRIO DO JOGO OU "SEM JOGOS NO MOMENTO") */}
+        {/* 3. PLACAR ESTILO ESPN (ATUALIZA VIA ESPN OU MOSTRA O CONFRONTO DA REPRISE) */}
         <div className="bg-[#111111] border border-[#222222] rounded-[16px] p-3.5 text-center space-y-2.5">
           <div className="flex items-center justify-between border-b border-[#222222] pb-2">
             <span className="text-[10px] font-extrabold uppercase tracking-wider text-zinc-300">
-              ⚽ Placar em Tempo Real • Brasileirão Série A (ESPN)
+              {modoRepriseAtivo
+                ? '📼 Confronto da Reprise'
+                : '⚽ Placar Brasileirão Série A (ESPN)'}
             </span>
             <button
               type="button"
@@ -414,14 +731,64 @@ export function BolaoLiveCard({ onConfirmarPalpite }: BolaoLiveCardProps) {
             </button>
           </div>
 
-          {carregandoEspn ? (
+          {modoRepriseAtivo ? (
+            <div className="flex items-center justify-between gap-2 pt-1">
+              <div className="flex flex-col items-center flex-1 min-w-0">
+                <div className="w-12 h-12 rounded-full bg-zinc-950 border border-[#222222] p-1.5 flex items-center justify-center shadow-md">
+                  {!erroEscudoCasa && escudoCasaExibido ? (
+                    <img
+                      src={escudoCasaExibido}
+                      alt={timeCasaExibido}
+                      onError={() => setErroEscudoCasa(true)}
+                      className="w-full h-full object-contain"
+                    />
+                  ) : (
+                    <span className="text-xs font-black text-white">
+                      {siglaTime(timeCasaExibido)}
+                    </span>
+                  )}
+                </div>
+                <span className="mt-1.5 text-xs sm:text-sm font-extrabold text-white truncate max-w-full">
+                  {timeCasaExibido}
+                </span>
+              </div>
+
+              <div className="flex flex-col items-center shrink-0 px-2">
+                <div className="bg-amber-400 text-black font-black text-xs sm:text-sm px-3.5 py-1.5 rounded-xl tracking-wider shadow-md uppercase">
+                  REPRISE
+                </div>
+                <span className="text-[10px] text-amber-300 font-bold uppercase tracking-wider mt-1">
+                  Jogo Gravado
+                </span>
+              </div>
+
+              <div className="flex flex-col items-center flex-1 min-w-0">
+                <div className="w-12 h-12 rounded-full bg-zinc-950 border border-[#222222] p-1.5 flex items-center justify-center shadow-md">
+                  {!erroEscudoFora && escudoForaExibido ? (
+                    <img
+                      src={escudoForaExibido}
+                      alt={timeForaExibido}
+                      onError={() => setErroEscudoFora(true)}
+                      className="w-full h-full object-contain"
+                    />
+                  ) : (
+                    <span className="text-xs font-black text-white">
+                      {siglaTime(timeForaExibido)}
+                    </span>
+                  )}
+                </div>
+                <span className="mt-1.5 text-xs sm:text-sm font-extrabold text-white truncate max-w-full">
+                  {timeForaExibido}
+                </span>
+              </div>
+            </div>
+          ) : carregandoEspn ? (
             <div className="py-3 text-xs text-zinc-400 font-bold">
               Consultando jogos do Brasileirão Série A na ESPN...
             </div>
           ) : jogoEspnAtual ? (
             <>
               <div className="flex items-center justify-between gap-2 pt-1">
-                {/* Esquerda: escudo + nome do time da casa */}
                 <div className="flex flex-col items-center flex-1 min-w-0">
                   <div className="w-12 h-12 rounded-full bg-zinc-950 border border-[#222222] p-1.5 flex items-center justify-center shadow-md">
                     {!erroEscudoCasa && jogoEspnAtual.escudoCasaUrl ? (
@@ -442,7 +809,6 @@ export function BolaoLiveCard({ onConfirmarPalpite }: BolaoLiveCardProps) {
                   </span>
                 </div>
 
-                {/* Centro: Placar real da ESPN */}
                 <div className="flex flex-col items-center shrink-0 px-2">
                   <div className="bg-[#C41E3A] text-white font-black text-xl sm:text-2xl px-4 py-1.5 rounded-xl tracking-widest shadow-md font-mono">
                     {jogoEspnAtual.placar_casa ?? 0} - {jogoEspnAtual.placar_fora ?? 0}
@@ -454,7 +820,6 @@ export function BolaoLiveCard({ onConfirmarPalpite }: BolaoLiveCardProps) {
                   </span>
                 </div>
 
-                {/* Direita: escudo + nome do time visitante */}
                 <div className="flex flex-col items-center flex-1 min-w-0">
                   <div className="w-12 h-12 rounded-full bg-zinc-950 border border-[#222222] p-1.5 flex items-center justify-center shadow-md">
                     {!erroEscudoFora && jogoEspnAtual.escudoForaUrl ? (
@@ -482,12 +847,12 @@ export function BolaoLiveCard({ onConfirmarPalpite }: BolaoLiveCardProps) {
               </p>
             </>
           ) : (
-            <div className="py-3 px-2 space-y-1.5">
+            <div className="py-2.5 px-2 space-y-1">
               <div className="text-xs sm:text-sm font-black uppercase text-white">
-                ⚽ Sem jogos no momento no Brasileirão Série A
+                Sem jogos no momento
               </div>
               <p className="text-[11px] text-zinc-400 leading-relaxed">
-                Nenhuma partida está acontecendo agora na ESPN. Enquanto isso, você pode assistir acima às reprises completas de jogos anteriores! Quando um jogo iniciar, o placar mudará automaticamente aqui de acordo com o horário do jogo.
+                Nenhuma partida do Brasileirão Série A em andamento na ESPN agora. O placar mudará automaticamente de acordo com o horário do jogo.
               </p>
               {proximosJogosHoje.length > 0 && (
                 <div className="inline-block text-[10px] text-[#C41E3A] font-bold bg-black border border-[#222222] px-3 py-1 rounded-full mt-1">
@@ -507,12 +872,11 @@ export function BolaoLiveCard({ onConfirmarPalpite }: BolaoLiveCardProps) {
               <span>Quem Ganha? Aposte Agora</span>
             </span>
             <span className="text-[10px] font-bold text-[#C41E3A] uppercase tracking-wider">
-              {jogoEspnAtual ? `Jogo das ${jogoEspnAtual.horario}` : 'Jogos da Rodada'}
+              Escolha o Vencedor
             </span>
           </div>
 
           <div className="grid grid-cols-3 gap-2">
-            {/* Opção 1: Time Casa Ganha */}
             <button
               type="button"
               onClick={() => {
@@ -526,14 +890,13 @@ export function BolaoLiveCard({ onConfirmarPalpite }: BolaoLiveCardProps) {
               }`}
             >
               <span className="text-[11px] font-black truncate max-w-full">
-                {timeCasaAposta}
+                {timeCasaExibido}
               </span>
               <span className="text-[9px] uppercase font-bold opacity-85">
                 Ganha
               </span>
             </button>
 
-            {/* Opção X: Empate */}
             <button
               type="button"
               onClick={() => {
@@ -552,7 +915,6 @@ export function BolaoLiveCard({ onConfirmarPalpite }: BolaoLiveCardProps) {
               </span>
             </button>
 
-            {/* Opção 2: Time Fora Ganha */}
             <button
               type="button"
               onClick={() => {
@@ -566,7 +928,7 @@ export function BolaoLiveCard({ onConfirmarPalpite }: BolaoLiveCardProps) {
               }`}
             >
               <span className="text-[11px] font-black truncate max-w-full">
-                {timeForaAposta}
+                {timeForaExibido}
               </span>
               <span className="text-[9px] uppercase font-bold opacity-85">
                 Ganha
@@ -587,10 +949,10 @@ export function BolaoLiveCard({ onConfirmarPalpite }: BolaoLiveCardProps) {
             <div className="bg-[#C41E3A]/20 border border-[#C41E3A] rounded-xl p-2.5 text-center text-xs font-bold text-white">
               ✅ Aposta selecionada:{' '}
               {escolhaVencedor === 'CASA'
-                ? `Vitória do ${timeCasaAposta}`
+                ? `Vitória do ${timeCasaExibido}`
                 : escolhaVencedor === 'FORA'
-                ? `Vitória do ${timeForaAposta}`
-                : `Empate (${timeCasaAposta} x ${timeForaAposta})`}
+                ? `Vitória do ${timeForaExibido}`
+                : `Empate (${timeCasaExibido} x ${timeForaExibido})`}
               !
             </div>
           )}
