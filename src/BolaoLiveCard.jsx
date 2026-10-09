@@ -4,40 +4,70 @@ const CANAIS_OFICIAIS = [
   {
     id: 'cazetv',
     label: 'CazéTV (YouTube)',
-    src: 'https://www.youtube.com/embed/ZMdCp6vN8Ws?playsinline=1&modestbranding=1&rel=0&enablejsapi=1',
+    liveUrl: 'https://www.youtube.com/live/MiI-unCfvEw?is=N44UaMq5KrOXUelP',
+    src: 'https://www.youtube.com/embed/MiI-unCfvEw?is=N44UaMq5KrOXUelP&playsinline=1&modestbranding=1&rel=0&enablejsapi=1',
     backups: [
-      'https://www.youtube.com/embed/lNIx05N77DY?playsinline=1&modestbranding=1&rel=0&enablejsapi=1',
-      'https://www.youtube.com/embed/_Lk5a5OR0vc?playsinline=1&modestbranding=1&rel=0&start=1800&enablejsapi=1',
+      'https://www.youtube.com/embed/tp8dV7ZsXlk?playsinline=1&modestbranding=1&rel=0&enablejsapi=1',
+      'https://www.youtube.com/embed/-A6oHIIXgqo?playsinline=1&modestbranding=1&rel=0&enablejsapi=1',
+      'https://www.youtube.com/embed/fe3gGc6UD0g?playsinline=1&modestbranding=1&rel=0&enablejsapi=1',
     ],
   },
   {
     id: 'fifaplus',
     label: 'FIFA+ (Grátis)',
-    src: 'https://www.youtube.com/embed/36dP-6iM95M?playsinline=1&modestbranding=1&rel=0&enablejsapi=1',
+    liveUrl: 'https://www.youtube.com/live/D0ZAl5676_g',
+    src: 'https://www.youtube.com/embed/D0ZAl5676_g?playsinline=1&modestbranding=1&rel=0&enablejsapi=1',
     backups: [
-      'https://www.youtube.com/embed/tn0IBBcaw6Q?playsinline=1&modestbranding=1&rel=0&enablejsapi=1',
-      'https://www.youtube.com/embed/b7PtZOQ6Wro?playsinline=1&modestbranding=1&rel=0&enablejsapi=1',
+      'https://www.youtube.com/embed/QXw3ryva6MI?playsinline=1&modestbranding=1&rel=0&enablejsapi=1',
+      'https://www.youtube.com/embed/pF2chyWptc8?playsinline=1&modestbranding=1&rel=0&enablejsapi=1',
+      'https://www.youtube.com/embed/l_2qXr8wCnk?playsinline=1&modestbranding=1&rel=0&enablejsapi=1',
     ],
   },
   {
     id: 'nsports',
     label: 'N Sports - Ao vivo agora',
-    src: 'https://www.youtube.com/embed/rm06XtTDw3I?playsinline=1&modestbranding=1&rel=0&start=1200&enablejsapi=1',
+    liveUrl: 'https://www.youtube.com/live/S0xIVQiPUPo',
+    src: 'https://www.youtube.com/embed/S0xIVQiPUPo?playsinline=1&modestbranding=1&rel=0&enablejsapi=1',
     backups: [
-      'https://www.youtube.com/embed/JUF6rCh1Zrk?playsinline=1&modestbranding=1&rel=0&start=1500&enablejsapi=1',
-      'https://www.youtube.com/embed/AQS3N_esijU?playsinline=1&modestbranding=1&rel=0&start=1200&enablejsapi=1',
+      'https://www.youtube.com/embed/lNjO_nPSgpE?playsinline=1&modestbranding=1&rel=0&enablejsapi=1',
+      'https://www.youtube.com/embed/wyxky3EIs4o?playsinline=1&modestbranding=1&rel=0&enablejsapi=1',
+      'https://www.youtube.com/embed/bo_Gs-mZuQM?playsinline=1&modestbranding=1&rel=0&enablejsapi=1',
     ],
   },
   {
     id: 'goat',
     label: 'Canal GOAT - Gratuito',
-    src: 'https://www.youtube.com/embed/CTNlXPwPHbA?playsinline=1&modestbranding=1&rel=0&start=1500&enablejsapi=1',
+    liveUrl: 'https://www.youtube.com/live/xZNlb1k__dM',
+    src: 'https://www.youtube.com/embed/xZNlb1k__dM?playsinline=1&modestbranding=1&rel=0&enablejsapi=1',
     backups: [
-      'https://www.youtube.com/embed/eH5rSxUObnI?playsinline=1&modestbranding=1&rel=0&start=1500&enablejsapi=1',
-      'https://www.youtube.com/embed/ZiLdsJWExG4?playsinline=1&modestbranding=1&rel=0&start=1500&enablejsapi=1',
+      'https://www.youtube.com/embed/yuRY15Hd1j8?playsinline=1&modestbranding=1&rel=0&enablejsapi=1',
+      'https://www.youtube.com/embed/WwswfkKUbko?playsinline=1&modestbranding=1&rel=0&enablejsapi=1',
+      'https://www.youtube.com/embed/Syurfpy5-FM?playsinline=1&modestbranding=1&rel=0&enablejsapi=1',
     ],
   },
 ];
+
+function extrairEmbedDeUrlYoutube(inputUrl) {
+  if (!inputUrl || typeof inputUrl !== 'string') return null;
+  const limpo = inputUrl.trim();
+  const matchLive = limpo.match(/youtube\.com\/live\/([a-zA-Z0-9_-]{11})/);
+  if (matchLive) {
+    return `https://www.youtube.com/embed/${matchLive[1]}?playsinline=1&modestbranding=1&rel=0&enablejsapi=1&autoplay=1`;
+  }
+  const matchWatch = limpo.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
+  if (matchWatch) {
+    return `https://www.youtube.com/embed/${matchWatch[1]}?playsinline=1&modestbranding=1&rel=0&enablejsapi=1&autoplay=1`;
+  }
+  const matchShort = limpo.match(/youtu\.be\/([a-zA-Z0-9_-]{11})/);
+  if (matchShort) {
+    return `https://www.youtube.com/embed/${matchShort[1]}?playsinline=1&modestbranding=1&rel=0&enablejsapi=1&autoplay=1`;
+  }
+  const matchEmbed = limpo.match(/youtube\.com\/embed\/([a-zA-Z0-9_-]{11})/);
+  if (matchEmbed) {
+    return `https://www.youtube.com/embed/${matchEmbed[1]}?playsinline=1&modestbranding=1&rel=0&enablejsapi=1&autoplay=1`;
+  }
+  return null;
+}
 
 const ESCUDO_FLAMENGO =
   'https://logodetimes.com/times/flamengo/logo-flamengo-256.png';
@@ -59,6 +89,8 @@ export function BolaoLiveCard({
   const [indiceSinal, setIndiceSinal] = useState(0);
   const [iframeSrc, setIframeSrc] = useState(CANAIS_OFICIAIS[0].src);
   const [playerIniciado, setPlayerIniciado] = useState(false);
+  const [mostrarInputLinkLive, setMostrarInputLinkLive] = useState(false);
+  const [linkLiveCustom, setLinkLiveCustom] = useState('');
   const iframeRef = useRef(null);
 
   const [palpiteCasa, setPalpiteCasa] = useState(2);
@@ -103,14 +135,6 @@ export function BolaoLiveCard({
           (data?.info?.playerState === 1 || data?.info?.playerState === 3)
         ) {
           setPlayerIniciado(true);
-        }
-        if (data?.event === 'onError') {
-          const listaSinais = [canalAtivo.src, ...(canalAtivo.backups || [])];
-          const proximoIndice = (indiceSinal + 1) % listaSinais.length;
-          if (proximoIndice !== indiceSinal) {
-            setIndiceSinal(proximoIndice);
-            setIframeSrc(`${listaSinais[proximoIndice]}&autoplay=1`);
-          }
         }
       } catch {
         // ignore non-JSON messages
@@ -317,18 +341,53 @@ export function BolaoLiveCard({
 
         {/* 3. CANAIS OFICIAIS GRATUITOS */}
         <div className="space-y-2">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-1">
             <span className="text-[11px] font-extrabold uppercase tracking-wider text-white">
-              📺 Canais Oficiais Gratuitos
+              📺 Canais Oficiais Ao Vivo
             </span>
-            <button
-              type="button"
-              onClick={alternarSinalDoCanal}
-              className="text-[10px] font-bold text-white bg-black/80 hover:bg-[#C41E3A] border border-[#C41E3A] px-2.5 py-0.5 rounded-full transition cursor-pointer"
-            >
-              🔄 Trocar Sinal ({indiceSinal + 1}/3)
-            </button>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setMostrarInputLinkLive((prev) => !prev)}
+                className="text-[10px] font-bold text-white bg-black/80 hover:bg-[#C41E3A] border border-[#C41E3A] px-2 py-0.5 rounded-full transition cursor-pointer"
+              >
+                🔗 Link Live
+              </button>
+              <button
+                type="button"
+                onClick={alternarSinalDoCanal}
+                className="text-[10px] font-bold text-white bg-black/80 hover:bg-[#C41E3A] border border-[#C41E3A] px-2.5 py-0.5 rounded-full transition cursor-pointer"
+              >
+                🔄 Trocar Live ({indiceSinal + 1}/4)
+              </button>
+            </div>
           </div>
+
+          {mostrarInputLinkLive && (
+            <div className="flex items-center gap-1.5 bg-black/90 border border-[#C41E3A] rounded-xl p-2">
+              <input
+                type="url"
+                value={linkLiveCustom}
+                onChange={(e) => setLinkLiveCustom(e.target.value)}
+                placeholder="Cole link https://www.youtube.com/live/..."
+                className="flex-1 bg-[#0A0A0A] border border-[#C41E3A]/60 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-[#C41E3A]"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  const embedUrl = extrairEmbedDeUrlYoutube(linkLiveCustom);
+                  if (embedUrl) {
+                    setPlayerIniciado(true);
+                    setIframeSrc(embedUrl);
+                    setMostrarInputLinkLive(false);
+                  }
+                }}
+                className="bg-[#C41E3A] hover:bg-[#a81830] text-white text-xs font-extrabold px-3 py-1.5 rounded-lg cursor-pointer shrink-0"
+              >
+                Abrir Live
+              </button>
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-2">
             {CANAIS_OFICIAIS.map((canal) => {
