@@ -8295,20 +8295,17 @@ export default function App() {
         <div className="mt-5 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
           {/* COLUNA ESQUERDA (5 COLUNAS): PLAYER DE VÍDEO AO VIVO + RESUMO FINANCEIRO */}
           <div className="lg:col-span-5 space-y-4">
-            {/* 1. CENTRAL DE TRANSMISSÃO AO VIVO (BolaoLiveCard.jsx) */}
+            {/* 1. CENTRAL DO BRASILEIRÃO SÉRIE A (ESPN) */}
             <div id="secao-live-player" className="space-y-2.5">
               <div className="bg-zinc-900/95 border border-[#C41E3A] rounded-2xl px-4 py-3 flex items-center justify-between gap-2">
                 <div>
                   <span className="text-[10px] font-black uppercase tracking-wider text-[#C41E3A] block">
-                    Transmissão Oficial no App
+                    Atualização Automática ESPN
                   </span>
                   <h3 className="text-sm font-black text-white">
-                    📺 Jogo Ao Vivo & Palpite Rápido
+                    ⚽ Brasileirão Série A • Quem Ganha? Aposte Agora
                   </h3>
                 </div>
-                <span className="bg-[#C41E3A] text-white text-[10px] font-extrabold px-2.5 py-1 rounded-lg uppercase">
-                  Ao Vivo
-                </span>
               </div>
 
               <BolaoLiveCard

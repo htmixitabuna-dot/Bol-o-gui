@@ -1,79 +1,30 @@
-import React, { useState, useRef, useEffect } from 'react';
-import Hls from 'hls.js';
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+  buscarJogosRodadaEspn,
+  getHojeBrasilISO,
+  toBrasilDateAndTime,
+} from '../supabase';
 
-export interface CanalAoVivo {
+export interface JogoEspnItem {
   id: string;
-  nome: string;
-  timeCasa: string;
-  timeFora: string;
-  hlsUrl: string;
+  time_casa: string;
+  time_fora: string;
+  casa: string;
+  fora: string;
+  campeonato: string;
+  horario: string;
+  data: string;
+  estadio: string;
+  status: string;
+  tempoJogo: string;
   aoVivo: boolean;
-  placarCasa: number;
-  placarFora: number;
-  tempo: string;
-  legenda: string;
-  escudoCasa: string;
-  escudoFora: string;
+  encerrado: boolean;
+  estadoPartida?: string;
+  placar_casa: string | number;
+  placar_fora: string | number;
+  escudoCasaUrl: string;
+  escudoForaUrl: string;
 }
-
-export const CANAIS: CanalAoVivo[] = [
-  {
-    id: 'cazetv',
-    nome: 'CazéTV',
-    timeCasa: 'Vasco',
-    timeFora: 'Fluminense',
-    hlsUrl: 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8',
-    aoVivo: true,
-    placarCasa: 2,
-    placarFora: 1,
-    tempo: "67'",
-    legenda: 'Brasileirão • Clássico dos Gigantes • Maracanã',
-    escudoCasa: 'https://logodetimes.com/times/vasco-da-gama/logo-vasco-da-gama-256.png',
-    escudoFora: 'https://logodetimes.com/times/fluminense/logo-fluminense-256.png',
-  },
-  {
-    id: 'fifa',
-    nome: 'FIFA+',
-    timeCasa: 'Brasil',
-    timeFora: 'Argentina',
-    hlsUrl: 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8',
-    aoVivo: true,
-    placarCasa: 1,
-    placarFora: 0,
-    tempo: "54'",
-    legenda: 'Eliminatórias da Copa • Superclássico • Maracanã',
-    escudoCasa: 'https://a.espncdn.com/i/teamlogos/countries/500/bra.png',
-    escudoFora: 'https://a.espncdn.com/i/teamlogos/countries/500/arg.png',
-  },
-  {
-    id: 'nsports',
-    nome: 'N Sports',
-    timeCasa: 'Corinthians',
-    timeFora: 'Palmeiras',
-    hlsUrl: 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8',
-    aoVivo: false,
-    placarCasa: 1,
-    placarFora: 1,
-    tempo: 'ENCERRADO',
-    legenda: 'Brasileirão • Derby Paulista • Neo Química Arena',
-    escudoCasa: 'https://logodetimes.com/times/corinthians/logo-corinthians-256.png',
-    escudoFora: 'https://logodetimes.com/times/palmeiras/logo-palmeiras-256.png',
-  },
-  {
-    id: 'goat',
-    nome: 'Canal GOAT',
-    timeCasa: 'Flamengo',
-    timeFora: 'Botafogo',
-    hlsUrl: 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8',
-    aoVivo: true,
-    placarCasa: 2,
-    placarFora: 2,
-    tempo: "79'",
-    legenda: 'Brasileirão • Clássico da Rivalidade • Maracanã',
-    escudoCasa: 'https://logodetimes.com/times/flamengo/logo-flamengo-256.png',
-    escudoFora: 'https://logodetimes.com/times/botafogo/logo-botafogo-256.png',
-  },
-];
 
 export interface DadosPalpiteLive {
   timeCasa: string;
@@ -91,128 +42,142 @@ export interface BolaoLiveCardProps {
   onConfirmarPalpite?: (dados: DadosPalpiteLive) => void;
 }
 
+export const CANAIS: any[] = [];
+
+function converterHorarioParaMinutos(horarioStr: string): number {
+  const match = String(horarioStr || '').match(/(\d{1,2}):(\d{2})/);
+  if (!match) return 9999;
+  return Number(match[1]) * 60 + Number(match[2]);
+}
+
 export function BolaoLiveCard({ onConfirmarPalpite }: BolaoLiveCardProps) {
-  const [canalAtivo, setCanalAtivo] = useState<CanalAoVivo>(CANAIS[0]);
-  const [videoSrc, setVideoSrc] = useState<string>(CANAIS[0].hlsUrl);
-  const [emTransicao, setEmTransicao] = useState<boolean>(false);
+  const [jogosAtivos, setJogosAtivos] = useState<JogoEspnItem[]>([]);
+  const [proximosJogosHoje, setProximosJogosHoje] = useState<JogoEspnItem[]>([]);
+  const [indiceJogoAtual, setIndiceJogoAtual] = useState<number>(0);
+  const [carregando, setCarregando] = useState<boolean>(true);
+  const [ultimaSincronizacao, setUltimaSincronizacao] = useState<string>('');
 
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const hlsRef = useRef<Hls | null>(null);
-
-  const [palpiteCasa, setPalpiteCasa] = useState<string | number>(2);
-  const [palpiteFora, setPalpiteFora] = useState<string | number>(1);
-  const [palpiteConfirmado, setPalpiteConfirmado] = useState<boolean>(false);
+  const [escolhaVencedor, setEscolhaVencedor] = useState<'CASA' | 'EMPATE' | 'FORA'>('CASA');
+  const [apostaConfirmada, setApostaConfirmada] = useState<boolean>(false);
 
   const [erroEscudoCasa, setErroEscudoCasa] = useState<boolean>(false);
   const [erroEscudoFora, setErroEscudoFora] = useState<boolean>(false);
 
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video || !videoSrc) return;
+  const carregarJogosEspn = useCallback(async () => {
+    try {
+      const hojeIso = getHojeBrasilISO();
+      const lista = await buscarJogosRodadaEspn(hojeIso);
+      const todosHoje: JogoEspnItem[] = Array.isArray(lista) ? lista : [];
 
-    if (hlsRef.current) {
-      hlsRef.current.destroy();
-      hlsRef.current = null;
-    }
+      // Ordena pelo horário do jogo
+      todosHoje.sort(
+        (a, b) =>
+          converterHorarioParaMinutos(a.horario) -
+          converterHorarioParaMinutos(b.horario)
+      );
 
-    video.muted = true;
-    video.autoplay = true;
-    video.playsInline = true;
+      const brAgora = toBrasilDateAndTime(new Date());
+      const minutosAgora = converterHorarioParaMinutos(brAgora.timeStr);
 
-    const finalizarTransicao = () => {
-      setEmTransicao(false);
-    };
-
-    const iniciarReproducao = () => {
-      video.muted = true;
-      const playPromise = video.play();
-      if (playPromise !== undefined) {
-        playPromise
-          .then(() => {
-            finalizarTransicao();
-          })
-          .catch(() => {
-            finalizarTransicao();
-          });
-      } else {
-        finalizarTransicao();
-      }
-    };
-
-    if (Hls.isSupported()) {
-      const hls = new Hls({
-        enableWorker: true,
-        lowLatencyMode: true,
+      // Filtra jogos que estão acontecendo agora na ESPN (estado 'in' / aoVivo,
+      // ou cujo horário já chegou e ainda não encerraram)
+      const emAndamento = todosHoje.filter((j) => {
+        if (j.aoVivo || j.estadoPartida === 'in') return true;
+        if (j.encerrado || j.estadoPartida === 'post') return false;
+        const minJogo = converterHorarioParaMinutos(j.horario);
+        return minutosAgora >= minJogo && minutosAgora <= minJogo + 135;
       });
-      hlsRef.current = hls;
-      hls.loadSource(videoSrc);
-      hls.attachMedia(video);
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        iniciarReproducao();
-      });
-      hls.on(Hls.Events.ERROR, (_event, data) => {
-        if (data.fatal) {
-          switch (data.type) {
-            case Hls.ErrorTypes.NETWORK_ERROR:
-              hls.startLoad();
-              break;
-            case Hls.ErrorTypes.MEDIA_ERROR:
-              hls.recoverMediaError();
-              break;
-            default:
-              hls.destroy();
-              break;
+
+      const agendados = todosHoje.filter(
+        (j) => !j.aoVivo && !j.encerrado && converterHorarioParaMinutos(j.horario) > minutosAgora
+      );
+
+      setJogosAtivos(emAndamento);
+      setProximosJogosHoje(agendados);
+
+      // Seleciona automaticamente o jogo mais próximo do horário atual
+      if (emAndamento.length > 0) {
+        let melhorIndice = 0;
+        let menorDiferenca = Infinity;
+        emAndamento.forEach((jg, idx) => {
+          const diff = Math.abs(minutosAgora - converterHorarioParaMinutos(jg.horario));
+          if (diff <= menorDiferenca) {
+            menorDiferenca = diff;
+            melhorIndice = idx;
           }
-          finalizarTransicao();
-        }
-      });
-    } else {
-      video.src = videoSrc;
-      video.addEventListener('loadedmetadata', iniciarReproducao, { once: true });
-      iniciarReproducao();
-    }
-
-    const timer = window.setTimeout(finalizarTransicao, 300);
-
-    return () => {
-      window.clearTimeout(timer);
-      if (hlsRef.current) {
-        hlsRef.current.destroy();
-        hlsRef.current = null;
+        });
+        setIndiceJogoAtual((prev) =>
+          prev < emAndamento.length ? prev : melhorIndice
+        );
+      } else {
+        setIndiceJogoAtual(0);
       }
-    };
-  }, [videoSrc, canalAtivo.id]);
 
-  const selecionarCanal = (canal: CanalAoVivo) => {
-    if (canal.id === canalAtivo.id) return;
-    setEmTransicao(true);
-    setCanalAtivo(canal);
-    setVideoSrc(canal.hlsUrl);
-    setErroEscudoCasa(false);
-    setErroEscudoFora(false);
-    setPalpiteConfirmado(false);
-  };
+      setUltimaSincronizacao(
+        new Date().toLocaleTimeString('pt-BR', {
+          hour: '2-digit',
+          minute: '2-digit',
+        })
+      );
+    } catch {
+      setJogosAtivos([]);
+      setProximosJogosHoje([]);
+    } finally {
+      setCarregando(false);
+    }
+  }, []);
 
-  const handleConfirmarPalpite = (e: React.FormEvent) => {
-    e.preventDefault();
-    const golsCasaNum = Math.max(0, Number(palpiteCasa) || 0);
-    const golsForaNum = Math.max(0, Number(palpiteFora) || 0);
-    setPalpiteConfirmado(true);
+  // Busca na ESPN ao abrir e atualiza automaticamente a cada 30 segundos
+  useEffect(() => {
+    carregarJogosEspn();
+    const interval = window.setInterval(() => {
+      carregarJogosEspn();
+    }, 30000);
+    return () => window.clearInterval(interval);
+  }, [carregarJogosEspn]);
+
+  // Se houver mais de um jogo acontecendo simultaneamente no mesmo horário,
+  // alterna suavemente entre os jogos em andamento a cada 20 segundos
+  useEffect(() => {
+    if (jogosAtivos.length <= 1) return;
+    const rotacao = window.setInterval(() => {
+      setIndiceJogoAtual((prev) => (prev + 1) % jogosAtivos.length);
+      setErroEscudoCasa(false);
+      setErroEscudoFora(false);
+      setApostaConfirmada(false);
+    }, 20000);
+    return () => window.clearInterval(rotacao);
+  }, [jogosAtivos.length]);
+
+  const jogoAtual: JogoEspnItem | null =
+    jogosAtivos.length > 0
+      ? jogosAtivos[indiceJogoAtual % jogosAtivos.length]
+      : null;
+
+  const siglaTime = (nome: string) =>
+    (nome || '').replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase() || 'FC';
+
+  const handleApostarAgora = () => {
+    if (!jogoAtual) return;
+    setApostaConfirmada(true);
+
+    const golsCasaNum = escolhaVencedor === 'CASA' ? 1 : 0;
+    const golsForaNum = escolhaVencedor === 'FORA' ? 1 : 0;
 
     const dadosPalpite: DadosPalpiteLive = {
-      timeCasa: canalAtivo.timeCasa,
-      timeFora: canalAtivo.timeFora,
+      timeCasa: jogoAtual.time_casa || jogoAtual.casa,
+      timeFora: jogoAtual.time_fora || jogoAtual.fora,
       golsCasa: golsCasaNum,
       golsFora: golsForaNum,
-      placarPalpite: `${golsCasaNum}x${golsForaNum}`,
-      escolha:
-        golsCasaNum > golsForaNum
-          ? 'CASA'
-          : golsForaNum > golsCasaNum
-          ? 'FORA'
-          : 'EMPATE',
+      placarPalpite:
+        escolhaVencedor === 'CASA'
+          ? `Vitória ${jogoAtual.time_casa || jogoAtual.casa}`
+          : escolhaVencedor === 'FORA'
+          ? `Vitória ${jogoAtual.time_fora || jogoAtual.fora}`
+          : 'Empate',
+      escolha: escolhaVencedor,
       valor: 10,
-      canal: canalAtivo.nome,
+      canal: 'ESPN Brasileirão Série A',
       timestamp: Date.now(),
     };
 
@@ -230,241 +195,351 @@ export function BolaoLiveCard({ onConfirmarPalpite }: BolaoLiveCardProps) {
     }
   };
 
-  const siglaTime = (nome: string) =>
-    (nome || '').replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase() || 'FC';
-
   return (
     <div className="w-full bg-[#0A0A0A] text-white border border-[#C41E3A] rounded-[16px] overflow-hidden shadow-[0_12px_35px_rgba(196,30,58,0.18)]">
-      {/* 1. PLAYER NATIVO HLS DENTRO DA ÁREA DO JOGADOR (w-full h-[210px]) */}
-      <div className="relative w-full h-[210px] rounded-t-[16px] overflow-hidden bg-black border-b border-[#C41E3A]">
-        {/* Badges Superiores (AO VIVO pulsante quando aoVivo=true + Nome do Canal) */}
-        <div className="absolute top-3 left-3 z-20 flex items-center gap-2 pointer-events-none">
-          {canalAtivo.aoVivo ? (
-            <span className="bg-[#C41E3A] text-white text-xs font-extrabold px-3 py-1 rounded-full tracking-wider uppercase shadow-lg flex items-center gap-1.5 animate-pulse">
-              <span className="w-2 h-2 rounded-full bg-white animate-ping" />
-              AO VIVO {canalAtivo.tempo}
-            </span>
-          ) : (
-            <span className="bg-zinc-900/90 border border-zinc-700 text-zinc-300 text-xs font-extrabold px-3 py-1 rounded-full tracking-wider uppercase shadow-lg flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-zinc-500" />
-              {canalAtivo.tempo}
-            </span>
-          )}
-          <span className="bg-black/85 border border-[#C41E3A] text-white text-[10px] font-bold px-2.5 py-0.5 rounded-full">
-            {canalAtivo.nome}
+      {/* 1. PAINEL SUPERIOR DO JOGO (w-full h-[210px]) - SEM TARJA AO VIVO FALSA */}
+      <div className="relative w-full h-[210px] rounded-t-[16px] overflow-hidden bg-black border-b border-[#C41E3A] select-none flex flex-col justify-between p-4">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(196,30,58,0.16)_0%,rgba(10,10,10,0.96)_75%)] pointer-events-none" />
+
+        {/* Topo Informativo ESPN */}
+        <div className="relative z-10 flex items-center justify-between gap-2">
+          <span className="bg-[#111111] border border-[#222222] text-zinc-200 text-[10px] font-extrabold px-2.5 py-1 rounded-full uppercase tracking-wider">
+            ⚽ Brasileirão Série A • ESPN
           </span>
+          <button
+            type="button"
+            onClick={() => carregarJogosEspn()}
+            className="bg-[#111111] hover:bg-zinc-800 border border-[#222222] text-zinc-300 text-[10px] font-bold px-2.5 py-1 rounded-full cursor-pointer transition"
+          >
+            🔄 Atualizar {ultimaSincronizacao ? `(${ultimaSincronizacao})` : ''}
+          </button>
         </div>
 
-        {/* Tag <video> nativa com HLS.js */}
-        <video
-          ref={videoRef}
-          className={`w-full h-[210px] object-cover block transition-opacity duration-300 ease-in-out ${
-            emTransicao ? 'opacity-20' : 'opacity-100'
-          }`}
-          autoPlay
-          muted
-          playsInline
-          controls
-          loop
-        />
+        {/* Conteúdo Central: Jogo acontecendo na ESPN ou Mensagem "Sem jogos no momento" */}
+        {carregando ? (
+          <div className="relative z-10 flex-1 flex flex-col items-center justify-center text-center space-y-2">
+            <div className="text-xs font-extrabold uppercase tracking-wider text-zinc-300">
+              Consultando jogos na ESPN...
+            </div>
+            <p className="text-[11px] text-zinc-500">
+              Verificando partidas do Brasileirão Série A em andamento
+            </p>
+          </div>
+        ) : !jogoAtual ? (
+          <div className="relative z-10 flex-1 flex flex-col items-center justify-center text-center px-3 space-y-2">
+            <div className="w-11 h-11 rounded-full bg-[#111111] border border-[#222222] flex items-center justify-center text-lg">
+              ⚽
+            </div>
+            <div className="text-sm sm:text-base font-black uppercase tracking-wider text-white">
+              Sem jogos no momento
+            </div>
+            <p className="text-[11px] text-zinc-400 max-w-xs leading-relaxed">
+              Nenhuma partida do Brasileirão Série A está acontecendo agora na ESPN. O painel atualiza sozinho conforme o horário dos jogos.
+            </p>
+            {proximosJogosHoje.length > 0 && (
+              <div className="text-[10px] text-[#C41E3A] font-bold bg-[#111111] border border-[#222222] px-3 py-1 rounded-full">
+                Próximo jogo hoje às {proximosJogosHoje[0].horario}:{' '}
+                {proximosJogosHoje[0].time_casa} x {proximosJogosHoje[0].time_fora}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="relative z-10 flex-1 flex flex-col items-center justify-center">
+            <div className="flex items-center justify-center gap-6 sm:gap-8">
+              {/* Time Casa */}
+              <div className="flex flex-col items-center gap-1.5">
+                <div className="w-14 h-14 rounded-full bg-[#111111] border border-[#222222] p-2 flex items-center justify-center shadow-lg">
+                  {!erroEscudoCasa && jogoAtual.escudoCasaUrl ? (
+                    <img
+                      src={jogoAtual.escudoCasaUrl}
+                      alt={jogoAtual.time_casa}
+                      onError={() => setErroEscudoCasa(true)}
+                      className="w-full h-full object-contain"
+                    />
+                  ) : (
+                    <span className="text-xs font-black text-white">
+                      {siglaTime(jogoAtual.time_casa)}
+                    </span>
+                  )}
+                </div>
+                <span className="text-xs font-black uppercase text-white truncate max-w-[110px]">
+                  {jogoAtual.time_casa}
+                </span>
+              </div>
+
+              {/* Horário / Tempo na ESPN */}
+              <div className="flex flex-col items-center justify-center">
+                <span className="text-xs font-black text-[#C41E3A] uppercase tracking-widest">
+                  VS
+                </span>
+                <span className="mt-1 text-[10px] font-mono font-bold text-zinc-300 bg-[#111111] border border-[#222222] px-2.5 py-0.5 rounded-full">
+                  {jogoAtual.tempoJogo || jogoAtual.status || `Horário: ${jogoAtual.horario}`}
+                </span>
+              </div>
+
+              {/* Time Fora */}
+              <div className="flex flex-col items-center gap-1.5">
+                <div className="w-14 h-14 rounded-full bg-[#111111] border border-[#222222] p-2 flex items-center justify-center shadow-lg">
+                  {!erroEscudoFora && jogoAtual.escudoForaUrl ? (
+                    <img
+                      src={jogoAtual.escudoForaUrl}
+                      alt={jogoAtual.time_fora}
+                      onError={() => setErroEscudoFora(true)}
+                      className="w-full h-full object-contain"
+                    />
+                  ) : (
+                    <span className="text-xs font-black text-white">
+                      {siglaTime(jogoAtual.time_fora)}
+                    </span>
+                  )}
+                </div>
+                <span className="text-xs font-black uppercase text-white truncate max-w-[110px]">
+                  {jogoAtual.time_fora}
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Rodapé da Área Superior */}
+        <div className="relative z-10 flex items-center justify-between text-[10px] text-zinc-400 border-t border-white/10 pt-2">
+          <span className="truncate">
+            {jogoAtual
+              ? `🏟️ ${jogoAtual.estadio} • Horário: ${jogoAtual.horario}`
+              : 'Sincronizado em tempo real com a ESPN'}
+          </span>
+          {jogosAtivos.length > 1 && (
+            <span className="text-white font-bold shrink-0 ml-2">
+              Jogo {(indiceJogoAtual % jogosAtivos.length) + 1}/{jogosAtivos.length}
+            </span>
+          )}
+        </div>
       </div>
 
       {/* CONTEÚDO INTERNO DO CARD */}
       <div className="p-4 space-y-4">
-        {/* 2. PLACAR E NOMES ATUALIZANDO CONFORME CANAL SELECIONADO */}
-        <div
-          className={`bg-black/90 border border-[#C41E3A] rounded-[16px] p-3.5 text-center space-y-2.5 transition-all duration-300 ${
-            emTransicao ? 'opacity-60 scale-[0.99]' : 'opacity-100 scale-100'
-          }`}
-        >
-          <div className="flex items-center justify-between gap-2">
-            {/* Time Casa */}
-            <div className="flex flex-col items-center flex-1 min-w-0">
-              <div className="w-12 h-12 rounded-full bg-zinc-950 border border-[#C41E3A] p-1.5 flex items-center justify-center shadow-md">
-                {!erroEscudoCasa ? (
-                  <img
-                    src={canalAtivo.escudoCasa}
-                    alt={canalAtivo.timeCasa}
-                    onError={() => setErroEscudoCasa(true)}
-                    className="w-full h-full object-contain"
-                  />
-                ) : (
-                  <span className="text-xs font-black text-white">
-                    {siglaTime(canalAtivo.timeCasa)}
-                  </span>
-                )}
+        {/* 2. PLACAR VIA ESPN ABAIXO DO PAINEL (Fundo #111 com borda #222) */}
+        {jogoAtual ? (
+          <div className="bg-[#111111] border border-[#222222] rounded-[16px] p-3.5 text-center space-y-2.5">
+            <div className="flex items-center justify-between gap-2">
+              {/* Esquerda: escudo + nome do time da casa */}
+              <div className="flex flex-col items-center flex-1 min-w-0">
+                <div className="w-12 h-12 rounded-full bg-zinc-950 border border-[#222222] p-1.5 flex items-center justify-center shadow-md">
+                  {!erroEscudoCasa && jogoAtual.escudoCasaUrl ? (
+                    <img
+                      src={jogoAtual.escudoCasaUrl}
+                      alt={jogoAtual.time_casa}
+                      onError={() => setErroEscudoCasa(true)}
+                      className="w-full h-full object-contain"
+                    />
+                  ) : (
+                    <span className="text-xs font-black text-white">
+                      {siglaTime(jogoAtual.time_casa)}
+                    </span>
+                  )}
+                </div>
+                <span className="mt-1.5 text-xs sm:text-sm font-extrabold text-white truncate max-w-full">
+                  {jogoAtual.time_casa}
+                </span>
               </div>
-              <span className="mt-1.5 text-xs sm:text-sm font-extrabold text-white truncate max-w-full">
-                {canalAtivo.timeCasa}
-              </span>
+
+              {/* Centro: Placar real da ESPN */}
+              <div className="flex flex-col items-center shrink-0 px-2">
+                <div className="bg-[#C41E3A] text-white font-black text-xl sm:text-2xl px-4 py-1.5 rounded-xl tracking-widest shadow-md font-mono">
+                  {jogoAtual.placar_casa ?? 0} - {jogoAtual.placar_fora ?? 0}
+                </div>
+                <span className="text-[10px] text-white/80 font-bold uppercase tracking-wider mt-1">
+                  {jogoAtual.tempoJogo || jogoAtual.status || `Horário ${jogoAtual.horario}`}
+                </span>
+              </div>
+
+              {/* Direita: escudo + nome do time visitante */}
+              <div className="flex flex-col items-center flex-1 min-w-0">
+                <div className="w-12 h-12 rounded-full bg-zinc-950 border border-[#222222] p-1.5 flex items-center justify-center shadow-md">
+                  {!erroEscudoFora && jogoAtual.escudoForaUrl ? (
+                    <img
+                      src={jogoAtual.escudoForaUrl}
+                      alt={jogoAtual.time_fora}
+                      onError={() => setErroEscudoFora(true)}
+                      className="w-full h-full object-contain"
+                    />
+                  ) : (
+                    <span className="text-xs font-black text-white">
+                      {siglaTime(jogoAtual.time_fora)}
+                    </span>
+                  )}
+                </div>
+                <span className="mt-1.5 text-xs sm:text-sm font-extrabold text-white truncate max-w-full">
+                  {jogoAtual.time_fora}
+                </span>
+              </div>
             </div>
 
-            {/* Placar central com fundo vermelho #C41E3A */}
-            <div className="flex flex-col items-center shrink-0 px-2">
-              <div className="bg-[#C41E3A] text-white font-black text-xl sm:text-2xl px-4 py-1.5 rounded-xl tracking-widest shadow-md font-mono">
-                {canalAtivo.placarCasa}-{canalAtivo.placarFora}
-              </div>
-              <span className="text-[10px] text-white/80 font-bold uppercase tracking-wider mt-1">
-                {canalAtivo.aoVivo ? 'Placar ao Vivo' : 'Placar Final'}
+            <p className="text-[11px] sm:text-xs text-white/90 font-semibold border-t border-[#222222] pt-2">
+              Brasileirão Série A • {jogoAtual.estadio} • {jogoAtual.horario}
+            </p>
+          </div>
+        ) : (
+          <div className="bg-[#111111] border border-[#222222] rounded-[16px] p-4 text-center space-y-1.5">
+            <div className="text-xs sm:text-sm font-black uppercase text-zinc-200">
+              Sem jogos no momento
+            </div>
+            <p className="text-[11px] text-zinc-400">
+              Assim que uma partida do Brasileirão Série A iniciar na ESPN, o confronto e o placar aparecerão automaticamente aqui de acordo com o horário do jogo.
+            </p>
+          </div>
+        )}
+
+        {/* Se houver mais de um jogo em andamento na ESPN, permite alternar entre eles */}
+        {jogosAtivos.length > 1 && (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-1">
+              <span className="text-[11px] font-extrabold uppercase tracking-wider text-white">
+                ⚽ Jogos em Andamento na ESPN ({jogosAtivos.length})
+              </span>
+              <span className="text-[10px] font-bold text-white/70">
+                Muda de acordo com o horário
               </span>
             </div>
-
-            {/* Time Fora */}
-            <div className="flex flex-col items-center flex-1 min-w-0">
-              <div className="w-12 h-12 rounded-full bg-zinc-950 border border-[#C41E3A] p-1.5 flex items-center justify-center shadow-md">
-                {!erroEscudoFora ? (
-                  <img
-                    src={canalAtivo.escudoFora}
-                    alt={canalAtivo.timeFora}
-                    onError={() => setErroEscudoFora(true)}
-                    className="w-full h-full object-contain"
-                  />
-                ) : (
-                  <span className="text-xs font-black text-white">
-                    {siglaTime(canalAtivo.timeFora)}
-                  </span>
-                )}
-              </div>
-              <span className="mt-1.5 text-xs sm:text-sm font-extrabold text-white truncate max-w-full">
-                {canalAtivo.timeFora}
-              </span>
+            <div className="grid grid-cols-2 gap-2">
+              {jogosAtivos.map((jg, idx) => {
+                const ativo = idx === indiceJogoAtual % jogosAtivos.length;
+                return (
+                  <button
+                    key={jg.id}
+                    type="button"
+                    onClick={() => {
+                      setIndiceJogoAtual(idx);
+                      setErroEscudoCasa(false);
+                      setErroEscudoFora(false);
+                      setApostaConfirmada(false);
+                    }}
+                    className={`w-full py-2 px-2.5 rounded-xl text-[11px] font-bold border border-[#C41E3A] transition cursor-pointer truncate ${
+                      ativo
+                        ? 'bg-[#C41E3A] text-white'
+                        : 'bg-[#0A0A0A] hover:bg-[#C41E3A]/20 text-white'
+                    }`}
+                  >
+                    {jg.time_casa} {jg.placar_casa}x{jg.placar_fora} {jg.time_fora} ({jg.horario})
+                  </button>
+                );
+              })}
             </div>
           </div>
+        )}
 
-          <p className="text-[11px] sm:text-xs text-white/90 font-semibold border-t border-[#C41E3A]/40 pt-2">
-            {canalAtivo.legenda}
-          </p>
-        </div>
-
-        {/* 3. CANAIS AO VIVO (TROCA DE CANAL INTERNA VIA SETSTATE) */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between gap-1">
-            <span className="text-[11px] font-extrabold uppercase tracking-wider text-white">
-              📺 Canais Ao Vivo
+        {/* 3. QUEM GANHA? APOSTE AGORA */}
+        <div className="bg-[#111111] border border-[#C41E3A] rounded-[16px] p-3.5 space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-extrabold uppercase tracking-wider text-white flex items-center gap-1.5">
+              <span>🔥</span>
+              <span>Quem Ganha? Aposte Agora</span>
             </span>
-            <span className="text-[10px] font-bold text-white/70">
-              {canalAtivo.nome} • {canalAtivo.timeCasa} x {canalAtivo.timeFora}
+            <span className="text-[10px] font-bold text-[#C41E3A] uppercase tracking-wider">
+              {jogoAtual ? `${jogoAtual.horario}` : 'Aguardando Jogo'}
             </span>
           </div>
 
-          <div className="grid grid-cols-2 gap-2">
-            {CANAIS.map((canal) => {
-              const ativo = canalAtivo.id === canal.id;
-              return (
+          {jogoAtual ? (
+            <>
+              <div className="grid grid-cols-3 gap-2">
+                {/* Opção 1: Time Casa Ganha */}
                 <button
-                  key={canal.id}
                   type="button"
-                  onClick={() => selecionarCanal(canal)}
-                  className={`w-full py-2.5 px-2.5 rounded-xl text-[11px] sm:text-xs font-bold border border-[#C41E3A] transition-all duration-200 cursor-pointer flex items-center justify-center gap-1.5 truncate ${
-                    ativo
-                      ? 'bg-[#C41E3A] text-white shadow-[0_0_15px_rgba(196,30,58,0.45)]'
-                      : 'bg-[#0A0A0A] hover:bg-[#C41E3A]/20 text-white'
+                  onClick={() => {
+                    setEscolhaVencedor('CASA');
+                    setApostaConfirmada(false);
+                  }}
+                  className={`p-2.5 rounded-xl border text-center transition-all cursor-pointer flex flex-col items-center justify-center gap-1.5 ${
+                    escolhaVencedor === 'CASA'
+                      ? 'bg-[#C41E3A] text-white border-[#C41E3A] shadow-[0_0_15px_rgba(196,30,58,0.45)] scale-[1.02]'
+                      : 'bg-[#0A0A0A] hover:bg-[#C41E3A]/15 text-white border-[#222222] hover:border-[#C41E3A]/60'
                   }`}
                 >
-                  {canal.aoVivo && (
-                    <span
-                      className={`w-2 h-2 rounded-full shrink-0 animate-pulse ${
-                        ativo ? 'bg-white' : 'bg-[#C41E3A]'
-                      }`}
-                    />
-                  )}
-                  <span className="truncate">{canal.nome}</span>
+                  <span className="text-[11px] font-black truncate max-w-full">
+                    {jogoAtual.time_casa}
+                  </span>
+                  <span className="text-[9px] uppercase font-bold opacity-85">
+                    Ganha
+                  </span>
                 </button>
-              );
-            })}
-          </div>
-        </div>
 
-        {/* 4. MEU PALPITE DO BOLÃO */}
-        <form
-          onSubmit={handleConfirmarPalpite}
-          className="bg-black/90 border border-[#C41E3A] rounded-[16px] p-3.5 space-y-3"
-        >
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-extrabold uppercase tracking-wider text-white">
-              ⚽ Meu Palpite do Bolão
-            </span>
-            <span className="text-[10px] font-bold text-white/80">
-              Bolão de Amigos
-            </span>
-          </div>
+                {/* Opção X: Empate */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEscolhaVencedor('EMPATE');
+                    setApostaConfirmada(false);
+                  }}
+                  className={`p-2.5 rounded-xl border text-center transition-all cursor-pointer flex flex-col items-center justify-center gap-1.5 ${
+                    escolhaVencedor === 'EMPATE'
+                      ? 'bg-[#C41E3A] text-white border-[#C41E3A] shadow-[0_0_15px_rgba(196,30,58,0.45)] scale-[1.02]'
+                      : 'bg-[#0A0A0A] hover:bg-[#C41E3A]/15 text-white border-[#222222] hover:border-[#C41E3A]/60'
+                  }`}
+                >
+                  <span className="text-[11px] font-black">Empate</span>
+                  <span className="text-[9px] uppercase font-bold opacity-85">
+                    Igualdade
+                  </span>
+                </button>
 
-          <div className="flex items-center justify-center gap-2 sm:gap-3 py-1">
-            <label
-              htmlFor="palpite-casa-input"
-              className="text-xs sm:text-sm font-extrabold text-white truncate"
-            >
-              {canalAtivo.timeCasa}
-            </label>
+                {/* Opção 2: Time Fora Ganha */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEscolhaVencedor('FORA');
+                    setApostaConfirmada(false);
+                  }}
+                  className={`p-2.5 rounded-xl border text-center transition-all cursor-pointer flex flex-col items-center justify-center gap-1.5 ${
+                    escolhaVencedor === 'FORA'
+                      ? 'bg-[#C41E3A] text-white border-[#C41E3A] shadow-[0_0_15px_rgba(196,30,58,0.45)] scale-[1.02]'
+                      : 'bg-[#0A0A0A] hover:bg-[#C41E3A]/15 text-white border-[#222222] hover:border-[#C41E3A]/60'
+                  }`}
+                >
+                  <span className="text-[11px] font-black truncate max-w-full">
+                    {jogoAtual.time_fora}
+                  </span>
+                  <span className="text-[9px] uppercase font-bold opacity-85">
+                    Ganha
+                  </span>
+                </button>
+              </div>
 
-            <input
-              id="palpite-casa-input"
-              type="number"
-              min="0"
-              max="20"
-              value={palpiteCasa}
-              onChange={(e) => {
-                setPalpiteCasa(e.target.value);
-                setPalpiteConfirmado(false);
+              <button
+                type="button"
+                onClick={handleApostarAgora}
+                className="w-full bg-[#C41E3A] hover:bg-[#a81830] active:scale-[0.99] text-white font-black py-3.5 px-4 rounded-xl text-sm uppercase tracking-wider transition cursor-pointer flex items-center justify-center gap-2 shadow-[0_6px_20px_rgba(196,30,58,0.4)] border border-[#C41E3A]"
+              >
+                <span>⚡</span>
+                <span>Quem Ganha? Aposte Agora</span>
+              </button>
+
+              {apostaConfirmada && (
+                <div className="bg-[#C41E3A]/20 border border-[#C41E3A] rounded-xl p-2.5 text-center text-xs font-bold text-white">
+                  ✅ Aposta selecionada:{' '}
+                  {escolhaVencedor === 'CASA'
+                    ? `Vitória do ${jogoAtual.time_casa}`
+                    : escolhaVencedor === 'FORA'
+                    ? `Vitória do ${jogoAtual.time_fora}`
+                    : `Empate (${jogoAtual.time_casa} x ${jogoAtual.time_fora})`}
+                  !
+                </div>
+              )}
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                const el = document.getElementById('secao-jogos-rodada');
+                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
               }}
-              className="w-12 h-11 bg-[#0A0A0A] border border-[#C41E3A] rounded-xl text-center text-base font-black text-white focus:outline-none focus:ring-2 focus:ring-[#C41E3A] font-mono"
-            />
-
-            <span className="text-sm font-black text-[#C41E3A]">X</span>
-
-            <input
-              id="palpite-fora-input"
-              type="number"
-              min="0"
-              max="20"
-              value={palpiteFora}
-              onChange={(e) => {
-                setPalpiteFora(e.target.value);
-                setPalpiteConfirmado(false);
-              }}
-              className="w-12 h-11 bg-[#0A0A0A] border border-[#C41E3A] rounded-xl text-center text-base font-black text-white focus:outline-none focus:ring-2 focus:ring-[#C41E3A] font-mono"
-            />
-
-            <label
-              htmlFor="palpite-fora-input"
-              className="text-xs sm:text-sm font-extrabold text-white truncate"
+              className="w-full bg-[#C41E3A] hover:bg-[#a81830] active:scale-[0.99] text-white font-black py-3.5 px-4 rounded-xl text-sm uppercase tracking-wider transition cursor-pointer flex items-center justify-center gap-2 shadow-[0_6px_20px_rgba(196,30,58,0.4)] border border-[#C41E3A]"
             >
-              {canalAtivo.timeFora}
-            </label>
-          </div>
-
-          <button
-            type="submit"
-            className="w-full bg-[#C41E3A] hover:bg-[#a81830] active:scale-[0.99] text-white font-black py-3.5 px-4 rounded-xl text-sm uppercase tracking-wider transition cursor-pointer flex items-center justify-center gap-2 shadow-[0_6px_20px_rgba(196,30,58,0.4)] border border-[#C41E3A]"
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 24 24"
-              fill="currentColor"
-              className="w-4 h-4 shrink-0"
-              aria-hidden="true"
-            >
-              <path
-                fillRule="evenodd"
-                d="M12 1.5a5.25 5.25 0 00-5.25 5.25v3a3 3 0 00-3 3v6.75a3 3 0 003 3h10.5a3 3 0 003-3v-6.75a3 3 0 00-3-3v-3c0-2.9-2.35-5.25-5.25-5.25zm3.75 8.25v-3a3.75 3.75 0 10-7.5 0v3h7.5z"
-                clipRule="evenodd"
-              />
-            </svg>
-            <span>Confirma Palpite - R$10</span>
-          </button>
-
-          {palpiteConfirmado && (
-            <div className="bg-[#C41E3A]/20 border border-[#C41E3A] rounded-xl p-2.5 text-center text-xs font-bold text-white">
-              ✅ Palpite registrado: {canalAtivo.timeCasa} {palpiteCasa} x{' '}
-              {palpiteFora} {canalAtivo.timeFora}! Finalize o pagamento de R$10
-              para validar.
-            </div>
+              <span>⚡</span>
+              <span>Quem Ganha? Aposte Agora</span>
+            </button>
           )}
-
-          <p className="text-[11px] text-white/80 text-center font-medium leading-snug">
-            Palpite confirmado após o pagamento • Apenas entre amigos
-          </p>
-        </form>
+        </div>
       </div>
     </div>
   );
