@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import logoOficial from './assets/images/bolao_elite_logo_1791164462566.jpg';
 import { PWAInstallButton } from './PWAInstallButton';
-import { BolaoLiveCard } from './BolaoLiveCard.jsx';
+import { BolaoLiveCard } from './components/BolaoLiveCard';
 import {
   db,
   auth,
