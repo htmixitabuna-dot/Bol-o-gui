@@ -1,25 +1,41 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 
 const CANAIS_OFICIAIS = [
   {
     id: 'cazetv',
     label: 'CazéTV (YouTube)',
-    src: 'https://www.youtube.com/embed/live_stream?channel=UCw9iXY_W8p6Qk_MWq1IT1Hg&playsinline=1&modestbranding=1&rel=0',
+    src: 'https://www.youtube.com/embed/ZMdCp6vN8Ws?playsinline=1&modestbranding=1&rel=0&enablejsapi=1',
+    backups: [
+      'https://www.youtube.com/embed/lNIx05N77DY?playsinline=1&modestbranding=1&rel=0&enablejsapi=1',
+      'https://www.youtube.com/embed/_Lk5a5OR0vc?playsinline=1&modestbranding=1&rel=0&start=1800&enablejsapi=1',
+    ],
   },
   {
     id: 'fifaplus',
     label: 'FIFA+ (Grátis)',
-    src: 'https://www.youtube.com/embed/live_stream?channel=UCpcTrCXblq78GZrTUTLWeBw&playsinline=1&modestbranding=1&rel=0',
+    src: 'https://www.youtube.com/embed/36dP-6iM95M?playsinline=1&modestbranding=1&rel=0&enablejsapi=1',
+    backups: [
+      'https://www.youtube.com/embed/tn0IBBcaw6Q?playsinline=1&modestbranding=1&rel=0&enablejsapi=1',
+      'https://www.youtube.com/embed/b7PtZOQ6Wro?playsinline=1&modestbranding=1&rel=0&enablejsapi=1',
+    ],
   },
   {
     id: 'nsports',
     label: 'N Sports - Ao vivo agora',
-    src: 'https://www.youtube.com/embed/live_stream?channel=UC14Y61jH1twp9R2n1B3_w1w&playsinline=1&modestbranding=1&rel=0',
+    src: 'https://www.youtube.com/embed/rm06XtTDw3I?playsinline=1&modestbranding=1&rel=0&start=1200&enablejsapi=1',
+    backups: [
+      'https://www.youtube.com/embed/JUF6rCh1Zrk?playsinline=1&modestbranding=1&rel=0&start=1500&enablejsapi=1',
+      'https://www.youtube.com/embed/AQS3N_esijU?playsinline=1&modestbranding=1&rel=0&start=1200&enablejsapi=1',
+    ],
   },
   {
     id: 'goat',
     label: 'Canal GOAT - Gratuito',
-    src: 'https://www.youtube.com/embed/live_stream?channel=UC_oTo2nJ1T-K1u-1z8E0n2A&playsinline=1&modestbranding=1&rel=0',
+    src: 'https://www.youtube.com/embed/CTNlXPwPHbA?playsinline=1&modestbranding=1&rel=0&start=1500&enablejsapi=1',
+    backups: [
+      'https://www.youtube.com/embed/eH5rSxUObnI?playsinline=1&modestbranding=1&rel=0&start=1500&enablejsapi=1',
+      'https://www.youtube.com/embed/ZiLdsJWExG4?playsinline=1&modestbranding=1&rel=0&start=1500&enablejsapi=1',
+    ],
   },
 ];
 
@@ -40,8 +56,10 @@ export function BolaoLiveCard({
   onConfirmarPalpite,
 }) {
   const [canalAtivo, setCanalAtivo] = useState(CANAIS_OFICIAIS[0]);
+  const [indiceSinal, setIndiceSinal] = useState(0);
   const [iframeSrc, setIframeSrc] = useState(CANAIS_OFICIAIS[0].src);
   const [playerIniciado, setPlayerIniciado] = useState(false);
+  const iframeRef = useRef(null);
 
   const [palpiteCasa, setPalpiteCasa] = useState(2);
   const [palpiteFora, setPalpiteFora] = useState(1);
@@ -50,16 +68,100 @@ export function BolaoLiveCard({
   const [erroEscudoCasa, setErroEscudoCasa] = useState(false);
   const [erroEscudoFora, setErroEscudoFora] = useState(false);
 
+  const enviarComandoPlayer = (func, args = []) => {
+    try {
+      if (iframeRef.current && iframeRef.current.contentWindow) {
+        iframeRef.current.contentWindow.postMessage(
+          JSON.stringify({ event: 'command', func, args }),
+          '*'
+        );
+      }
+    } catch {
+      // ignore cross-origin postMessage errors
+    }
+  };
+
+  useEffect(() => {
+    const handleBlur = () => {
+      if (document.activeElement === iframeRef.current) {
+        setPlayerIniciado(true);
+      }
+    };
+
+    const handleMessage = (event) => {
+      if (typeof event.data !== 'string') return;
+      try {
+        const data = JSON.parse(event.data);
+        if (
+          data?.event === 'onStateChange' &&
+          (data?.info === 1 || data?.info === 3)
+        ) {
+          setPlayerIniciado(true);
+        }
+        if (
+          data?.event === 'infoDelivery' &&
+          (data?.info?.playerState === 1 || data?.info?.playerState === 3)
+        ) {
+          setPlayerIniciado(true);
+        }
+        if (data?.event === 'onError') {
+          const listaSinais = [canalAtivo.src, ...(canalAtivo.backups || [])];
+          const proximoIndice = (indiceSinal + 1) % listaSinais.length;
+          if (proximoIndice !== indiceSinal) {
+            setIndiceSinal(proximoIndice);
+            setIframeSrc(`${listaSinais[proximoIndice]}&autoplay=1`);
+          }
+        }
+      } catch {
+        // ignore non-JSON messages
+      }
+    };
+
+    window.addEventListener('blur', handleBlur);
+    window.addEventListener('message', handleMessage);
+    return () => {
+      window.removeEventListener('blur', handleBlur);
+      window.removeEventListener('message', handleMessage);
+    };
+  }, [canalAtivo, indiceSinal]);
+
   const selecionarCanal = (canal) => {
     setCanalAtivo(canal);
-    const urlComAutoplay = playerIniciado
-      ? `${canal.src}&autoplay=1`
-      : canal.src;
+    setIndiceSinal(0);
+    setPlayerIniciado(true);
+    const urlComAutoplay = canal.src.includes('autoplay=1')
+      ? canal.src
+      : `${canal.src}&autoplay=1`;
     setIframeSrc(urlComAutoplay);
+  };
+
+  const alternarSinalDoCanal = () => {
+    const listaSinais = [canalAtivo.src, ...(canalAtivo.backups || [])];
+    const proximoIndice = (indiceSinal + 1) % listaSinais.length;
+    setIndiceSinal(proximoIndice);
+    setPlayerIniciado(true);
+    setIframeSrc(`${listaSinais[proximoIndice]}&autoplay=1`);
+  };
+
+  const handleIframeLoad = () => {
+    try {
+      if (iframeRef.current && iframeRef.current.contentWindow) {
+        iframeRef.current.contentWindow.postMessage(
+          JSON.stringify({ event: 'listening', id: 1, channel: 'widget' }),
+          '*'
+        );
+        if (playerIniciado) {
+          enviarComandoPlayer('playVideo');
+        }
+      }
+    } catch {
+      // ignore
+    }
   };
 
   const iniciarPlayNoApp = () => {
     setPlayerIniciado(true);
+    enviarComandoPlayer('playVideo');
     if (!iframeSrc.includes('autoplay=1')) {
       setIframeSrc(`${canalAtivo.src}&autoplay=1`);
     }
@@ -119,8 +221,9 @@ export function BolaoLiveCard({
 
         {/* Player de vídeo embed do YouTube DENTRO DO APP (playsinline) */}
         <iframe
-          key={iframeSrc}
+          ref={iframeRef}
           src={iframeSrc}
+          onLoad={handleIframeLoad}
           title={`Transmissão Ao Vivo - ${timeCasa} vs ${timeFora}`}
           className="w-full h-[200px] rounded-t-[16px] border-0 block"
           allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
@@ -129,15 +232,13 @@ export function BolaoLiveCard({
           playsInline
         />
 
-        {/* Play button centralizado vermelho (some ao iniciar reprodução no próprio card) */}
+        {/* Play button centralizado vermelho (permite toque direto no player no 1º clique e some ao iniciar) */}
         {!playerIniciado && (
-          <button
-            type="button"
-            onClick={iniciarPlayNoApp}
-            aria-label="Assistir transmissão ao vivo dentro do app"
-            className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/45 hover:bg-black/30 transition cursor-pointer group"
+          <div
+            aria-hidden="true"
+            className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/25 pointer-events-none transition"
           >
-            <span className="w-14 h-14 rounded-full bg-[#C41E3A] text-white flex items-center justify-center shadow-[0_0_25px_rgba(196,30,58,0.85)] group-hover:scale-110 transition-transform border border-white/30">
+            <span className="w-14 h-14 rounded-full bg-[#C41E3A] text-white flex items-center justify-center shadow-[0_0_25px_rgba(196,30,58,0.9)] border border-white/40">
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 viewBox="0 0 24 24"
@@ -147,10 +248,10 @@ export function BolaoLiveCard({
                 <path d="M8 5.14v14l11-7-11-7z" />
               </svg>
             </span>
-            <span className="mt-2 text-[11px] font-bold text-white bg-black/80 border border-[#C41E3A] px-3 py-0.5 rounded-full">
-              Assistir Aqui no App
+            <span className="mt-2 text-[11px] font-bold text-white bg-black/85 border border-[#C41E3A] px-3 py-0.5 rounded-full">
+              Toque para Assistir no App
             </span>
-          </button>
+          </div>
         )}
       </div>
 
@@ -220,9 +321,13 @@ export function BolaoLiveCard({
             <span className="text-[11px] font-extrabold uppercase tracking-wider text-white">
               📺 Canais Oficiais Gratuitos
             </span>
-            <span className="text-[10px] text-white/75">
-              Embed Oficial • No App
-            </span>
+            <button
+              type="button"
+              onClick={alternarSinalDoCanal}
+              className="text-[10px] font-bold text-white bg-black/80 hover:bg-[#C41E3A] border border-[#C41E3A] px-2.5 py-0.5 rounded-full transition cursor-pointer"
+            >
+              🔄 Trocar Sinal ({indiceSinal + 1}/3)
+            </button>
           </div>
 
           <div className="grid grid-cols-2 gap-2">
