@@ -4808,65 +4808,19 @@ export default function App() {
             {CountdownTimerBolaoElite({ compacto: true })}
           </div>
 
-          {/* Painel Placar ao Vivo / Status Oficial ESPN (Brasileirão) na Tela Inicial */}
-          <div className="w-full mt-5 bg-zinc-900/90 border border-zinc-800 rounded-2xl p-3.5 text-left space-y-2.5 shadow-lg">
-            <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
-              <div className="flex items-center gap-1.5">
-                <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse"></span>
-                <span className="text-[10px] font-black uppercase tracking-wider text-[#FF6B00]">
-                  PLACAR AO VIVO • BRASILEIRÃO (ESPN)
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={() => atualizarJogosEspnAoVivo()}
-                disabled={carregandoEspnRapido}
-                className="text-[10px] bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold px-2 py-0.5 rounded cursor-pointer transition"
-              >
-                {carregandoEspnRapido ? "🔄..." : "🔄 Atualizar"}
-              </button>
-            </div>
-
-            {jogosPublicados.length === 0 ? (
-              <div className="bg-black/80 border border-[#FF6B00]/40 rounded-xl p-3.5 text-center space-y-1">
-                <div className="text-xs sm:text-sm font-black text-[#FF6B00] uppercase tracking-wide">
-                  {MENSAGEM_DATA_FIFA}
-                </div>
-                <p className="text-[10px] text-zinc-400">
-                  Sincronizado em tempo real com a API oficial da ESPN (Brasileirão Série A).
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
-                {jogosPublicados.map((j) => (
-                  <div
-                    key={j.id}
-                    className="bg-black/80 border border-zinc-800 rounded-xl px-3 py-2 flex items-center justify-between gap-2 text-xs"
-                  >
-                    <div className="flex items-center gap-1.5 flex-1 min-w-0">
-                      <Escudo src={j.escudoCasa} nome={j.casa} size={22} />
-                      <span className="font-bold text-white truncate">{j.casa}</span>
-                    </div>
-                    <div className="flex flex-col items-center shrink-0 px-2">
-                      {j.aoVivo && (
-                        <span className="text-[8px] bg-red-600 text-white font-black px-1.5 py-0.5 rounded animate-pulse mb-0.5">
-                          🔴 {j.tempoJogo || "AO VIVO"}
-                        </span>
-                      )}
-                      <div className="bg-zinc-900 border border-zinc-700 px-2 py-0.5 rounded font-mono text-xs font-black text-white flex items-center gap-1">
-                        <span>{j.placarCasa ?? 0}</span>
-                        <span className="text-[#FF6B00]">x</span>
-                        <span>{j.placarFora ?? 0}</span>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-1.5 flex-1 min-w-0 justify-end">
-                      <span className="font-bold text-white truncate text-right">{j.fora}</span>
-                      <Escudo src={j.escudoFora} nome={j.fora} size={22} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+          {/* Player ESPN Ao Vivo & Placar na Tela Inicial */}
+          <div className="w-full mt-5 text-left">
+            <BolaoLiveCard
+              onConfirmarPalpite={() => {
+                if (user) {
+                  setPage("palpites");
+                  abrirModalPixDireto();
+                } else {
+                  setAbaLoginJogador("entrar");
+                  setPage("loginJogador");
+                }
+              }}
+            />
           </div>
 
           {/* Banner para Instalar o App no Celular com a Logo do Bolões Elite */}
@@ -8650,6 +8604,14 @@ export default function App() {
           <div className="flex items-center gap-2 overflow-x-auto pt-1 pb-0.5 text-[11px]">
             <button
               type="button"
+              onClick={() => rolarParaSecao("secao-live-player")}
+              className="bg-[#C41E3A] hover:bg-[#a81830] text-white font-black px-3 py-1.5 rounded-lg shrink-0 cursor-pointer transition flex items-center gap-1 shadow"
+            >
+              <span>📺</span>
+              <span>Player ESPN</span>
+            </button>
+            <button
+              type="button"
               onClick={() => rolarParaSecao("secao-jogos-rodada")}
               className="bg-black hover:bg-zinc-800 border border-zinc-700 text-zinc-200 font-bold px-3 py-1.5 rounded-lg shrink-0 cursor-pointer transition"
             >
@@ -8678,6 +8640,33 @@ export default function App() {
             </button>
           </div>
         </header>
+
+        {/* PLAYER ESPN EM DESTAQUE NO TOPO DA ÁREA DO JOGADOR */}
+        <div id="secao-live-player" className="mt-4 space-y-2.5">
+          <div className="bg-zinc-900/95 border border-[#C41E3A] rounded-2xl px-4 py-3 flex items-center justify-between gap-2 shadow-lg">
+            <div>
+              <span className="text-[10px] font-black uppercase tracking-wider text-[#C41E3A] block">
+                📺 Player na Área do Jogador • Atualização Automática ESPN (30s)
+              </span>
+              <h3 className="text-sm font-black text-white">
+                ⚽ Brasileirão Série A • Placar ESPN, Resumo & Aposte Agora
+              </h3>
+            </div>
+            <button
+              type="button"
+              onClick={() => atualizarJogosEspnAoVivo()}
+              className="bg-[#C41E3A] hover:bg-[#a81830] text-white text-[10px] font-black px-2.5 py-1.5 rounded-lg cursor-pointer shrink-0 uppercase"
+            >
+              🔄 Sincronizar ESPN
+            </button>
+          </div>
+
+          <BolaoLiveCard
+            onConfirmarPalpite={() => {
+              abrirModalPixDireto();
+            }}
+          />
+        </div>
 
         {/* NOTIFICAÇÃO OFICIAL DE PAGAMENTO APROVADO / EM ANÁLISE */}
         {isMinhaApostaAprovada ? (
@@ -8749,27 +8738,8 @@ export default function App() {
 
         {/* LAYOUT EM GRID ORGANIZADO (2 COLUNAS NO DESKTOP / SEÇÕES LÓGICAS NO MOBILE) */}
         <div className="mt-5 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-          {/* COLUNA ESQUERDA (5 COLUNAS): PLAYER DE VÍDEO AO VIVO + RESUMO FINANCEIRO */}
+          {/* COLUNA ESQUERDA (5 COLUNAS): RESUMO FINANCEIRO, DEPÓSITOS & TRANSPARÊNCIA */}
           <div className="lg:col-span-5 space-y-4">
-            {/* 1. CENTRAL DO BRASILEIRÃO SÉRIE A (ESPN) */}
-            <div id="secao-live-player" className="space-y-2.5">
-              <div className="bg-zinc-900/95 border border-[#C41E3A] rounded-2xl px-4 py-3 flex items-center justify-between gap-2">
-                <div>
-                  <span className="text-[10px] font-black uppercase tracking-wider text-[#C41E3A] block">
-                    Atualização Automática ESPN
-                  </span>
-                  <h3 className="text-sm font-black text-white">
-                    ⚽ Brasileirão Série A • Quem Ganha? Aposte Agora
-                  </h3>
-                </div>
-              </div>
-
-              <BolaoLiveCard
-                onConfirmarPalpite={() => {
-                  abrirModalPixDireto();
-                }}
-              />
-            </div>
 
             {/* 2. CARD RESUMO VALOR DO BOLÃO & PIX */}
             <div className="bg-[#FF6B00] text-black p-4 rounded-2xl shadow-lg">
@@ -8912,24 +8882,28 @@ export default function App() {
           </div>
         )}
 
-        {/* Status da Rodada (Dinâmico • Atualiza a cada 1 minuto ao vivo da ESPN) */}
+        {/* Status da Rodada (Dinâmico • Atualiza a cada 1 minuto via ESPN) */}
         <div
           id="secao-jogos-rodada"
           className="mt-4 flex flex-wrap items-center justify-between gap-2 bg-zinc-900/90 border border-zinc-800 px-3.5 py-2.5 rounded-xl"
         >
           <div className="flex flex-col gap-0.5">
             <div className="flex items-center gap-2">
-              <span className={`h-2 w-2 rounded-full ${primeiroJogoDoBolaoComecou ? "bg-red-500 animate-pulse" : jogosPublicados.length > 0 ? "bg-green-500 animate-pulse" : "bg-amber-500"}`}></span>
+              <span className={`h-2 w-2 rounded-full ${primeiroJogoDoBolaoComecou ? "bg-red-500 animate-pulse" : jogosPublicados.some((j) => j.aoVivo) ? "bg-red-500 animate-pulse" : "bg-amber-400 animate-pulse"}`}></span>
               <span className="text-xs font-bold text-white">
                 {jogosPublicados.length > 0
                   ? primeiroJogoDoBolaoComecou
                     ? `🔒 1º Jogo Iniciado • ${jogosQueNaoComecaramLista.length} Jogo(s) Que Não Começaram`
-                    : `Escolha de Jogos: ${jogosPublicados.length} Jogo(s) Disponível(is) p/ Apostar`
+                    : jogosPublicados.some((j) => j.aoVivo)
+                    ? `🔴 Jogos Ao Vivo na ESPN: ${jogosPublicados.length} Jogo(s) Disponível(is)`
+                    : `📅 Próximos Jogos da ESPN • EM BREVE (${jogosPublicados.length} Confrontos)`
                   : MENSAGEM_DATA_FIFA}
               </span>
             </div>
-            <span className="text-[10px] text-green-400 font-mono">
-              🟢 Placar ao Vivo ESPN • Atualiza a cada 1 min
+            <span className="text-[10px] text-amber-300 font-mono">
+              {jogosPublicados.some((j) => j.aoVivo)
+                ? "🔴 Placar Ao Vivo ESPN em andamento"
+                : "⏳ Sem jogos ao vivo no momento • Lista oficial da ESPN dos próximos jogos (EM BREVE)"}
               {ultimaAtualizacaoJogos ? ` • ${ultimaAtualizacaoJogos}` : ""}
             </span>
           </div>
@@ -9104,9 +9078,15 @@ export default function App() {
                   )}
 
                   <div className="p-4 space-y-3">
-                    {/* Cabeçalho do Confronto + Status Ao Vivo da ESPN */}
+                    {/* Cabeçalho do Confronto + Status da ESPN */}
                     <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-zinc-400 uppercase font-bold tracking-wider border-b border-zinc-800/80 pb-2">
-                      <span>Jogo #{idx + 1} • {j.data} • {j.estadio}</span>
+                      <span>
+                        Jogo #{idx + 1} •{" "}
+                        {j.data_jogo && /^\d{4}-\d{2}-\d{2}$/.test(j.data_jogo)
+                          ? `${j.data_jogo.slice(8, 10)}/${j.data_jogo.slice(5, 7)} às `
+                          : ""}
+                        {j.data} • {j.estadio}
+                      </span>
                       {j.aoVivo ? (
                         <span className="bg-red-600 text-white font-black px-2 py-0.5 rounded-full animate-pulse flex items-center gap-1">
                           <span>🔴</span> AO VIVO {j.tempoJogo ? `• ${j.tempoJogo}` : ""}
@@ -9120,8 +9100,8 @@ export default function App() {
                           🔒 JÁ COMEÇOU • BLOQUEADO
                         </span>
                       ) : (
-                        <span className="bg-black text-green-400 border border-green-800/60 font-mono px-2 py-0.5 rounded-full">
-                          🟢 ABERTO P/ APOSTAR
+                        <span className="bg-amber-500/20 text-amber-300 border border-amber-400/60 font-black px-2.5 py-0.5 rounded-full">
+                          ⏳ EM BREVE • ABERTO P/ APOSTAR
                         </span>
                       )}
                     </div>
@@ -9182,16 +9162,31 @@ export default function App() {
                       <span className="font-black text-sm truncate text-white">{j.casa}</span>
                     </button>
 
-                    {/* Placar Ao Vivo em Tempo Real */}
+                    {/* Centro: se estiver ao vivo/encerrado mostra placar; se não começou mostra EM BREVE */}
                     <div className="flex flex-col items-center shrink-0 px-2">
-                      <div className="bg-black border-2 border-zinc-700 px-3 py-1 rounded-xl font-mono text-base font-black text-white flex items-center gap-2 shadow-inner">
-                        <span>{j.placarCasa ?? 0}</span>
-                        <span className="text-[#FF6B00] text-xs">X</span>
-                        <span>{j.placarFora ?? 0}</span>
-                      </div>
-                      <span className="text-[9px] text-zinc-500 font-bold uppercase mt-0.5">
-                        {j.aoVivo ? j.tempoJogo || "Em andamento" : j.encerrado ? "Placar Final" : "Placar Ao Vivo"}
-                      </span>
+                      {j.aoVivo || j.encerrado ? (
+                        <>
+                          <div className="bg-black border-2 border-zinc-700 px-3 py-1 rounded-xl font-mono text-base font-black text-white flex items-center gap-2 shadow-inner">
+                            <span>{j.placarCasa ?? 0}</span>
+                            <span className="text-[#FF6B00] text-xs">X</span>
+                            <span>{j.placarFora ?? 0}</span>
+                          </div>
+                          <span className="text-[9px] text-zinc-400 font-bold uppercase mt-0.5">
+                            {j.aoVivo ? j.tempoJogo || "AO VIVO" : "Placar Final"}
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <div className="bg-amber-500/20 border border-amber-400/70 px-3 py-1 rounded-xl text-xs font-black text-amber-300 uppercase tracking-wider shadow-inner">
+                            ⏳ EM BREVE
+                          </div>
+                          <span className="text-[9px] text-zinc-400 font-bold uppercase mt-0.5">
+                            {j.data_jogo && /^\d{4}-\d{2}-\d{2}$/.test(j.data_jogo)
+                              ? `${j.data_jogo.slice(8, 10)}/${j.data_jogo.slice(5, 7)} • ${j.data}`
+                              : `Às ${j.data}`}
+                          </span>
+                        </>
+                      )}
                     </div>
 
                     {/* Visitante */}
@@ -9450,6 +9445,13 @@ export default function App() {
         </div>
 
         <AreaMinhasApostas modoCompacto={false} />
+
+        {/* Player ESPN também disponível na tela Minhas Apostas do Jogador */}
+        <BolaoLiveCard
+          onConfirmarPalpite={() => {
+            abrirModalPixDireto();
+          }}
+        />
 
         <PainelTransparenciaJogadores />
 

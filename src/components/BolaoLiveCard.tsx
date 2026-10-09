@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 
-const ESPN_API =
+export const ESPN_API =
   'https://site.api.espn.com/apis/site/v2/sports/soccer/bra.1/scoreboard';
 
 const STORAGE_KEY_REPRISE = 'bolao_reprise_atual';
@@ -20,6 +20,7 @@ export interface PartidaEspn {
   minuto: string;
   campeonato: string;
   horario: string;
+  dataFormatada: string;
   estadio: string;
   aoVivo: boolean;
   naoComecou: boolean;
@@ -156,6 +157,10 @@ const ESCUDOS_CONHECIDOS: Record<string, string> = {
     'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F3441.png',
   vitoria:
     'https://a.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fsoccer%2F500%2F3457.png',
+  remo: 'https://a.espncdn.com/i/teamlogos/soccer/500/4936.png',
+  coritiba: 'https://a.espncdn.com/i/teamlogos/soccer/500/3456.png',
+  chapecoense: 'https://a.espncdn.com/i/teamlogos/soccer/500/9318.png',
+  mirassol: 'https://a.espncdn.com/i/teamlogos/soccer/500/9969.png',
 };
 
 function obterEscudoPorNome(nome: string): string {
@@ -172,18 +177,27 @@ function obterEscudoPorNome(nome: string): string {
   return chaveParcial ? ESCUDOS_CONHECIDOS[chaveParcial] : '';
 }
 
-function formatarHorarioEvento(dateIso?: string): string {
-  if (!dateIso) return '19:30';
+function formatarHorarioEvento(dateIso?: string): {
+  horario: string;
+  dataCurta: string;
+} {
+  if (!dateIso) return { horario: '19:30', dataCurta: 'Em breve' };
   try {
     const dt = new Date(dateIso);
-    if (isNaN(dt.getTime())) return '19:30';
-    return dt.toLocaleTimeString('pt-BR', {
+    if (isNaN(dt.getTime())) return { horario: '19:30', dataCurta: 'Em breve' };
+    const horario = dt.toLocaleTimeString('pt-BR', {
       timeZone: 'America/Sao_Paulo',
       hour: '2-digit',
       minute: '2-digit',
     });
+    const dataCurta = dt.toLocaleDateString('pt-BR', {
+      timeZone: 'America/Sao_Paulo',
+      day: '2-digit',
+      month: '2-digit',
+    });
+    return { horario, dataCurta };
   } catch {
-    return '19:30';
+    return { horario: '19:30', dataCurta: 'Em breve' };
   }
 }
 
@@ -202,6 +216,114 @@ function lerRepriseSalvaLocalStorage(): RepriseSalvaStorage | null {
   }
 }
 
+function mapearEventoEspnParaPartida(
+  event: any,
+  idx: number,
+  nomeCampeonatoPadrao: string
+): PartidaEspn | null {
+  const competition = event?.competitions?.[0];
+  const competitors = competition?.competitors || [];
+  const compCasa =
+    competitors.find((c: any) => c.homeAway === 'home') || competitors[0];
+  const compFora =
+    competitors.find((c: any) => c.homeAway === 'away') || competitors[1];
+
+  if (!compCasa || !compFora) return null;
+
+  const timeCasa =
+    compCasa?.team?.displayName ||
+    compCasa?.team?.shortDisplayName ||
+    compCasa?.team?.name ||
+    'Time Casa';
+  const timeFora =
+    compFora?.team?.displayName ||
+    compFora?.team?.shortDisplayName ||
+    compFora?.team?.name ||
+    'Time Fora';
+
+  const logoCasa =
+    compCasa?.team?.logo ||
+    compCasa?.team?.logos?.[0]?.href ||
+    obterEscudoPorNome(timeCasa);
+  const logoFora =
+    compFora?.team?.logo ||
+    compFora?.team?.logos?.[0]?.href ||
+    obterEscudoPorNome(timeFora);
+
+  const placarCasa = String(compCasa?.score ?? '0');
+  const placarFora = String(compFora?.score ?? '0');
+
+  const state = String(
+    event?.status?.type?.state ||
+      competition?.status?.type?.state ||
+      'pre'
+  ).toLowerCase();
+
+  const aoVivo = state === 'in';
+  const encerrado = state === 'post';
+  const naoComecou = !aoVivo && !encerrado;
+
+  const { horario, dataCurta } = formatarHorarioEvento(
+    event?.date || competition?.date
+  );
+
+  const rawDetail = String(
+    event?.status?.type?.detail ||
+      event?.status?.type?.shortDetail ||
+      competition?.status?.type?.detail ||
+      ''
+  ).trim();
+
+  const displayClock = String(
+    event?.status?.displayClock || competition?.status?.displayClock || ''
+  ).trim();
+
+  let status = `EM BREVE • ${dataCurta} às ${horario}`;
+  let minuto = `EM BREVE (${dataCurta} • ${horario})`;
+
+  if (aoVivo) {
+    if (displayClock && displayClock !== "0'") {
+      status = `AO VIVO ${displayClock}`;
+      minuto = displayClock;
+    } else if (rawDetail && !/scheduled/i.test(rawDetail)) {
+      status = /ao vivo/i.test(rawDetail)
+        ? rawDetail.toUpperCase()
+        : `AO VIVO ${rawDetail}`;
+      minuto = rawDetail;
+    } else {
+      status = 'AO VIVO';
+      minuto = 'Em andamento';
+    }
+  } else if (encerrado) {
+    status = `ENCERRADO • ${dataCurta}`;
+    minuto = 'Encerrado (90\')';
+  }
+
+  const estadio =
+    competition?.venue?.fullName ||
+    competition?.venue?.address?.city ||
+    'Estádio Brasileirão';
+
+  return {
+    id: String(event?.id || `espn_${idx}`),
+    timeCasa,
+    timeFora,
+    logoCasa,
+    logoFora,
+    placarCasa,
+    placarFora,
+    status,
+    minuto,
+    campeonato: nomeCampeonatoPadrao,
+    horario,
+    dataFormatada: dataCurta,
+    estadio,
+    aoVivo,
+    naoComecou,
+    encerrado,
+  };
+}
+
 function BolaoLiveCardInner({
   onConfirmarPalpite,
   admAbertoPorPadrao = false,
@@ -211,10 +333,11 @@ function BolaoLiveCardInner({
     onConfirmarPalpiteRef.current = onConfirmarPalpite;
   }, [onConfirmarPalpite]);
 
-  // Estado da Reprise salva no localStorage (prioridade sobre a API da ESPN)
+  // Estado da Reprise salva no localStorage (tem prioridade quando ativa)
   const [repriseSalva, setRepriseSalva] = useState<RepriseSalvaStorage | null>(
     () => lerRepriseSalvaLocalStorage()
   );
+  const [forcarModoEspn, setForcarModoEspn] = useState<boolean>(false);
 
   // Estado do Painel ADM
   const [painelAdmAberto, setPainelAdmAberto] = useState<boolean>(
@@ -233,10 +356,13 @@ function BolaoLiveCardInner({
   const [erroAdm, setErroAdm] = useState<string>('');
   const inputUrlRef = useRef<HTMLInputElement | null>(null);
 
-  // Estados da API da ESPN Ao Vivo + Goal Alerts
+  // Estados da API da ESPN (Ao Vivo ou Próximos Jogos Em Breve) + Goal Alerts
   const [jogosEspn, setJogosEspn] = useState<PartidaEspn[]>([]);
   const [partida, setPartida] = useState<PartidaEspn | null>(null);
   const [buscandoJogos, setBuscandoJogos] = useState<boolean>(true);
+  const [ultimaSincronizacao, setUltimaSincronizacao] = useState<string>('');
+  const [segundosParaAtualizar, setSegundosParaAtualizar] =
+    useState<number>(30);
   const [alertaGol, setAlertaGol] = useState<AlertaGolInfo | null>(null);
   const placaresAnterioresRef = useRef<
     Record<string, { casa: string; fora: string }>
@@ -263,171 +389,123 @@ function BolaoLiveCardInner({
     return () => window.clearTimeout(t);
   }, [alertaGol]);
 
-  // Busca os jogos ao vivo / próximos na ESPN_API via fetch nativo
+  // Busca diretamente na ESPN_API: se houver jogos ao vivo mostra AO VIVO; se não houver, monta a lista dos Próximos Jogos da ESPN como "EM BREVE"
   const buscarJogosEspn = useCallback(async () => {
     try {
-      const response = await fetch(ESPN_API);
+      const response = await fetch(ESPN_API, {
+        method: 'GET',
+        cache: 'no-store',
+      });
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
       const data = await response.json();
-      const events = Array.isArray(data?.events) ? data.events : [];
+      const eventsIniciais = Array.isArray(data?.events) ? data.events : [];
       const nomeCampeonatoPadrao =
-        data?.leagues?.[0]?.name || 'Brasileirão Série A';
+        data?.leagues?.[0]?.name === 'Brazilian Serie A'
+          ? 'Brasileirão Série A'
+          : data?.leagues?.[0]?.name || 'Brasileirão Série A';
 
-      const listaPartidas: PartidaEspn[] = events
-        .map((event: any, idx: number): PartidaEspn | null => {
-          const competition = event?.competitions?.[0];
-          const competitors = competition?.competitors || [];
-          const compCasa = competitors[0];
-          const compFora = competitors[1];
+      let todosEventosBrutos: any[] = [...eventsIniciais];
+      const calendarRaw: string[] = Array.isArray(data?.leagues?.[0]?.calendar)
+        ? data.leagues[0].calendar
+        : [];
 
-          if (!compCasa || !compFora) return null;
+      // Busca APENAS as próximas datas da rodada no calendário da ESPN (sem nunca inventar jogos ou buscar jogos passados)
+      if (calendarRaw.length > 0 && todosEventosBrutos.length < 8) {
+        const hojeYmd = String(
+          data?.day?.date || new Date().toISOString().slice(0, 10)
+        )
+          .slice(0, 10)
+          .replace(/-/g, '');
+        const datasCalendario = calendarRaw
+          .map((c) => String(c || '').slice(0, 10).replace(/-/g, ''))
+          .filter((d) => /^\d{8}$/.test(d));
 
-          const timeCasa =
-            compCasa?.team?.displayName ||
-            compCasa?.team?.shortDisplayName ||
-            compCasa?.team?.name ||
-            'Time Casa';
-          const timeFora =
-            compFora?.team?.displayName ||
-            compFora?.team?.shortDisplayName ||
-            compFora?.team?.name ||
-            'Time Fora';
+        const proximasDatas = datasCalendario
+          .filter((d) => d >= hojeYmd)
+          .slice(0, 3);
 
-          const logoCasa =
-            compCasa?.team?.logo ||
-            compCasa?.team?.logos?.[0]?.href ||
-            obterEscudoPorNome(timeCasa);
-          const logoFora =
-            compFora?.team?.logo ||
-            compFora?.team?.logos?.[0]?.href ||
-            obterEscudoPorNome(timeFora);
-
-          const placarCasa = String(compCasa?.score ?? '0');
-          const placarFora = String(compFora?.score ?? '0');
-
-          const state = String(
-            event?.status?.type?.state ||
-              competition?.status?.type?.state ||
-              'pre'
-          ).toLowerCase();
-
-          const aoVivo = state === 'in';
-          const encerrado = state === 'post';
-          const naoComecou = !aoVivo && !encerrado;
-
-          const horario = formatarHorarioEvento(
-            event?.date || competition?.date
-          );
-
-          const rawDetail = String(
-            event?.status?.type?.detail ||
-              event?.status?.type?.shortDetail ||
-              competition?.status?.type?.detail ||
-              ''
-          ).trim();
-
-          const displayClock = String(
-            event?.status?.displayClock || ''
-          ).trim();
-
-          let status = rawDetail || horario;
-          let minuto = displayClock || rawDetail || horario;
-
-          if (aoVivo) {
-            if (displayClock) {
-              status = `AO VIVO ${displayClock}`;
-              minuto = displayClock;
-            } else if (!/ao vivo/i.test(rawDetail)) {
-              status = `AO VIVO ${rawDetail}`.trim();
-              minuto = rawDetail || 'Em andamento';
-            } else {
-              status = rawDetail.toUpperCase();
-              minuto = rawDetail;
-            }
-          } else if (encerrado) {
-            status = rawDetail || 'FT';
-            minuto = 'Encerrado (90\')';
-          } else {
-            status = horario;
-            minuto = `Início às ${horario}`;
-          }
-
-          const estadio =
-            competition?.venue?.fullName ||
-            competition?.venue?.address?.city ||
-            'Estádio Brasileirão';
-
-          const idEvento = String(event?.id || `espn_${idx}`);
-
-          // Verifica mudança de placar na API para disparar Goal Alert ("GOOOL! Novo placar")
-          const placarAnterior = placaresAnterioresRef.current[idEvento];
-          if (
-            placarAnterior &&
-            (placarAnterior.casa !== placarCasa ||
-              placarAnterior.fora !== placarFora)
-          ) {
-            dispararAlertaGol({
-              id: `${idEvento}_${Date.now()}`,
-              mensagem: `GOOOL! Novo placar: ${timeCasa} ${placarCasa} - ${placarFora} ${timeFora}`,
-              timeCasa,
-              timeFora,
-              placarCasa,
-              placarFora,
-              minuto,
-            });
-          }
-          placaresAnterioresRef.current[idEvento] = {
-            casa: placarCasa,
-            fora: placarFora,
-          };
-
-          return {
-            id: idEvento,
-            timeCasa,
-            timeFora,
-            logoCasa,
-            logoFora,
-            placarCasa,
-            placarFora,
-            status,
-            minuto,
-            campeonato: nomeCampeonatoPadrao,
-            horario,
-            estadio,
-            aoVivo,
-            naoComecou,
-            encerrado,
-          };
-        })
-        .filter((item: PartidaEspn | null): item is PartidaEspn =>
-          Boolean(item)
+        const respostasExtras = await Promise.all(
+          proximasDatas.map((ymd) =>
+            fetch(`${ESPN_API}?dates=${ymd}`, {
+              method: 'GET',
+              cache: 'no-store',
+            })
+              .then((r) => (r.ok ? r.json() : null))
+              .catch(() => null)
+          )
         );
 
+        for (const extra of respostasExtras) {
+          if (Array.isArray(extra?.events)) {
+            todosEventosBrutos = [...todosEventosBrutos, ...extra.events];
+          }
+        }
+      }
+
+      const mapaUnicos = new Map<string, PartidaEspn>();
+      todosEventosBrutos.forEach((ev, idx) => {
+        const mapeado = mapearEventoEspnParaPartida(
+          ev,
+          idx,
+          nomeCampeonatoPadrao
+        );
+        if (mapeado && !mapaUnicos.has(mapeado.id)) {
+          mapaUnicos.set(mapeado.id, mapeado);
+        }
+      });
+
+      const todasMapeadas = Array.from(mapaUnicos.values());
+      const jogosAoVivo = todasMapeadas.filter((p) => p.aoVivo);
+      const proximosJogos = todasMapeadas.filter((p) => p.naoComecou);
+
+      // Se houver jogos ao vivo, exibe os ao vivo + próximos; se não houver, exibe APENAS a lista de próximos jogos da ESPN ("EM BREVE")
+      const listaPartidas =
+        jogosAoVivo.length > 0
+          ? [...jogosAoVivo, ...proximosJogos]
+          : proximosJogos;
+
+      // Verifica mudança real de placar em jogos AO VIVO para disparar Goal Alert ("GOOOL! Novo placar")
+      for (const item of listaPartidas) {
+        const placarAnterior = placaresAnterioresRef.current[item.id];
+        if (
+          item.aoVivo &&
+          placarAnterior &&
+          (placarAnterior.casa !== String(item.placarCasa) ||
+            placarAnterior.fora !== String(item.placarFora))
+        ) {
+          dispararAlertaGol({
+            id: `${item.id}_${Date.now()}`,
+            mensagem: `GOOOL! Novo placar: ${item.timeCasa} ${item.placarCasa} - ${item.placarFora} ${item.timeFora}`,
+            timeCasa: item.timeCasa,
+            timeFora: item.timeFora,
+            placarCasa: item.placarCasa,
+            placarFora: item.placarFora,
+            minuto: item.minuto,
+          });
+        }
+        placaresAnterioresRef.current[item.id] = {
+          casa: String(item.placarCasa),
+          fora: String(item.placarFora),
+        };
+      }
+
       setJogosEspn(listaPartidas);
+      setUltimaSincronizacao(
+        new Date().toLocaleTimeString('pt-BR', {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+        })
+      );
+      setSegundosParaAtualizar(30);
 
       setPartida((prev) => {
         if (listaPartidas.length === 0) return null;
         if (prev) {
           const atualizada = listaPartidas.find((p) => p.id === prev.id);
-          if (atualizada) {
-            if (
-              String(prev.placarCasa) !== String(atualizada.placarCasa) ||
-              String(prev.placarFora) !== String(atualizada.placarFora)
-            ) {
-              dispararAlertaGol({
-                id: `${atualizada.id}_${Date.now()}`,
-                mensagem: `GOOOL! Novo placar: ${atualizada.timeCasa} ${atualizada.placarCasa} - ${atualizada.placarFora} ${atualizada.timeFora}`,
-                timeCasa: atualizada.timeCasa,
-                timeFora: atualizada.timeFora,
-                placarCasa: atualizada.placarCasa,
-                placarFora: atualizada.placarFora,
-                minuto: atualizada.minuto,
-              });
-            }
-            return atualizada;
-          }
+          if (atualizada) return atualizada;
         }
         const primeiraAoVivo = listaPartidas.find((p) => p.aoVivo);
         return primeiraAoVivo || listaPartidas[0];
@@ -442,13 +520,19 @@ function BolaoLiveCardInner({
   // useEffect para fazer fetch na ESPN_API assim que o componente carregar + setInterval de 30s
   useEffect(() => {
     buscarJogosEspn();
-    const timer = window.setInterval(() => {
+    const timerPoll = window.setInterval(() => {
       buscarJogosEspn();
     }, 30000);
-    return () => window.clearInterval(timer);
+    const timerCountdown = window.setInterval(() => {
+      setSegundosParaAtualizar((prev) => (prev <= 1 ? 30 : prev - 1));
+    }, 1000);
+    return () => {
+      window.clearInterval(timerPoll);
+      window.clearInterval(timerCountdown);
+    };
   }, [buscarJogosEspn]);
 
-  // Salva e ativa a reprise imediatamente (tanto ao colar quanto ao clicar em Salvar Reprise)
+  // Salva e ativa a reprise imediatamente
   const salvarEAtivarReprise = useCallback(
     (
       urlBruta: string,
@@ -497,6 +581,7 @@ function BolaoLiveCardInner({
       }
 
       setRepriseSalva(dadosReprise);
+      setForcarModoEspn(false);
       setErroLogoCasa(false);
       setErroLogoFora(false);
       setApostaConfirmada(false);
@@ -647,6 +732,7 @@ function BolaoLiveCardInner({
       const atual = lerRepriseSalvaLocalStorage();
       setRepriseSalva(atual);
       if (atual) {
+        setForcarModoEspn(false);
         setInputYoutubeUrl(atual.youtubeUrl || '');
         setInputTimeCasa(atual.timeCasa || '');
         setInputTimeFora(atual.timeFora || '');
@@ -678,20 +764,24 @@ function BolaoLiveCardInner({
       // ignore
     }
     setRepriseSalva(null);
+    setForcarModoEspn(true);
     setInputYoutubeUrl('');
     setInputTimeCasa('');
     setInputTimeFora('');
     setErroAdm('');
-    setFeedbackAdm('🔴 Reprise removida! Exibindo jogos da ESPN.');
+    setFeedbackAdm('🔴 Reprise removida! Exibindo próximos jogos da ESPN.');
     setErroLogoCasa(false);
     setErroLogoFora(false);
   };
 
-  // Se tiver reprise salva no localStorage, ela tem prioridade sobre a API da ESPN
   const idRepriseSalva = repriseSalva
     ? extrairYoutubeID(repriseSalva.youtubeUrl)
     : null;
-  const modoRepriseAtivo = Boolean(repriseSalva && idRepriseSalva);
+  const modoRepriseAtivo = Boolean(
+    repriseSalva && idRepriseSalva && !forcarModoEspn
+  );
+
+  const temJogoAoVivoNaLista = jogosEspn.some((j) => j.aoVivo);
 
   const timeCasaExibido = modoRepriseAtivo
     ? repriseSalva!.timeCasa
@@ -701,10 +791,10 @@ function BolaoLiveCardInner({
     : partida?.timeFora || 'Time Fora';
   const logoCasaExibido = modoRepriseAtivo
     ? obterEscudoPorNome(repriseSalva!.timeCasa) || partida?.logoCasa || ''
-    : partida?.logoCasa || '';
+    : partida?.logoCasa || obterEscudoPorNome(partida?.timeCasa || '');
   const logoForaExibido = modoRepriseAtivo
     ? obterEscudoPorNome(repriseSalva!.timeFora) || partida?.logoFora || ''
-    : partida?.logoFora || '';
+    : partida?.logoFora || obterEscudoPorNome(partida?.timeFora || '');
 
   const siglaTime = (nome: string) =>
     (nome || '').replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase() || 'FC';
@@ -747,9 +837,9 @@ function BolaoLiveCardInner({
   };
 
   return (
-    <div className="w-full bg-[#0A0A0A] text-white border border-[#C41E3A] rounded-[16px] overflow-hidden shadow-[0_12px_35px_rgba(196,30,58,0.18)]">
-      {/* TOPO DO COMPONENTE COM BOTÃO PEQUENO "⚙️ ADM" */}
-      <div className="bg-[#0A0A0A] border-b border-[#222222] px-3.5 py-2 flex items-center justify-between gap-2">
+    <div className="w-full bg-[#0A0A0A] text-white border-2 border-[#C41E3A] rounded-[16px] overflow-hidden shadow-[0_12px_35px_rgba(196,30,58,0.22)]">
+      {/* TOPO DO COMPONENTE COM STATUS DA API ESPN E BOTÃO PEQUENO "⚙️ ADM" */}
+      <div className="bg-[#0A0A0A] border-b border-[#222222] px-3.5 py-2.5 flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
           {modoRepriseAtivo ? (
             <span className="bg-amber-400 text-black text-[10px] font-black px-2.5 py-0.5 rounded-full uppercase tracking-wider shrink-0">
@@ -761,55 +851,87 @@ function BolaoLiveCardInner({
               AO VIVO
             </span>
           ) : (
-            <span className="bg-[#111111] border border-[#C41E3A] text-white text-[10px] font-black px-2.5 py-0.5 rounded-full uppercase tracking-wider shrink-0">
-              ESPN
+            <span className="bg-amber-500 text-black text-[10px] font-black px-2.5 py-0.5 rounded-full uppercase tracking-wider shrink-0">
+              ⏳ EM BREVE
             </span>
           )}
           <span className="text-xs font-extrabold text-white truncate">
             {buscandoJogos && !modoRepriseAtivo && !partida
-              ? 'Buscando jogos ao vivo...'
-              : `${timeCasaExibido} x ${timeForaExibido}`}
+              ? 'Buscando jogos na ESPN...'
+              : partida
+              ? `${timeCasaExibido} x ${timeForaExibido}`
+              : 'Sem jogos ao vivo no momento'}
           </span>
         </div>
 
-        <button
-          type="button"
-          onClick={async () => {
-            const abrindo = !painelAdmAberto;
-            setPainelAdmAberto(abrindo);
-            setErroAdm('');
-            setFeedbackAdm('');
-            if (
-              abrindo &&
-              typeof navigator !== 'undefined' &&
-              navigator.clipboard?.readText
-            ) {
-              try {
-                const clip = await navigator.clipboard.readText();
-                if (clip && extrairYoutubeID(clip)) {
-                  salvarEAtivarReprise(
-                    clip.trim(),
-                    inputTimeCasa,
-                    inputTimeFora,
-                    true
-                  );
+        <div className="flex items-center gap-1.5 shrink-0">
+          {repriseSalva && idRepriseSalva && forcarModoEspn && (
+            <button
+              type="button"
+              onClick={() => setForcarModoEspn(false)}
+              className="text-[10px] font-black px-2 py-1 rounded-lg bg-amber-400 text-black cursor-pointer"
+              title="Voltar para a reprise salva"
+            >
+              📼 Ver Reprise
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={async () => {
+              const abrindo = !painelAdmAberto;
+              setPainelAdmAberto(abrindo);
+              setErroAdm('');
+              setFeedbackAdm('');
+              if (
+                abrindo &&
+                typeof navigator !== 'undefined' &&
+                navigator.clipboard?.readText
+              ) {
+                try {
+                  const clip = await navigator.clipboard.readText();
+                  if (clip && extrairYoutubeID(clip)) {
+                    salvarEAtivarReprise(
+                      clip.trim(),
+                      inputTimeCasa,
+                      inputTimeFora,
+                      true
+                    );
+                  }
+                } catch {
+                  // ignore clipboard permission on open
                 }
-              } catch {
-                // ignore clipboard permission on open
               }
-            }
-          }}
-          className={`text-[11px] font-extrabold px-2.5 py-1 rounded-lg border transition cursor-pointer shrink-0 flex items-center gap-1 ${
-            painelAdmAberto
-              ? 'bg-amber-400 text-black border-amber-300'
-              : 'bg-[#111111] hover:bg-zinc-800 text-amber-400 border-amber-400/60'
-          }`}
-          title="Abrir controle ADM de Reprise"
-        >
-          <span>⚙️</span>
-          <span>ADM</span>
-        </button>
+            }}
+            className={`text-[11px] font-extrabold px-2.5 py-1 rounded-lg border transition cursor-pointer shrink-0 flex items-center gap-1 ${
+              painelAdmAberto
+                ? 'bg-amber-400 text-black border-amber-300'
+                : 'bg-[#111111] hover:bg-zinc-800 text-amber-400 border-amber-400/60'
+            }`}
+            title="Abrir controle ADM de Reprise"
+          >
+            <span>⚙️</span>
+            <span>ADM</span>
+          </button>
+        </div>
       </div>
+
+      {/* AVISO QUANDO NÃO HÁ JOGOS AO VIVO NO MOMENTO */}
+      {!modoRepriseAtivo && !buscandoJogos && !temJogoAoVivoNaLista && (
+        <div className="bg-[#111111] border-b border-amber-500/40 px-3.5 py-2 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 text-[11px] font-bold text-amber-300">
+            <span>⏳</span>
+            <span>
+              Sem jogos ao vivo no momento • Exibindo os{' '}
+              <strong className="text-white uppercase">
+                Próximos Jogos da ESPN (EM BREVE)
+              </strong>
+            </span>
+          </div>
+          <span className="bg-amber-500/20 border border-amber-400/60 text-amber-300 text-[9px] font-black px-2 py-0.5 rounded uppercase shrink-0">
+            EM BREVE
+          </span>
+        </div>
+      )}
 
       {/* PAINEL ADM DE REPRISE POR CIMA (COM BORDER AMARELO) */}
       {painelAdmAberto && (
@@ -961,25 +1083,15 @@ function BolaoLiveCardInner({
                   onClick={handleLimparRepriseVoltarAoVivo}
                   className="w-full bg-[#0A0A0A] hover:bg-zinc-900 text-amber-400 border border-amber-400 font-black py-2.5 px-3 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition"
                 >
-                  🔴 Voltar ao Ao Vivo
+                  📅 Ver Próximos Jogos ESPN
                 </button>
               </div>
-
-              {modoRepriseAtivo && (
-                <button
-                  type="button"
-                  onClick={handleLimparRepriseVoltarAoVivo}
-                  className="w-full bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-700 font-bold py-2 px-3 rounded-lg text-[11px] uppercase cursor-pointer transition"
-                >
-                  🗑️ Limpar Reprise
-                </button>
-              )}
             </form>
           </div>
         </div>
       )}
 
-      {/* 1. ÁREA DO VÍDEO (w-full h-[210px]): REPRISE SALVA TEM PRIORIDADE SOBRE A API DA ESPN */}
+      {/* 1. ÁREA DO VÍDEO (w-full h-[210px]): REPRISE SALVA TEM PRIORIDADE SOBRE A CAPA DA ESPN */}
       <div className="relative w-full h-[210px] overflow-hidden bg-[#0A0A0A] border-b border-[#C41E3A]">
         {modoRepriseAtivo ? (
           <>
@@ -1007,11 +1119,11 @@ function BolaoLiveCardInner({
           <div className="w-full h-[210px] flex flex-col items-center justify-center bg-[#0A0A0A] gap-2.5 p-4 text-center">
             <div className="w-8 h-8 rounded-full border-2 border-[#C41E3A] border-t-transparent animate-spin" />
             <span className="text-xs sm:text-sm font-black uppercase tracking-wider text-white">
-              Buscando jogos ao vivo...
+              Buscando próximos jogos na ESPN...
             </span>
           </div>
         ) : (
-          /* CAPA DO JOGO COM IMAGEM DO ESTÁDIO + ESCUDOS DOS TIMES + BADGE AO VIVO PULSANTE */
+          /* CAPA DO CONFRONTO (SEM VÍDEO DEMO / SEM LOGO GG PLAY) */
           <div className="relative w-full h-[210px] flex flex-col justify-between p-3.5 select-none">
             <img
               src={CAPA_ESTADIO_TRANSMISSAO}
@@ -1020,7 +1132,7 @@ function BolaoLiveCardInner({
             />
             <div className="absolute inset-0 bg-gradient-to-t from-[#0A0A0A] via-[#0A0A0A]/65 to-black/80" />
 
-            {/* Topo sobre a capa: Badge AO VIVO vermelho pulsante se status for ao vivo */}
+            {/* Topo sobre a capa */}
             <div className="relative z-10 flex items-center justify-between gap-2">
               {partida?.aoVivo ? (
                 <span className="bg-[#C41E3A] text-white text-xs font-black px-3 py-1 rounded-full uppercase tracking-wider shadow-lg flex items-center gap-1.5 animate-pulse">
@@ -1028,10 +1140,8 @@ function BolaoLiveCardInner({
                   <span>{partida.status}</span>
                 </span>
               ) : (
-                <span className="bg-black/85 border border-[#C41E3A] text-white text-[11px] font-black px-3 py-1 rounded-full uppercase tracking-wider">
-                  {partida?.encerrado
-                    ? `ENCERRADO • ${partida.status}`
-                    : `HOJE • ${partida?.horario || '--:--'}`}
+                <span className="bg-amber-500 text-black text-[11px] font-black px-3 py-1 rounded-full uppercase tracking-wider shadow-lg">
+                  ⏳ EM BREVE • {partida?.dataFormatada} às {partida?.horario}
                 </span>
               )}
 
@@ -1040,14 +1150,14 @@ function BolaoLiveCardInner({
               </span>
             </div>
 
-            {/* Centro da Capa do Jogo: Confronto Visual com Logos da ESPN */}
+            {/* Centro da Capa do Jogo: Confronto Visual com Logos Reais da ESPN */}
             {partida ? (
-              <div className="relative z-10 flex items-center justify-center gap-5 sm:gap-8 my-auto">
+              <div className="relative z-10 flex items-center justify-center gap-4 sm:gap-7 my-auto">
                 <div className="flex flex-col items-center gap-1.5 w-28 text-center">
-                  <div className="w-16 h-16 rounded-full bg-black/80 border-2 border-[#C41E3A] p-2 flex items-center justify-center shadow-[0_0_25px_rgba(196,30,58,0.4)]">
-                    {!erroLogoCasa && partida.logoCasa ? (
+                  <div className="w-16 h-16 rounded-full bg-black/85 border-2 border-[#C41E3A] p-2 flex items-center justify-center shadow-[0_0_25px_rgba(196,30,58,0.45)]">
+                    {!erroLogoCasa && logoCasaExibido ? (
                       <img
-                        src={partida.logoCasa}
+                        src={logoCasaExibido}
                         alt={partida.timeCasa}
                         onError={() => setErroLogoCasa(true)}
                         className="w-full h-full object-contain"
@@ -1063,17 +1173,26 @@ function BolaoLiveCardInner({
                   </span>
                 </div>
 
-                <div className="flex flex-col items-center justify-center">
-                  <span className="bg-[#C41E3A] text-white text-xs font-black px-3 py-1 rounded-lg uppercase tracking-widest shadow-lg">
-                    VS
+                <div className="flex flex-col items-center justify-center gap-1">
+                  {partida.aoVivo ? (
+                    <span className="bg-[#C41E3A] text-white text-sm sm:text-base font-black px-3.5 py-1 rounded-xl uppercase tracking-widest shadow-lg font-mono">
+                      {partida.placarCasa} - {partida.placarFora}
+                    </span>
+                  ) : (
+                    <span className="bg-[#C41E3A] text-white text-xs sm:text-sm font-black px-3 py-1 rounded-xl uppercase tracking-wider shadow-lg">
+                      EM BREVE
+                    </span>
+                  )}
+                  <span className="text-[10px] font-black text-amber-300 uppercase">
+                    {partida.dataFormatada} • {partida.horario}
                   </span>
                 </div>
 
                 <div className="flex flex-col items-center gap-1.5 w-28 text-center">
-                  <div className="w-16 h-16 rounded-full bg-black/80 border-2 border-[#C41E3A] p-2 flex items-center justify-center shadow-[0_0_25px_rgba(196,30,58,0.4)]">
-                    {!erroLogoFora && partida.logoFora ? (
+                  <div className="w-16 h-16 rounded-full bg-black/85 border-2 border-[#C41E3A] p-2 flex items-center justify-center shadow-[0_0_25px_rgba(196,30,58,0.45)]">
+                    {!erroLogoFora && logoForaExibido ? (
                       <img
-                        src={partida.logoFora}
+                        src={logoForaExibido}
                         alt={partida.timeFora}
                         onError={() => setErroLogoFora(true)}
                         className="w-full h-full object-contain"
@@ -1090,18 +1209,21 @@ function BolaoLiveCardInner({
                 </div>
               </div>
             ) : (
-              <div className="relative z-10 my-auto text-center">
-                <p className="text-xs font-bold text-zinc-300">
-                  Nenhum confronto retornado pela ESPN no momento.
+              <div className="relative z-10 my-auto text-center space-y-1">
+                <p className="text-xs sm:text-sm font-black text-amber-400 uppercase">
+                  ⏳ Sem jogos disponíveis no momento
+                </p>
+                <p className="text-[11px] font-bold text-zinc-300">
+                  Novos confrontos da ESPN aparecerão aqui em breve.
                 </p>
               </div>
             )}
 
             {/* Rodapé da Capa */}
             <div className="relative z-10 flex items-center justify-between text-[10px] text-zinc-300 font-bold">
-              <span>⚽ Brasileirão Série A • ESPN API</span>
+              <span>⚽ {partida?.campeonato || 'Brasileirão Série A'} • ESPN</span>
               <span className="text-[#C41E3A] font-black uppercase">
-                Atualização a cada 30s
+                🔄 Atualiza em {segundosParaAtualizar}s
               </span>
             </div>
           </div>
@@ -1138,7 +1260,7 @@ function BolaoLiveCardInner({
       <div className="bg-[#111111] border-b border-[#222222] p-3.5 text-center">
         {buscandoJogos && !partida && !modoRepriseAtivo ? (
           <div className="py-3 text-xs font-bold text-zinc-300">
-            Buscando jogos ao vivo...
+            Buscando próximos jogos na ESPN...
           </div>
         ) : (
           <div className="flex items-center justify-between gap-2">
@@ -1163,8 +1285,8 @@ function BolaoLiveCardInner({
               </span>
             </div>
 
-            {/* Centro: placarCasa - placarFora em caixa vermelha #C41E3A (ou VS + horário se não começou) + status + estádio */}
-            <div className="flex flex-col items-center shrink-0 px-2 max-w-[175px]">
+            {/* Centro: se ao vivo mostra placar; se não começou mostra EM BREVE + data/horário */}
+            <div className="flex flex-col items-center shrink-0 px-2 max-w-[190px]">
               {modoRepriseAtivo ? (
                 <>
                   <div className="bg-[#C41E3A] text-white font-black text-base sm:text-lg px-4 py-1.5 rounded-xl tracking-wider shadow-md uppercase">
@@ -1177,13 +1299,13 @@ function BolaoLiveCardInner({
                     {partida?.estadio || 'Brasileirão Série A'}
                   </span>
                 </>
-              ) : partida?.naoComecou ? (
+              ) : partida?.aoVivo ? (
                 <>
-                  <div className="bg-[#C41E3A] text-white font-black text-lg sm:text-xl px-4 py-1 rounded-xl tracking-widest shadow-md">
-                    VS
+                  <div className="bg-[#C41E3A] text-white font-black text-xl sm:text-2xl px-4 py-1 rounded-xl tracking-widest shadow-md font-mono">
+                    {partida.placarCasa} - {partida.placarFora}
                   </div>
-                  <span className="text-[11px] text-white font-black uppercase tracking-wider mt-1">
-                    ⏰ {partida.horario}
+                  <span className="text-[10px] font-black uppercase tracking-wider mt-1 text-[#C41E3A] animate-pulse">
+                    {partida.status}
                   </span>
                   <span className="text-[10px] text-zinc-400 font-semibold truncate max-w-full mt-0.5">
                     {partida.estadio}
@@ -1191,17 +1313,12 @@ function BolaoLiveCardInner({
                 </>
               ) : (
                 <>
-                  <div className="bg-[#C41E3A] text-white font-black text-xl sm:text-2xl px-4 py-1 rounded-xl tracking-widest shadow-md font-mono">
-                    {partida?.placarCasa ?? 0} - {partida?.placarFora ?? 0}
+                  <div className="bg-[#C41E3A] text-white font-black text-sm sm:text-base px-3.5 py-1.5 rounded-xl tracking-wider shadow-md uppercase">
+                    ⏳ EM BREVE
                   </div>
-                  <span
-                    className={`text-[10px] font-black uppercase tracking-wider mt-1 ${
-                      partida?.aoVivo
-                        ? 'text-[#C41E3A] animate-pulse'
-                        : 'text-white/90'
-                    }`}
-                  >
-                    {partida?.status || 'AO VIVO'}
+                  <span className="text-[10px] text-amber-400 font-black uppercase tracking-wider mt-1">
+                    📅 {partida?.dataFormatada || '--/--'} às{' '}
+                    {partida?.horario || '--:--'}
                   </span>
                   <span className="text-[10px] text-zinc-400 font-semibold truncate max-w-full mt-0.5">
                     {partida?.estadio || 'Estádio Brasileirão'}
@@ -1234,8 +1351,8 @@ function BolaoLiveCardInner({
         )}
       </div>
 
-      {/* 2.5. MATCH SUMMARY (RESUMO DA PARTIDA ABAIXO DO PLACAR: ESTÁDIO, CAMPEONATO E MINUTO) */}
-      <div className="bg-[#0A0A0A] border-b border-[#222222] px-3.5 py-2.5">
+      {/* 2.5. MATCH SUMMARY (RESUMO DA PARTIDA ABAIXO DO PLACAR: ESTÁDIO, CAMPEONATO E STATUS/MINUTO) */}
+      <div className="bg-[#0A0A0A] border-b border-[#222222] px-3.5 py-2.5 space-y-2">
         <div className="grid grid-cols-3 gap-2 text-center">
           <div className="bg-[#111111] border border-[#222222] rounded-xl px-2 py-1.5 flex flex-col items-center justify-center min-w-0">
             <span className="text-[9px] font-bold uppercase tracking-wider text-zinc-400">
@@ -1257,54 +1374,77 @@ function BolaoLiveCardInner({
 
           <div className="bg-[#111111] border border-[#C41E3A]/60 rounded-xl px-2 py-1.5 flex flex-col items-center justify-center min-w-0">
             <span className="text-[9px] font-bold uppercase tracking-wider text-[#C41E3A]">
-              ⏱️ Minuto
+              ⏱️ Status / Horário
             </span>
-            <span className="text-[11px] font-black text-white truncate w-full mt-0.5">
+            <span className="text-[11px] font-black text-amber-300 truncate w-full mt-0.5">
               {modoRepriseAtivo
                 ? 'Reprise'
-                : partida?.minuto || partida?.status || '--'}
+                : partida?.aoVivo
+                ? partida.minuto
+                : `EM BREVE (${partida?.dataFormatada || ''} ${
+                    partida?.horario || ''
+                  })`}
             </span>
           </div>
+        </div>
+
+        <div className="flex items-center justify-between gap-2 text-[10px] text-zinc-400 px-0.5">
+          <span className="truncate">
+            🟢 ESPN API:{' '}
+            {ultimaSincronizacao
+              ? `Sincronizado às ${ultimaSincronizacao} (${segundosParaAtualizar}s)`
+              : 'Sincronizando...'}
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              setBuscandoJogos(true);
+              buscarJogosEspn();
+            }}
+            className="text-[10px] font-black text-[#C41E3A] hover:underline cursor-pointer shrink-0"
+          >
+            🔄 Atualizar ESPN
+          </button>
         </div>
       </div>
 
       {/* CONTEÚDO INTERNO DO CARD */}
       <div className="p-4 space-y-4">
-        {/* 3. LISTA DE JOGOS DA ESPN (VIRA OS CANAIS EMBAIXO DO VÍDEO) */}
+        {/* 3. LISTA DE PRÓXIMOS JOGOS / JOGOS AO VIVO DA ESPN */}
         <div className="space-y-2">
           <div className="flex items-center justify-between gap-2">
-            <span className="text-[11px] font-extrabold uppercase tracking-wider text-white">
-              ⚽ Jogos Brasileirão (ESPN)
+            <span className="text-[11px] font-extrabold uppercase tracking-wider text-white flex items-center gap-1.5">
+              <span>{temJogoAoVivoNaLista ? '🔴' : '📅'}</span>
+              <span>
+                {temJogoAoVivoNaLista
+                  ? `Jogos Ao Vivo na ESPN (${jogosEspn.length})`
+                  : `Próximos Jogos da ESPN • Em Breve (${jogosEspn.length})`}
+              </span>
             </span>
-            <button
-              type="button"
-              onClick={() => {
-                setBuscandoJogos(true);
-                buscarJogosEspn();
-              }}
-              className="text-[10px] font-bold text-[#C41E3A] hover:underline cursor-pointer"
-            >
-              🔄 Atualizar Placar
-            </button>
+            <span className="text-[10px] font-black text-amber-400 uppercase">
+              {temJogoAoVivoNaLista ? 'Ao Vivo' : '⏳ Em Breve'}
+            </span>
           </div>
 
           {buscandoJogos && jogosEspn.length === 0 ? (
             <div className="bg-[#111111] border border-[#222222] rounded-xl p-3 text-center text-xs text-zinc-300 font-bold">
-              Buscando jogos ao vivo...
+              Buscando próximos jogos na ESPN...
             </div>
           ) : jogosEspn.length === 0 ? (
-            <div className="bg-[#111111] border border-[#222222] rounded-xl p-3 text-center text-xs text-zinc-400">
-              Nenhum jogo encontrado no placar da ESPN no momento.
+            <div className="bg-[#111111] border border-[#222222] rounded-xl p-3 text-center text-xs text-amber-300 font-bold">
+              ⏳ Sem jogos disponíveis no momento — Novos jogos da ESPN em breve.
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-56 overflow-y-auto pr-0.5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-64 overflow-y-auto pr-0.5">
               {jogosEspn.map((item) => {
-                const selecionado = partida?.id === item.id;
+                const selecionado =
+                  !modoRepriseAtivo && partida?.id === item.id;
                 return (
                   <button
                     key={item.id}
                     type="button"
                     onClick={() => {
+                      setForcarModoEspn(true);
                       setPartida({
                         id: item.id,
                         timeCasa: item.timeCasa,
@@ -1317,6 +1457,7 @@ function BolaoLiveCardInner({
                         minuto: item.minuto,
                         campeonato: item.campeonato,
                         horario: item.horario,
+                        dataFormatada: item.dataFormatada,
                         estadio: item.estadio,
                         aoVivo: item.aoVivo,
                         naoComecou: item.naoComecou,
@@ -1344,13 +1485,13 @@ function BolaoLiveCardInner({
                           {siglaTime(item.timeCasa)}
                         </span>
                       )}
-                      <span className="truncate max-w-[68px]">
+                      <span className="truncate max-w-[65px]">
                         {item.timeCasa}
                       </span>
                       <span className="text-[10px] font-black opacity-80">
                         x
                       </span>
-                      <span className="truncate max-w-[68px]">
+                      <span className="truncate max-w-[65px]">
                         {item.timeFora}
                       </span>
                       {item.logoFora ? (
@@ -1367,20 +1508,26 @@ function BolaoLiveCardInner({
                     </div>
 
                     <span
-                      className={`text-[10px] font-black px-2 py-0.5 rounded shrink-0 flex items-center gap-1 ${
+                      className={`text-[9px] font-black px-2 py-0.5 rounded shrink-0 flex items-center gap-1 ${
                         selecionado
                           ? 'bg-black/40 text-white'
                           : item.aoVivo
                           ? 'bg-[#C41E3A] text-white animate-pulse'
-                          : 'bg-[#0A0A0A] text-zinc-300 border border-[#222222]'
+                          : 'bg-amber-500/20 text-amber-300 border border-amber-400/50'
                       }`}
                     >
-                      {item.aoVivo && (
-                        <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
+                      {item.aoVivo ? (
+                        <>
+                          <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
+                          <span>
+                            {item.placarCasa}-{item.placarFora} • {item.minuto}
+                          </span>
+                        </>
+                      ) : (
+                        <span>
+                          ⏳ EM BREVE • {item.dataFormatada} {item.horario}
+                        </span>
                       )}
-                      {item.naoComecou
-                        ? item.horario
-                        : `${item.placarCasa}-${item.placarFora} • ${item.status}`}
                     </span>
                   </button>
                 );
