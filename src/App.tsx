@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import logoOficial from './assets/images/bolao_elite_logo_1791164462566.jpg';
 import { PWAInstallButton } from './PWAInstallButton';
+import { BolaoLiveCard } from './BolaoLiveCard.jsx';
 import {
   db,
   auth,
@@ -4872,6 +4873,7 @@ export default function App() {
           <div className="text-zinc-600">© 2026 Bolões Elite • Todos os direitos reservados</div>
         </footer>
         <ModalAreaTransparencia />
+        <ModalPixDireto />
 
         {showTermosModal && (
           <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 text-left">
@@ -4949,268 +4951,294 @@ export default function App() {
   }
 
   // =========================================================================
-  // 2. CADASTRO / LOGIN DO JOGADOR
+  // 2. CADASTRO / LOGIN DO JOGADOR (LAYOUT ORGANIZADO E LIMPO)
   // =========================================================================
   if (page === "loginJogador") {
     return (
-      <div className="min-h-screen bg-[#0A0A0A] text-white p-6 max-w-md mx-auto flex flex-col justify-center">
-        <button
-          onClick={() => setPage("landing")}
-          className="text-zinc-400 hover:text-white text-xs mb-4 flex items-center gap-1 cursor-pointer w-fit"
-        >
-          ← Voltar
-        </button>
+      <div className="min-h-screen bg-[#0A0A0A] text-white p-4 sm:p-6 flex flex-col justify-center">
+        <div className="max-w-md mx-auto w-full space-y-4">
+          {/* Topo Organizado da Área de Login */}
+          <header className="flex items-center justify-between gap-3 bg-zinc-900/90 border border-zinc-800 px-4 py-3 rounded-2xl shadow-lg">
+            <div className="flex items-center gap-2.5">
+              <img src={logoBolao} alt="Logo Bolão Elite" className="w-9 h-9 object-contain rounded-lg border border-[#C41E3A]" />
+              <div>
+                <div className="text-[10px] font-black uppercase tracking-wider text-[#FF6B00]">
+                  Bolões Elite • Acesso Oficial
+                </div>
+                <h1 className="text-sm sm:text-base font-black text-white leading-tight">
+                  Área de Login do Jogador
+                </h1>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setPage("landing")}
+              className="bg-black hover:bg-zinc-800 border border-zinc-700 text-zinc-300 hover:text-white text-xs font-bold px-3 py-1.5 rounded-xl flex items-center gap-1 cursor-pointer transition shrink-0"
+            >
+              ← Voltar
+            </button>
+          </header>
 
-        <div className="flex items-center gap-3 mb-2">
-          <img src={logoBolao} alt="" className="w-10 h-10 object-contain rounded-lg" />
-          <h2 className="text-3xl font-black">Área do Jogador</h2>
-        </div>
-        <p className="text-xs text-zinc-400">
-          {abaLoginJogador === "entrar"
-            ? "Digite seu E-mail ou Chave PIX cadastrada para acessar sua conta."
-            : "Preencha seus dados para se cadastrar, apostar e receber o prêmio via PIX."}
-        </p>
-
-        {/* Seletor de Abas: Entrar (Já tenho login) vs Novo Cadastro */}
-        <div className="grid grid-cols-2 gap-2 bg-zinc-900 p-1.5 rounded-xl border border-zinc-800 mt-5">
-          <button
-            type="button"
-            onClick={() => {
-              setErroLoginJogador("");
-              setAbaLoginJogador("entrar");
-            }}
-            className={`py-2.5 px-3 rounded-lg text-xs font-black uppercase tracking-wider transition cursor-pointer flex items-center justify-center gap-1.5 ${
-              abaLoginJogador === "entrar"
-                ? "bg-[#FF6B00] text-black shadow-md"
-                : "text-zinc-400 hover:text-white"
-            }`}
+          {/* CARD DE LOGIN E CADASTRO DO JOGADOR */}
+          <div
+            id="card-formulario-login"
+            className="bg-zinc-900/90 border border-zinc-800 rounded-2xl p-5 sm:p-6 shadow-2xl space-y-5"
           >
-            <span>🔑</span> Já tenho Login
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setErroLoginJogador("");
-              setAbaLoginJogador("cadastro");
-            }}
-            className={`py-2.5 px-3 rounded-lg text-xs font-black uppercase tracking-wider transition cursor-pointer flex items-center justify-center gap-1.5 ${
-              abaLoginJogador === "cadastro"
-                ? "bg-[#FF6B00] text-black shadow-md"
-                : "text-zinc-400 hover:text-white"
-            }`}
-          >
-            <span>📝</span> Novo Cadastro
-          </button>
-        </div>
-
-        {abaLoginJogador === "entrar" ? (
-          <form
-            onSubmit={async (e) => {
-              e.preventDefault();
-              setErroLoginJogador("");
-              const termo = buscaLoginInput.trim().toLowerCase();
-              if (!termo) {
-                setErroLoginJogador("Digite seu E-mail ou Chave PIX para entrar.");
-                return;
-              }
-              let encontrado = jogadores.find(
-                (jg: any) =>
-                  (jg.email || "").trim().toLowerCase() === termo ||
-                  (jg.pix || "").trim().toLowerCase() === termo ||
-                  (jg.nome || "").trim().toLowerCase() === termo
-              );
-              if (!encontrado) {
-                encontrado = await buscarUsuarioNoSupabase(termo);
-              }
-              if (!encontrado) {
-                setErroLoginJogador(
-                  "Não encontramos um cadastro com esse E-mail ou Chave PIX no Supabase. Verifique os dados ou clique em 'Novo Cadastro'."
-                );
-                return;
-              }
-              setUser(encontrado);
-              localStorage.setItem("elite_user_v11", JSON.stringify(encontrado));
-              setPage("palpites");
-            }}
-            className="mt-6 space-y-4 bg-zinc-900/60 border border-zinc-800 p-5 rounded-2xl"
-          >
-            <div>
-              <label className="block text-[11px] text-zinc-400 uppercase font-bold mb-1">
-                Seu E-mail ou Chave PIX Cadastrada
-              </label>
-              <input
-                value={buscaLoginInput}
-                onChange={(e) => {
-                  setBuscaLoginInput(e.target.value);
-                  if (erroLoginJogador) setErroLoginJogador("");
-                }}
-                placeholder="Digite seu e-mail ou chave PIX..."
-                required
-                className="w-full bg-zinc-900 border border-zinc-800 p-3.5 rounded-xl outline-none focus:border-[#FF6B00] text-sm text-white"
-              />
+            <div className="border-b border-zinc-800 pb-3.5">
+              <span className="text-[10px] font-black uppercase tracking-wider text-[#FF6B00] block">
+                Identificação do Participante
+              </span>
+              <h2 className="text-2xl font-black text-white mt-0.5">
+                {abaLoginJogador === "entrar" ? "Entrar na Conta" : "Criar Novo Cadastro"}
+              </h2>
+              <p className="text-xs text-zinc-400 mt-1">
+                {abaLoginJogador === "entrar"
+                  ? "Digite seu E-mail ou Chave PIX cadastrada para entrar no painel do bolão."
+                  : "Preencha seus dados para se cadastrar, palpitar e receber prêmios via PIX."}
+              </p>
             </div>
 
-            {erroLoginJogador && (
-              <div className="bg-red-950/80 border border-red-700 text-red-200 p-3 rounded-xl text-xs space-y-2">
-                <div>⚠️ {erroLoginJogador}</div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setErroLoginJogador("");
-                    setAbaLoginJogador("cadastro");
-                  }}
-                  className="bg-[#FF6B00] text-black font-black px-3 py-1.5 rounded-lg text-[11px] cursor-pointer uppercase"
-                >
-                  Criar Meu Cadastro Agora
-                </button>
-              </div>
-            )}
-
-            <button
-              type="submit"
-              className="w-full bg-[#FF6B00] hover:bg-[#ff7b1a] text-black font-black py-4 rounded-xl cursor-pointer hover:scale-[1.01] transition shadow-lg shadow-[#FF6B00]/20 text-sm uppercase tracking-wider"
-            >
-              ENTRAR NA MINHA CONTA
-            </button>
-
-            <div className="text-center pt-1">
+            {/* Seletor de Abas: Entrar (Já tenho login) vs Novo Cadastro */}
+            <div className="grid grid-cols-2 gap-2 bg-black p-1.5 rounded-xl border border-zinc-800">
+              <button
+                type="button"
+                onClick={() => {
+                  setErroLoginJogador("");
+                  setAbaLoginJogador("entrar");
+                }}
+                className={`py-2.5 px-3 rounded-lg text-xs font-black uppercase tracking-wider transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                  abaLoginJogador === "entrar"
+                    ? "bg-[#FF6B00] text-black shadow-md"
+                    : "text-zinc-400 hover:text-white"
+                }`}
+              >
+                <span>🔑</span> Já tenho Login
+              </button>
               <button
                 type="button"
                 onClick={() => {
                   setErroLoginJogador("");
                   setAbaLoginJogador("cadastro");
                 }}
-                className="text-xs text-zinc-400 hover:text-[#FF6B00] underline cursor-pointer"
+                className={`py-2.5 px-3 rounded-lg text-xs font-black uppercase tracking-wider transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                  abaLoginJogador === "cadastro"
+                    ? "bg-[#FF6B00] text-black shadow-md"
+                    : "text-zinc-400 hover:text-white"
+                }`}
               >
-                Ainda não tem conta? Clique aqui para se cadastrar
+                <span>📝</span> Novo Cadastro
               </button>
             </div>
-          </form>
-        ) : (
-          <form
-            onSubmit={async (e) => {
-              e.preventDefault();
-              if (!aceitouTermos) {
-                alert("Você deve aceitar os Termos e Políticas do bolão!");
-                return;
-              }
-              const fd = new FormData(e.currentTarget);
-              const nome = (fd.get("nome") as string).trim();
-              const email = (fd.get("email") as string).trim().toLowerCase();
-              const pix = (fd.get("pix") as string).trim();
 
-              if (!nome || !email || !pix) return alert("Preencha todos os campos!");
-
-              const docId = getJogadorDocId(email);
-              const existente = jogadores.find((x: any) => (x.email || "").toLowerCase() === email);
-              const agora = Date.now();
-              const dataHoraCadastro = `${new Date().toLocaleDateString("pt-BR")} às ${new Date().toLocaleTimeString("pt-BR", {
-                hour: "2-digit",
-                minute: "2-digit",
-              })}`;
-
-              const novo = existente
-                ? {
-                    ...existente,
-                    id: docId,
-                    _docId: docId,
-                    nome,
-                    email,
-                    pix,
-                    dataCadastro: dataHoraCadastro,
-                    timestampCadastro: agora,
-                    _pendingSync: true,
+            {abaLoginJogador === "entrar" ? (
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  setErroLoginJogador("");
+                  const termo = buscaLoginInput.trim().toLowerCase();
+                  if (!termo) {
+                    setErroLoginJogador("Digite seu E-mail ou Chave PIX para entrar.");
+                    return;
                   }
-                : {
-                    id: docId,
-                    _docId: docId,
-                    nome,
-                    email,
-                    pix,
-                    pontos: 0,
-                    statusPagamento: "PENDENTE",
-                    status_pagamento: "pendente",
-                    aprovado: false,
-                    dataCadastro: dataHoraCadastro,
-                    timestampCadastro: agora,
-                    _pendingSync: true,
-                  };
-
-              clearJogadorDeletedLocal(email, docId);
-              const lista = [...jogadores.filter((x: any) => (x.email || "").toLowerCase() !== email), novo];
-              setJogadores(lista);
-              localStorage.setItem("elite_jogadores_v11", JSON.stringify(lista));
-              setUser(novo);
-              localStorage.setItem("elite_user_v11", JSON.stringify(novo));
-              await upsertJogadorInDb(novo, true).catch(() => {});
-
-              // Vai direto para a tela de palpites (o jogador só é cobrado após fazer suas apostas)
-              setPage("palpites");
-            }}
-            className="mt-6 space-y-4"
-          >
-            <div>
-              <label className="block text-[11px] text-zinc-400 uppercase font-bold mb-1">Seu Nome</label>
-              <input
-                name="nome"
-                placeholder="Ex: Carlos Silva"
-                required
-                className="w-full bg-zinc-900 border border-zinc-800 p-3.5 rounded-xl outline-none focus:border-[#FF6B00] text-sm text-white"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] text-zinc-400 uppercase font-bold mb-1">Seu E-mail</label>
-              <input
-                name="email"
-                type="email"
-                defaultValue={buscaLoginInput.includes("@") ? buscaLoginInput : ""}
-                placeholder="carlos@gmail.com"
-                required
-                className="w-full bg-zinc-900 border border-zinc-800 p-3.5 rounded-xl outline-none focus:border-[#FF6B00] text-sm text-white"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] text-zinc-400 uppercase font-bold mb-1">Chave PIX (Para receber)</label>
-              <input
-                name="pix"
-                placeholder="CPF, Telefone ou E-mail"
-                required
-                className="w-full bg-zinc-900 border border-zinc-800 p-3.5 rounded-xl outline-none focus:border-[#FF6B00] text-sm text-white font-mono"
-              />
-            </div>
-
-            <div className="bg-zinc-950 p-4 rounded-xl border border-zinc-800 space-y-2">
-              <label className="flex items-start gap-2.5 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={aceitouTermos}
-                  onChange={(e) => setAceitouTermos(e.target.checked)}
-                  className="mt-1 w-4 h-4 rounded accent-[#FF6B00] cursor-pointer"
-                />
-                <span className="text-xs text-zinc-300 leading-snug">
-                  Li e concordo com os Termos de Uso e Regulamento - Elite do Bolão.
-                </span>
-              </label>
-              <button
-                type="button"
-                onClick={() => setShowTermosModal(true)}
-                className="text-[11px] text-[#FF6B00] hover:underline font-bold block ml-6 cursor-pointer"
+                  let encontrado = jogadores.find(
+                    (jg: any) =>
+                      (jg.email || "").trim().toLowerCase() === termo ||
+                      (jg.pix || "").trim().toLowerCase() === termo ||
+                      (jg.nome || "").trim().toLowerCase() === termo
+                  );
+                  if (!encontrado) {
+                    encontrado = await buscarUsuarioNoSupabase(termo);
+                  }
+                  if (!encontrado) {
+                    setErroLoginJogador(
+                      "Não encontramos um cadastro com esse E-mail ou Chave PIX no Supabase. Verifique os dados ou clique em 'Novo Cadastro'."
+                    );
+                    return;
+                  }
+                  setUser(encontrado);
+                  localStorage.setItem("elite_user_v11", JSON.stringify(encontrado));
+                  setPage("palpites");
+                }}
+                className="space-y-4 bg-black/60 border border-zinc-800 p-4 rounded-2xl"
               >
-                📄 Ler Termos de Uso e Regulamento Atualizado
-              </button>
-            </div>
+                <div>
+                  <label className="block text-[11px] text-zinc-400 uppercase font-bold mb-1.5">
+                    Seu E-mail ou Chave PIX Cadastrada
+                  </label>
+                  <input
+                    value={buscaLoginInput}
+                    onChange={(e) => {
+                      setBuscaLoginInput(e.target.value);
+                      if (erroLoginJogador) setErroLoginJogador("");
+                    }}
+                    placeholder="Digite seu e-mail ou chave PIX..."
+                    required
+                    className="w-full bg-zinc-900 border border-zinc-800 p-3.5 rounded-xl outline-none focus:border-[#FF6B00] text-sm text-white"
+                  />
+                </div>
 
-            <button
-              type="submit"
-              disabled={!aceitouTermos}
-              className="w-full bg-[#FF6B00] disabled:bg-zinc-800 disabled:text-zinc-500 disabled:cursor-not-allowed text-black font-black py-4 rounded-xl cursor-pointer hover:scale-[1.01] transition shadow-lg shadow-[#FF6B00]/20 text-sm uppercase tracking-wider"
-            >
-              CADASTRAR E IR PARA AS APOSTAS
-            </button>
-          </form>
-        )}
+                {erroLoginJogador && (
+                  <div className="bg-red-950/80 border border-red-700 text-red-200 p-3 rounded-xl text-xs space-y-2">
+                    <div>⚠️ {erroLoginJogador}</div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setErroLoginJogador("");
+                        setAbaLoginJogador("cadastro");
+                      }}
+                      className="bg-[#FF6B00] text-black font-black px-3 py-1.5 rounded-lg text-[11px] cursor-pointer uppercase"
+                    >
+                      Criar Meu Cadastro Agora
+                    </button>
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  className="w-full bg-[#FF6B00] hover:bg-[#ff7b1a] text-black font-black py-4 rounded-xl cursor-pointer hover:scale-[1.01] transition shadow-lg shadow-[#FF6B00]/20 text-sm uppercase tracking-wider"
+                >
+                  ENTRAR NA MINHA CONTA
+                </button>
+
+                <div className="text-center pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setErroLoginJogador("");
+                      setAbaLoginJogador("cadastro");
+                    }}
+                    className="text-xs text-zinc-400 hover:text-[#FF6B00] underline cursor-pointer"
+                  >
+                    Ainda não tem conta? Clique aqui para se cadastrar
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  if (!aceitouTermos) {
+                    alert("Você deve aceitar os Termos e Políticas do bolão!");
+                    return;
+                  }
+                  const fd = new FormData(e.currentTarget);
+                  const nome = (fd.get("nome") as string).trim();
+                  const email = (fd.get("email") as string).trim().toLowerCase();
+                  const pix = (fd.get("pix") as string).trim();
+
+                  if (!nome || !email || !pix) return alert("Preencha todos os campos!");
+
+                  const docId = getJogadorDocId(email);
+                  const existente = jogadores.find((x: any) => (x.email || "").toLowerCase() === email);
+                  const agora = Date.now();
+                  const dataHoraCadastro = `${new Date().toLocaleDateString("pt-BR")} às ${new Date().toLocaleTimeString("pt-BR", {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}`;
+
+                  const novo = existente
+                    ? {
+                        ...existente,
+                        id: docId,
+                        _docId: docId,
+                        nome,
+                        email,
+                        pix,
+                        dataCadastro: dataHoraCadastro,
+                        timestampCadastro: agora,
+                        _pendingSync: true,
+                      }
+                    : {
+                        id: docId,
+                        _docId: docId,
+                        nome,
+                        email,
+                        pix,
+                        pontos: 0,
+                        statusPagamento: "PENDENTE",
+                        status_pagamento: "pendente",
+                        aprovado: false,
+                        dataCadastro: dataHoraCadastro,
+                        timestampCadastro: agora,
+                        _pendingSync: true,
+                      };
+
+                  clearJogadorDeletedLocal(email, docId);
+                  const lista = [...jogadores.filter((x: any) => (x.email || "").toLowerCase() !== email), novo];
+                  setJogadores(lista);
+                  localStorage.setItem("elite_jogadores_v11", JSON.stringify(lista));
+                  setUser(novo);
+                  localStorage.setItem("elite_user_v11", JSON.stringify(novo));
+                  await upsertJogadorInDb(novo, true).catch(() => {});
+
+                  setPage("palpites");
+                }}
+                className="space-y-3.5 bg-black/60 border border-zinc-800 p-4 rounded-2xl"
+              >
+                <div>
+                  <label className="block text-[11px] text-zinc-400 uppercase font-bold mb-1">Seu Nome</label>
+                  <input
+                    name="nome"
+                    placeholder="Ex: Carlos Silva"
+                    required
+                    className="w-full bg-zinc-900 border border-zinc-800 p-3 rounded-xl outline-none focus:border-[#FF6B00] text-sm text-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-zinc-400 uppercase font-bold mb-1">Seu E-mail</label>
+                  <input
+                    name="email"
+                    type="email"
+                    defaultValue={buscaLoginInput.includes("@") ? buscaLoginInput : ""}
+                    placeholder="carlos@gmail.com"
+                    required
+                    className="w-full bg-zinc-900 border border-zinc-800 p-3 rounded-xl outline-none focus:border-[#FF6B00] text-sm text-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-zinc-400 uppercase font-bold mb-1">Chave PIX (Para receber)</label>
+                  <input
+                    name="pix"
+                    placeholder="CPF, Telefone ou E-mail"
+                    required
+                    className="w-full bg-zinc-900 border border-zinc-800 p-3 rounded-xl outline-none focus:border-[#FF6B00] text-sm text-white font-mono"
+                  />
+                </div>
+
+                <div className="bg-zinc-950 p-3.5 rounded-xl border border-zinc-800 space-y-2">
+                  <label className="flex items-start gap-2.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={aceitouTermos}
+                      onChange={(e) => setAceitouTermos(e.target.checked)}
+                      className="mt-1 w-4 h-4 rounded accent-[#FF6B00] cursor-pointer"
+                    />
+                    <span className="text-xs text-zinc-300 leading-snug">
+                      Li e concordo com os Termos de Uso e Regulamento - Elite do Bolão.
+                    </span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setShowTermosModal(true)}
+                    className="text-[11px] text-[#FF6B00] hover:underline font-bold block ml-6 cursor-pointer"
+                  >
+                    📄 Ler Termos de Uso e Regulamento Atualizado
+                  </button>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={!aceitouTermos}
+                  className="w-full bg-[#FF6B00] disabled:bg-zinc-800 disabled:text-zinc-500 disabled:cursor-not-allowed text-black font-black py-4 rounded-xl cursor-pointer hover:scale-[1.01] transition shadow-lg shadow-[#FF6B00]/20 text-sm uppercase tracking-wider"
+                >
+                  CADASTRAR E IR PARA AS APOSTAS
+                </button>
+              </form>
+            )}
+          </div>
+        </div>
 
         {showTermosModal && (
           <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
@@ -8061,32 +8089,75 @@ export default function App() {
   }
 
   // =========================================================================
-  // 5. TELA DE APOSTAS DO JOGADOR (SEM PLACAR - QUEM VENCE OU EMPATE)
+  // 5. TELA DE APOSTAS DO JOGADOR (ESTRUTURADA E ORGANIZADA COM PLAYER AO VIVO)
   // =========================================================================
   if (page === "palpites") {
+    const rolarParaSecao = (id: string) => {
+      const el = document.getElementById(id);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+    };
+
     return (
-      <div className="min-h-screen bg-[#0A0A0A] text-white p-4 pb-32 max-w-xl mx-auto">
-        <div className="flex justify-between items-center border-b border-zinc-900 pb-3">
-          <div className="flex items-center gap-3">
-            <img src={logoBolao} alt="" className="w-9 h-9 object-contain rounded-lg" />
-            <div>
-              <div className="text-[10px] text-zinc-500 uppercase font-bold">Jogador Conectado</div>
-              <h2 className="font-black text-lg text-white">{user?.nome || "Convidado"}</h2>
+      <div className="min-h-screen bg-[#0A0A0A] text-white p-4 sm:p-6 pb-32 max-w-5xl mx-auto">
+        {/* TOPO ESTRUTURADO DA ÁREA LOGADA DO JOGADOR */}
+        <header className="bg-zinc-900/95 border border-zinc-800 rounded-2xl p-4 space-y-3.5 shadow-xl">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 pb-3">
+            <div className="flex items-center gap-3">
+              <img src={logoBolao} alt="Logo Bolão Elite" className="w-10 h-10 object-contain rounded-xl border border-[#C41E3A]" />
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-zinc-400 uppercase font-bold tracking-wider">
+                    Área Logada • Jogador Conectado
+                  </span>
+                  <span
+                    className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${
+                      isMinhaApostaAprovada
+                        ? "bg-green-500 text-black"
+                        : isDepositoEmAnalise
+                        ? "bg-amber-400 text-black"
+                        : "bg-zinc-800 text-zinc-300"
+                    }`}
+                  >
+                    {isMinhaApostaAprovada ? "✓ Pago" : isDepositoEmAnalise ? "⏳ Em Análise" : "Aberto"}
+                  </span>
+                </div>
+                <h2 className="font-black text-lg sm:text-xl text-white leading-tight">
+                  {user?.nome || "Convidado"}
+                </h2>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <PWAInstallButton variant="compact" logoSrc={logoBolao} />
+              <button
+                onClick={() => {
+                  localStorage.removeItem("elite_user_v11");
+                  localStorage.removeItem("elite_escolhas_temp_v11");
+                  setEscolhasTemp({});
+                  setUser(null);
+                  setPage("landing");
+                }}
+                className="text-xs bg-black hover:bg-zinc-800 border border-zinc-700 hover:border-zinc-500 text-zinc-200 font-bold px-3 py-2 rounded-xl cursor-pointer transition"
+              >
+                Sair da Conta
+              </button>
             </div>
           </div>
-          <div className="flex flex-wrap items-center justify-end gap-1.5">
+
+          {/* Grade Organizada de Ações Principais */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             <button
               type="button"
               onClick={iniciarNovaAposta}
-              className="text-xs bg-green-600 hover:bg-green-500 text-black px-2.5 py-1.5 rounded-lg cursor-pointer font-black transition flex items-center gap-1 border border-green-400 shadow-md shadow-green-600/20"
+              className="text-xs bg-green-600 hover:bg-green-500 text-black px-3 py-2.5 rounded-xl cursor-pointer font-black transition flex items-center justify-center gap-1.5 border border-green-400 shadow-md shadow-green-600/20"
               title="Limpar seleção e fazer uma nova aposta"
             >
-              <span>➕</span> Fazer Nova Aposta
+              <span>➕</span> Nova Aposta
             </button>
             <button
               type="button"
               onClick={() => setPage("minhasApostas")}
-              className={`text-xs px-2.5 py-1.5 rounded-lg cursor-pointer font-black transition flex items-center gap-1 border ${
+              className={`text-xs px-3 py-2.5 rounded-xl cursor-pointer font-black transition flex items-center justify-center gap-1.5 border ${
                 isMinhaApostaAprovada
                   ? "bg-green-600 hover:bg-green-500 text-black border-green-400 shadow-md shadow-green-600/20"
                   : "bg-[#FF6B00] hover:bg-[#ff7b1a] text-black border-[#FF6B00]"
@@ -8098,34 +8169,61 @@ export default function App() {
             <button
               type="button"
               onClick={() => setPastaComprovanteAberta(true)}
-              className="text-xs bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-300 hover:text-white px-2.5 py-1.5 rounded-lg cursor-pointer font-bold transition flex items-center gap-1"
+              className="text-xs bg-black hover:bg-zinc-800 border border-zinc-700 text-zinc-200 hover:text-white px-3 py-2.5 rounded-xl cursor-pointer font-bold transition flex items-center justify-center gap-1.5"
               title="Abrir pasta de comprovantes"
             >
               <span>📁</span> Comprovantes
             </button>
-            <PWAInstallButton variant="compact" logoSrc={logoBolao} />
             <button
+              type="button"
               onClick={() => setPage("classificacao")}
-              className="text-xs bg-[#FF6B00]/10 border border-[#FF6B00]/40 text-[#FF6B00] hover:bg-[#FF6B00]/20 px-2.5 py-1.5 rounded-lg cursor-pointer font-bold transition flex items-center gap-1"
+              className="text-xs bg-[#FF6B00]/15 border border-[#FF6B00]/50 text-[#FF6B00] hover:bg-[#FF6B00]/25 px-3 py-2.5 rounded-xl cursor-pointer font-black transition flex items-center justify-center gap-1.5"
             >
-              <span>🏆</span> Ranking
-            </button>
-            <button
-              onClick={() => {
-                localStorage.removeItem("elite_user_v11");
-                localStorage.removeItem("elite_escolhas_temp_v11");
-                setEscolhasTemp({});
-                setUser(null);
-                setPage("landing");
-              }}
-              className="text-xs border border-zinc-800 hover:border-zinc-600 px-2.5 py-1.5 rounded cursor-pointer"
-            >
-              Sair
+              <span>🏆</span> Ranking Geral
             </button>
           </div>
-        </div>
 
-        {/* NOTIFICAÇÃO OFICIAL DE PAGAMENTO APROVADO */}
+          {/* Barra de Atalhos Rápidos das Seções */}
+          <div className="flex items-center gap-2 overflow-x-auto pt-1 pb-0.5 text-[11px]">
+            <button
+              type="button"
+              onClick={() => rolarParaSecao("secao-live-player")}
+              className="bg-[#C41E3A] hover:bg-[#a81830] text-white font-extrabold px-3 py-1.5 rounded-lg shrink-0 cursor-pointer transition"
+            >
+              📺 Player Ao Vivo
+            </button>
+            <button
+              type="button"
+              onClick={() => rolarParaSecao("secao-jogos-rodada")}
+              className="bg-black hover:bg-zinc-800 border border-zinc-700 text-zinc-200 font-bold px-3 py-1.5 rounded-lg shrink-0 cursor-pointer transition"
+            >
+              ⚽ Jogos da Rodada ({jogosPublicados.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => rolarParaSecao("secao-pagamento-bolao")}
+              className="bg-black hover:bg-zinc-800 border border-zinc-700 text-zinc-200 font-bold px-3 py-1.5 rounded-lg shrink-0 cursor-pointer transition"
+            >
+              💠 Pagamento PIX
+            </button>
+            <button
+              type="button"
+              onClick={() => rolarParaSecao("secao-depositos-rodada")}
+              className="bg-black hover:bg-zinc-800 border border-zinc-700 text-zinc-200 font-bold px-3 py-1.5 rounded-lg shrink-0 cursor-pointer transition"
+            >
+              💰 Depósitos
+            </button>
+            <button
+              type="button"
+              onClick={() => rolarParaSecao("secao-transparencia-rodada")}
+              className="bg-black hover:bg-zinc-800 border border-zinc-700 text-zinc-200 font-bold px-3 py-1.5 rounded-lg shrink-0 cursor-pointer transition"
+            >
+              🛡️ Transparência
+            </button>
+          </div>
+        </header>
+
+        {/* NOTIFICAÇÃO OFICIAL DE PAGAMENTO APROVADO / EM ANÁLISE */}
         {isMinhaApostaAprovada ? (
           <div className="mt-4 bg-gradient-to-r from-green-950 via-zinc-900 to-black border-2 border-green-500/80 text-green-300 p-4 rounded-2xl shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fade-in">
             <div className="flex items-center gap-3">
@@ -8190,66 +8288,101 @@ export default function App() {
           </div>
         ) : null}
 
-        <div className="mt-4 bg-[#FF6B00] text-black p-4 rounded-xl shadow-lg">
-          <div className="flex justify-between items-center">
-            <div>
-              <div className="text-xs font-bold uppercase tracking-wider">Valor do Bolão</div>
-              <div className="text-3xl font-black">R$ {config.valor}</div>
-            </div>
-            <div className="text-right">
-              <span className="text-[10px] bg-black text-[#FF6B00] font-black px-2 py-0.5 rounded">
-                80% EM PRÊMIOS
-              </span>
-              <div className="text-[10px] font-bold text-black/70 mt-1">1º 50% • 2º 30% • 3º 20%</div>
-            </div>
-          </div>
-          <div className="text-xs mt-2 pt-2 border-t border-black/20">
-            Chave PIX: <b>{config.pixAdm}</b>
-          </div>
-        </div>
-
-        {/* Contabilizador de Depósito em Tempo Real na Área do Jogador */}
-        <ContabilizadorDepositosJogador mostrarBotaoDepositar={true} />
-
-        {/* Área de Transparência em Tempo Real (Comprovantes de Premiação enviados pelo ADM) */}
-        <PainelTransparenciaJogadores />
-
-        {/* Área Minhas Apostas (exibida automaticamente quando o jogador já selecionou seus times / ADM aprovou) */}
-        {meusPalpitesSalvos.length > 0 && !modoNovaAposta && <AreaMinhasApostas modoCompacto={true} />}
-
-        {/* Banner de Modo Nova Aposta */}
-        {modoNovaAposta && (
-          <div className="mt-4 bg-gradient-to-r from-[#FF6B00]/25 via-zinc-900 to-black border-2 border-[#FF6B00] p-4 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xl">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-[#FF6B00] text-black font-black flex items-center justify-center text-xl shrink-0">
-                ➕
-              </div>
-              <div>
-                <div className="text-[10px] font-black uppercase tracking-wider text-[#FF6B00]">
-                  Nova Aposta Iniciada
-                </div>
-                <div className="text-sm font-black text-white">
-                  Selecione seus times nos confrontos abaixo!
-                </div>
-                <p className="text-[11px] text-zinc-300">
-                  As marcações foram limpas para você montar sua nova aposta e confirmar no PIX.
-                </p>
-              </div>
-            </div>
-            {meusPalpitesSalvos.length > 0 && (
-              <button
-                type="button"
-                onClick={() => setModoNovaAposta(false)}
-                className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold px-3 py-2 rounded-xl cursor-pointer shrink-0 border border-zinc-700 transition"
-              >
-                Cancelar / Manter Anterior
-              </button>
-            )}
-          </div>
-        )}
-
-        {/* CRONÔMETRO REGRESSIVO HH:MM:SS (DOURADO E VERDE - BOLÃO ELITE • ATUALIZA A CADA 1S) */}
+        {/* CRONÔMETRO REGRESSIVO HH:MM:SS NO TOPO */}
         <CountdownTimerBolaoElite compacto={false} />
+
+        {/* LAYOUT EM GRID ORGANIZADO (2 COLUNAS NO DESKTOP / SEÇÕES LÓGICAS NO MOBILE) */}
+        <div className="mt-5 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+          {/* COLUNA ESQUERDA (5 COLUNAS): PLAYER DE VÍDEO AO VIVO + RESUMO FINANCEIRO */}
+          <div className="lg:col-span-5 space-y-4">
+            {/* 1. CENTRAL DE TRANSMISSÃO AO VIVO (BolaoLiveCard.jsx) */}
+            <div id="secao-live-player" className="space-y-2.5">
+              <div className="bg-zinc-900/95 border border-[#C41E3A] rounded-2xl px-4 py-3 flex items-center justify-between gap-2">
+                <div>
+                  <span className="text-[10px] font-black uppercase tracking-wider text-[#C41E3A] block">
+                    Transmissão Oficial no App
+                  </span>
+                  <h3 className="text-sm font-black text-white">
+                    📺 Jogo Ao Vivo & Palpite Rápido
+                  </h3>
+                </div>
+                <span className="bg-[#C41E3A] text-white text-[10px] font-extrabold px-2.5 py-1 rounded-lg uppercase">
+                  Ao Vivo
+                </span>
+              </div>
+
+              <BolaoLiveCard
+                onConfirmarPalpite={() => {
+                  abrirModalPixDireto();
+                }}
+              />
+            </div>
+
+            {/* 2. CARD RESUMO VALOR DO BOLÃO & PIX */}
+            <div className="bg-[#FF6B00] text-black p-4 rounded-2xl shadow-lg">
+              <div className="flex justify-between items-center">
+                <div>
+                  <div className="text-xs font-bold uppercase tracking-wider">Valor do Bolão</div>
+                  <div className="text-3xl font-black">R$ {config.valor}</div>
+                </div>
+                <div className="text-right">
+                  <span className="text-[10px] bg-black text-[#FF6B00] font-black px-2 py-0.5 rounded">
+                    80% EM PRÊMIOS
+                  </span>
+                  <div className="text-[10px] font-bold text-black/75 mt-1">1º 50% • 2º 30% • 3º 20%</div>
+                </div>
+              </div>
+              <div className="text-xs mt-2 pt-2 border-t border-black/20 break-all">
+                Chave PIX: <b>{config.pixAdm}</b>
+              </div>
+            </div>
+
+            {/* 3. CONTABILIZADOR DE DEPÓSITO EM TEMPO REAL */}
+            <div id="secao-depositos-rodada">
+              <ContabilizadorDepositosJogador mostrarBotaoDepositar={true} />
+            </div>
+
+            {/* 4. ÁREA DE TRANSPARÊNCIA EM TEMPO REAL */}
+            <div id="secao-transparencia-rodada">
+              <PainelTransparenciaJogadores />
+            </div>
+          </div>
+
+          {/* COLUNA DIREITA (7 COLUNAS): CONFRONTOS DA RODADA, MINHAS APOSTAS & PAGAMENTO */}
+          <div className="lg:col-span-7 space-y-4">
+            {/* Área Minhas Apostas (exibida automaticamente quando o jogador já selecionou seus times / ADM aprovou) */}
+            {meusPalpitesSalvos.length > 0 && !modoNovaAposta && <AreaMinhasApostas modoCompacto={true} />}
+
+            {/* Banner de Modo Nova Aposta */}
+            {modoNovaAposta && (
+              <div className="bg-gradient-to-r from-[#FF6B00]/25 via-zinc-900 to-black border-2 border-[#FF6B00] p-4 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xl">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-[#FF6B00] text-black font-black flex items-center justify-center text-xl shrink-0">
+                    ➕
+                  </div>
+                  <div>
+                    <div className="text-[10px] font-black uppercase tracking-wider text-[#FF6B00]">
+                      Nova Aposta Iniciada
+                    </div>
+                    <div className="text-sm font-black text-white">
+                      Selecione seus times nos confrontos abaixo!
+                    </div>
+                    <p className="text-[11px] text-zinc-300">
+                      As marcações foram limpas para você montar sua nova aposta e confirmar no PIX.
+                    </p>
+                  </div>
+                </div>
+                {meusPalpitesSalvos.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setModoNovaAposta(false)}
+                    className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold px-3 py-2 rounded-xl cursor-pointer shrink-0 border border-zinc-700 transition"
+                  >
+                    Cancelar / Manter Anterior
+                  </button>
+                )}
+              </div>
+            )}
 
         {/* AVISO E BLOQUEIO QUANDO O PRIMEIRO JOGO DO BOLÃO JÁ COMEÇOU */}
         {primeiroJogoDoBolaoComecou && (
@@ -8712,7 +8845,9 @@ export default function App() {
             )}
 
             {/* 2 BOTÕES DE PAGAMENTO LADO A LADO EM CAIXAS SEPARADAS */}
-            <BotoesPagamentoDuplo validarPalpitesAntes={true} />
+            <div id="secao-pagamento-bolao">
+              <BotoesPagamentoDuplo validarPalpitesAntes={true} />
+            </div>
 
             {meusPalpitesSalvos.length > 0 && !modoNovaAposta && (
               <button
@@ -8725,6 +8860,8 @@ export default function App() {
             )}
           </div>
         )}
+          </div>
+        </div>
 
         {/* MODAL: PASTA DO JOGADOR - COMPROVANTE DE PAGAMENTO */}
         {pastaComprovanteAberta && (
