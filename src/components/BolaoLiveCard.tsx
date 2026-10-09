@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   buscarJogosRodadaEspn,
   getHojeBrasilISO,
@@ -51,7 +51,7 @@ const STORAGE_KEY_REPRISE = 'bolao_reprise_atual';
 
 export function extrairYoutubeID(url: string): string | null {
   if (!url || typeof url !== 'string') return null;
-  const limpo = url.trim();
+  let limpo = url.trim();
   if (!limpo) return null;
 
   // Caso o usuário tenha colado diretamente o ID de 11 caracteres
@@ -59,14 +59,48 @@ export function extrairYoutubeID(url: string): string | null {
     return limpo;
   }
 
+  // Caso tenha colado código <iframe src="..."> ou texto compartilhado com link no meio
+  const srcMatch = limpo.match(/src=["']([^"']+)["']/i);
+  if (srcMatch && srcMatch[1]) {
+    limpo = srcMatch[1].trim();
+  } else {
+    const urlNoTexto = limpo.match(/https?:\/\/[^\s"'<>]+/i);
+    if (urlNoTexto && urlNoTexto[0]) {
+      limpo = urlNoTexto[0].trim();
+    }
+  }
+
+  try {
+    const decodificado = decodeURIComponent(limpo);
+    limpo = decodificado;
+  } catch {
+    // ignore decode errors
+  }
+
+  // Tentativa via URL API para capturar ?v=ID em qualquer posição da query string
+  try {
+    const urlComProtocolo = /^https?:\/\//i.test(limpo)
+      ? limpo
+      : `https://${limpo}`;
+    const parsedUrl = new URL(urlComProtocolo);
+    const vParam = parsedUrl.searchParams.get('v') || parsedUrl.searchParams.get('vi');
+    if (vParam && /^[a-zA-Z0-9_-]{11}$/.test(vParam.slice(0, 11))) {
+      return vParam.slice(0, 11);
+    }
+  } catch {
+    // fallback para regex
+  }
+
   // Formatos: youtube.com/watch?v=ID, youtu.be/ID, youtube.com/live/ID, youtube.com/embed/ID, youtube.com/shorts/ID
   const padroes = [
-    /(?:youtube\.com\/watch\?.*v=)([a-zA-Z0-9_-]{11})/,
+    /(?:[?&]v=)([a-zA-Z0-9_-]{11})/,
     /(?:youtu\.be\/)([a-zA-Z0-9_-]{11})/,
     /(?:youtube\.com\/live\/)([a-zA-Z0-9_-]{11})/,
-    /(?:youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/,
+    /(?:youtube(?:-nocookie)?\.com\/embed\/)([a-zA-Z0-9_-]{11})/,
     /(?:youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/,
     /(?:youtube\.com\/v\/)([a-zA-Z0-9_-]{11})/,
+    /(?:youtube\.com\/e\/)([a-zA-Z0-9_-]{11})/,
+    /(?:youtube\.com\/watch\/)([a-zA-Z0-9_-]{11})/,
   ];
 
   for (const regex of padroes) {
@@ -180,6 +214,7 @@ export interface DadosPalpiteLive {
 
 export interface BolaoLiveCardProps {
   onConfirmarPalpite?: (dados: DadosPalpiteLive) => void;
+  admAbertoPorPadrao?: boolean;
 }
 
 function converterHorarioParaMinutos(horarioStr: string): number {
@@ -203,14 +238,24 @@ function lerRepriseSalvaLocalStorage(): RepriseSalvaStorage | null {
   }
 }
 
-export function BolaoLiveCard({ onConfirmarPalpite }: BolaoLiveCardProps) {
+function BolaoLiveCardInner({
+  onConfirmarPalpite,
+  admAbertoPorPadrao = false,
+}: BolaoLiveCardProps) {
+  const onConfirmarPalpiteRef = useRef(onConfirmarPalpite);
+  useEffect(() => {
+    onConfirmarPalpiteRef.current = onConfirmarPalpite;
+  }, [onConfirmarPalpite]);
+
   // Estado da Reprise salva pelo ADM no localStorage (`bolao_reprise_atual`)
   const [repriseSalva, setRepriseSalva] = useState<RepriseSalvaStorage | null>(
     () => lerRepriseSalvaLocalStorage()
   );
 
-  // Estado do Painel ADM (escondido por padrão, abre ao clicar em "⚙️ ADM")
-  const [painelAdmAberto, setPainelAdmAberto] = useState<boolean>(false);
+  // Estado do Painel ADM (escondido por padrão, abre ao clicar em "⚙️ ADM" ou se admAbertoPorPadrao=true)
+  const [painelAdmAberto, setPainelAdmAberto] = useState<boolean>(
+    Boolean(admAbertoPorPadrao)
+  );
   const [inputYoutubeUrl, setInputYoutubeUrl] = useState<string>(
     () => lerRepriseSalvaLocalStorage()?.youtubeUrl || ''
   );
@@ -222,6 +267,7 @@ export function BolaoLiveCard({ onConfirmarPalpite }: BolaoLiveCardProps) {
   );
   const [feedbackAdm, setFeedbackAdm] = useState<string>('');
   const [erroAdm, setErroAdm] = useState<string>('');
+  const inputUrlRef = useRef<HTMLInputElement | null>(null);
 
   // Estado do modo Ao Vivo normal com os 4 canais
   const [canalAtivo, setCanalAtivo] = useState<CanalItem>(CANAIS[0]);
@@ -239,16 +285,208 @@ export function BolaoLiveCard({ onConfirmarPalpite }: BolaoLiveCardProps) {
   const [erroEscudoCasa, setErroEscudoCasa] = useState<boolean>(false);
   const [erroEscudoFora, setErroEscudoFora] = useState<boolean>(false);
 
-  // Sincroniza caso o localStorage mude em outra aba
+  // Salva e ativa a reprise imediatamente (tanto ao colar quanto ao clicar em Salvar Reprise)
+  const salvarEAtivarReprise = useCallback(
+    (urlBruta: string, casaAtual: string, foraAtual: string, origemColagem = false) => {
+      const textoLimpo = (urlBruta || '').trim();
+      setInputYoutubeUrl(textoLimpo);
+      setErroAdm('');
+
+      const idExtraido = extrairYoutubeID(textoLimpo);
+      if (!idExtraido) {
+        if (!origemColagem) {
+          setErroAdm(
+            'Link do YouTube inválido. Cole um link como https://www.youtube.com/watch?v=XXXX ou https://youtu.be/XXXX'
+          );
+        }
+        return false;
+      }
+
+      const casaFinal = (casaAtual || '').trim() || repriseSalva?.timeCasa || 'Time Casa';
+      const foraFinal = (foraAtual || '').trim() || repriseSalva?.timeFora || 'Time Fora';
+
+      const dadosReprise: RepriseSalvaStorage = {
+        youtubeUrl: textoLimpo,
+        youtubeId: idExtraido,
+        timeCasa: casaFinal,
+        timeFora: foraFinal,
+        data: new Date().toISOString(),
+      };
+
+      try {
+        localStorage.setItem(STORAGE_KEY_REPRISE, JSON.stringify(dadosReprise));
+        window.dispatchEvent(new CustomEvent('bolao-reprise-updated'));
+      } catch {
+        // ignore storage errors
+      }
+
+      setRepriseSalva(dadosReprise);
+      setErroEscudoCasa(false);
+      setErroEscudoFora(false);
+      setApostaConfirmada(false);
+      setFeedbackAdm(
+        origemColagem
+          ? `✅ Link colado com sucesso! Vídeo carregado no player.`
+          : `✅ Reprise "${casaFinal} x ${foraFinal}" salva e carregada no player!`
+      );
+
+      // Tenta detectar automaticamente os nomes dos times pelo título do vídeo no YouTube se os campos estiverem vazios
+      if (!casaAtual.trim() && !foraAtual.trim()) {
+        fetch(
+          `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${idExtraido}&format=json`
+        )
+          .then((r) => (r.ok ? r.json() : null))
+          .then((meta) => {
+            if (!meta?.title) return;
+            const titulo = String(meta.title);
+            const matchTimes = titulo.match(
+              /([A-Za-zÀ-ÿ\s-]{3,20})\s*(?:\d+\s*)?[xX×vV][sS]?\s*(?:\d+\s*)?([A-Za-zÀ-ÿ\s-]{3,20})/
+            );
+            if (matchTimes && matchTimes[1] && matchTimes[2]) {
+              const tCasa = matchTimes[1].trim().slice(0, 18);
+              const tFora = matchTimes[2].trim().slice(0, 18);
+              if (tCasa && tFora) {
+                setInputTimeCasa((prev) => prev || tCasa);
+                setInputTimeFora((prev) => prev || tFora);
+                const atualizado: RepriseSalvaStorage = {
+                  ...dadosReprise,
+                  timeCasa: tCasa,
+                  timeFora: tFora,
+                };
+                setRepriseSalva(atualizado);
+                try {
+                  localStorage.setItem(
+                    STORAGE_KEY_REPRISE,
+                    JSON.stringify(atualizado)
+                  );
+                } catch {
+                  // ignore
+                }
+              }
+            }
+          })
+          .catch(() => {});
+      }
+
+      return true;
+    },
+    [repriseSalva?.timeCasa, repriseSalva?.timeFora]
+  );
+
+  // Função para colar link da área de transferência pelo botão
+  const handleColarLinkYoutube = useCallback(async () => {
+    setErroAdm('');
+    setFeedbackAdm('');
+
+    // 1. Tenta ler diretamente da área de transferência do navegador
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.readText) {
+      try {
+        const textoClip = await navigator.clipboard.readText();
+        if (textoClip && textoClip.trim()) {
+          const ok = salvarEAtivarReprise(
+            textoClip.trim(),
+            inputTimeCasa,
+            inputTimeFora,
+            true
+          );
+          if (!ok) {
+            setErroAdm(
+              'O texto copiado não parece ser um link do YouTube. Copie o link do vídeo e tente novamente.'
+            );
+          }
+          return;
+        }
+      } catch {
+        // Caso o iframe bloqueie navigator.clipboard.readText, usa os fallbacks abaixo
+      }
+    }
+
+    // 2. Foca no input e tenta execCommand('paste')
+    if (inputUrlRef.current) {
+      inputUrlRef.current.focus();
+      inputUrlRef.current.select();
+      try {
+        const colouExec = document.execCommand('paste');
+        if (colouExec && inputUrlRef.current.value) {
+          salvarEAtivarReprise(
+            inputUrlRef.current.value,
+            inputTimeCasa,
+            inputTimeFora,
+            true
+          );
+          return;
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    // 3. Mantém o campo focado e pronto para Ctrl+V ou toque longo -> Colar
+    if (inputUrlRef.current) {
+      inputUrlRef.current.focus();
+    }
+    setFeedbackAdm(
+      '📲 Campo selecionado! Agora segure o dedo na caixa abaixo e toque em "Colar" (ou aperte Ctrl+V).'
+    );
+  }, [inputTimeCasa, inputTimeFora, salvarEAtivarReprise]);
+
+  // Captura Ctrl+V / Colar em qualquer lugar quando o Painel ADM estiver aberto
   useEffect(() => {
+    if (!painelAdmAberto) return;
+
+    const timerFocus = window.setTimeout(() => {
+      inputUrlRef.current?.focus();
+    }, 80);
+
+    const onGlobalPaste = (e: ClipboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      // Se o usuário estiver colando nos campos de Time Casa ou Time Fora, não intercepta
+      if (
+        target &&
+        target.tagName === 'INPUT' &&
+        target !== inputUrlRef.current
+      ) {
+        return;
+      }
+      const texto =
+        e.clipboardData?.getData('text/plain') ||
+        e.clipboardData?.getData('text') ||
+        '';
+      if (texto && texto.trim()) {
+        e.preventDefault();
+        salvarEAtivarReprise(texto.trim(), inputTimeCasa, inputTimeFora, true);
+      }
+    };
+
+    window.addEventListener('paste', onGlobalPaste);
+    return () => {
+      window.clearTimeout(timerFocus);
+      window.removeEventListener('paste', onGlobalPaste);
+    };
+  }, [painelAdmAberto, inputTimeCasa, inputTimeFora, salvarEAtivarReprise]);
+
+  // Sincroniza caso o localStorage mude em outra aba ou componente
+  useEffect(() => {
+    const sincronizarReprise = () => {
+      const atual = lerRepriseSalvaLocalStorage();
+      setRepriseSalva(atual);
+      if (atual) {
+        setInputYoutubeUrl(atual.youtubeUrl || '');
+        setInputTimeCasa(atual.timeCasa || '');
+        setInputTimeFora(atual.timeFora || '');
+      }
+    };
     const onStorage = (ev: StorageEvent) => {
       if (ev.key === STORAGE_KEY_REPRISE) {
-        const atual = lerRepriseSalvaLocalStorage();
-        setRepriseSalva(atual);
+        sincronizarReprise();
       }
     };
     window.addEventListener('storage', onStorage);
-    return () => window.removeEventListener('storage', onStorage);
+    window.addEventListener('bolao-reprise-updated', sincronizarReprise);
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener('bolao-reprise-updated', sincronizarReprise);
+    };
   }, []);
 
   const carregarJogosEspn = useCallback(async () => {
@@ -341,45 +579,13 @@ export function BolaoLiveCard({ onConfirmarPalpite }: BolaoLiveCardProps) {
 
   const handleSalvarRepriseAdm = (e: React.FormEvent) => {
     e.preventDefault();
-    setErroAdm('');
-    setFeedbackAdm('');
-
-    const idExtraido = extrairYoutubeID(inputYoutubeUrl);
-    if (!idExtraido) {
-      setErroAdm(
-        'Link do YouTube inválido. Use o formato https://www.youtube.com/watch?v=XXXX ou https://youtu.be/XXXX'
-      );
-      return;
-    }
-
-    const casaLimpo = inputTimeCasa.trim() || 'Time Casa';
-    const foraLimpo = inputTimeFora.trim() || 'Time Fora';
-
-    const dadosReprise: RepriseSalvaStorage = {
-      youtubeUrl: inputYoutubeUrl.trim(),
-      timeCasa: casaLimpo,
-      timeFora: foraLimpo,
-      data: new Date().toISOString(),
-    };
-
-    try {
-      localStorage.setItem(STORAGE_KEY_REPRISE, JSON.stringify(dadosReprise));
-    } catch {
-      // ignore storage errors
-    }
-
-    setRepriseSalva(dadosReprise);
-    setErroEscudoCasa(false);
-    setErroEscudoFora(false);
-    setApostaConfirmada(false);
-    setFeedbackAdm(
-      `✅ Reprise "${casaLimpo} x ${foraLimpo}" salva e carregada no player!`
-    );
+    salvarEAtivarReprise(inputYoutubeUrl, inputTimeCasa, inputTimeFora, false);
   };
 
   const handleLimparRepriseVoltarAoVivo = () => {
     try {
       localStorage.removeItem(STORAGE_KEY_REPRISE);
+      window.dispatchEvent(new CustomEvent('bolao-reprise-updated'));
     } catch {
       // ignore
     }
@@ -394,10 +600,10 @@ export function BolaoLiveCard({ onConfirmarPalpite }: BolaoLiveCardProps) {
   };
 
   const selecionarCanalAoVivo = (canal: CanalItem) => {
-    // Se clicar em um canal ao vivo, volta para o canal selecionado
     if (repriseSalva) {
       try {
         localStorage.removeItem(STORAGE_KEY_REPRISE);
+        window.dispatchEvent(new CustomEvent('bolao-reprise-updated'));
       } catch {
         // ignore
       }
@@ -479,8 +685,8 @@ export function BolaoLiveCard({ onConfirmarPalpite }: BolaoLiveCardProps) {
       // ignore storage errors
     }
 
-    if (typeof onConfirmarPalpite === 'function') {
-      onConfirmarPalpite(dadosPalpite);
+    if (typeof onConfirmarPalpiteRef.current === 'function') {
+      onConfirmarPalpiteRef.current(dadosPalpite);
     }
   };
 
@@ -506,10 +712,21 @@ export function BolaoLiveCard({ onConfirmarPalpite }: BolaoLiveCardProps) {
 
         <button
           type="button"
-          onClick={() => {
-            setPainelAdmAberto((prev) => !prev);
+          onClick={async () => {
+            const abrindo = !painelAdmAberto;
+            setPainelAdmAberto(abrindo);
             setErroAdm('');
             setFeedbackAdm('');
+            if (abrindo && typeof navigator !== 'undefined' && navigator.clipboard?.readText) {
+              try {
+                const clip = await navigator.clipboard.readText();
+                if (clip && extrairYoutubeID(clip)) {
+                  salvarEAtivarReprise(clip.trim(), inputTimeCasa, inputTimeFora, true);
+                }
+              } catch {
+                // ignore clipboard permission on open
+              }
+            }
           }}
           className={`text-[11px] font-extrabold px-2.5 py-1 rounded-lg border transition cursor-pointer shrink-0 flex items-center gap-1 ${
             painelAdmAberto
@@ -535,24 +752,84 @@ export function BolaoLiveCard({ onConfirmarPalpite }: BolaoLiveCardProps) {
               <button
                 type="button"
                 onClick={() => setPainelAdmAberto(false)}
-                className="text-xs text-zinc-400 hover:text-white font-bold cursor-pointer"
+                className="text-xs text-zinc-400 hover:text-white font-bold cursor-pointer px-1"
               >
                 ✕
               </button>
             </div>
 
             <form onSubmit={handleSalvarRepriseAdm} className="space-y-2.5">
-              <div>
-                <label className="block text-[10px] font-bold uppercase text-amber-300 mb-1">
-                  Cole o link do YouTube da reprise
-                </label>
-                <input
-                  type="text"
-                  value={inputYoutubeUrl}
-                  onChange={(e) => setInputYoutubeUrl(e.target.value)}
-                  placeholder="https://www.youtube.com/watch?v=XXXX"
-                  className="w-full bg-[#0A0A0A] border border-amber-400/60 focus:border-amber-400 rounded-lg px-3 py-2 text-xs text-white font-mono outline-none"
-                />
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <label
+                    htmlFor="input-youtube-reprise-adm"
+                    className="block text-[10px] font-bold uppercase text-amber-300"
+                  >
+                    Cole o link do YouTube da reprise
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleColarLinkYoutube}
+                    className="bg-amber-400 hover:bg-amber-300 active:scale-95 text-black font-black text-[10px] uppercase px-2.5 py-1 rounded-md cursor-pointer transition flex items-center gap-1 shadow"
+                  >
+                    <span>📋</span>
+                    <span>Colar Link</span>
+                  </button>
+                </div>
+
+                <div className="relative flex items-center">
+                  <input
+                    id="input-youtube-reprise-adm"
+                    ref={inputUrlRef}
+                    type="text"
+                    inputMode="url"
+                    autoComplete="off"
+                    autoCorrect="off"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    value={inputYoutubeUrl}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setInputYoutubeUrl(val);
+                      if (extrairYoutubeID(val)) {
+                        salvarEAtivarReprise(val, inputTimeCasa, inputTimeFora, true);
+                      }
+                    }}
+                    onPaste={(e) => {
+                      const textoColado =
+                        e.clipboardData?.getData('text/plain') ||
+                        e.clipboardData?.getData('text') ||
+                        '';
+                      if (textoColado && textoColado.trim()) {
+                        e.preventDefault();
+                        salvarEAtivarReprise(
+                          textoColado.trim(),
+                          inputTimeCasa,
+                          inputTimeFora,
+                          true
+                        );
+                      }
+                    }}
+                    placeholder="https://www.youtube.com/watch?v=XXXX"
+                    style={{ WebkitUserSelect: 'text', userSelect: 'text' }}
+                    className="w-full bg-[#0A0A0A] border-2 border-amber-400/80 focus:border-amber-300 rounded-lg pl-3 pr-8 py-2.5 text-xs text-white font-mono outline-none select-text pointer-events-auto"
+                  />
+                  {inputYoutubeUrl && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setInputYoutubeUrl('');
+                        setErroAdm('');
+                        setFeedbackAdm('');
+                        inputUrlRef.current?.focus();
+                      }}
+                      className="absolute right-2 text-zinc-400 hover:text-white text-xs font-black px-1.5 py-0.5 cursor-pointer"
+                      title="Limpar campo"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-2">
@@ -565,7 +842,8 @@ export function BolaoLiveCard({ onConfirmarPalpite }: BolaoLiveCardProps) {
                     value={inputTimeCasa}
                     onChange={(e) => setInputTimeCasa(e.target.value)}
                     placeholder="Ex: Flamengo"
-                    className="w-full bg-[#0A0A0A] border border-amber-400/60 focus:border-amber-400 rounded-lg px-3 py-2 text-xs text-white font-bold outline-none"
+                    style={{ WebkitUserSelect: 'text', userSelect: 'text' }}
+                    className="w-full bg-[#0A0A0A] border border-amber-400/60 focus:border-amber-400 rounded-lg px-3 py-2 text-xs text-white font-bold outline-none select-text"
                   />
                 </div>
                 <div>
@@ -577,7 +855,8 @@ export function BolaoLiveCard({ onConfirmarPalpite }: BolaoLiveCardProps) {
                     value={inputTimeFora}
                     onChange={(e) => setInputTimeFora(e.target.value)}
                     placeholder="Ex: Vasco"
-                    className="w-full bg-[#0A0A0A] border border-amber-400/60 focus:border-amber-400 rounded-lg px-3 py-2 text-xs text-white font-bold outline-none"
+                    style={{ WebkitUserSelect: 'text', userSelect: 'text' }}
+                    className="w-full bg-[#0A0A0A] border border-amber-400/60 focus:border-amber-400 rounded-lg px-3 py-2 text-xs text-white font-bold outline-none select-text"
                   />
                 </div>
               </div>
@@ -961,5 +1240,10 @@ export function BolaoLiveCard({ onConfirmarPalpite }: BolaoLiveCardProps) {
     </div>
   );
 }
+
+export const BolaoLiveCard = React.memo(
+  BolaoLiveCardInner,
+  (prev, next) => prev.admAbertoPorPadrao === next.admAbertoPorPadrao
+);
 
 export default BolaoLiveCard;

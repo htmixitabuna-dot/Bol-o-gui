@@ -543,6 +543,9 @@ export default function App() {
     }
   });
   const [abaMenuAdm, setAbaMenuAdm] = useState<"painel" | "historico">("painel");
+  const [secaoControleAdmAtiva, setSecaoControleAdmAtiva] = useState<
+    "todos" | "reprise" | "comprovantes" | "cota_pix" | "jogos" | "apuracao" | "transparencia" | "usuarios"
+  >("todos");
   const [menuLateralAdmMobile, setMenuLateralAdmMobile] = useState(false);
   const [bolaoHistoricoSelecionadoId, setBolaoHistoricoSelecionadoId] = useState<string>("");
   const [tituloSalvarRanking, setTituloSalvarRanking] = useState("");
@@ -558,6 +561,33 @@ export default function App() {
   const mostrarAvisoAdm = (msg: string) => {
     setAvisoAdm(msg);
     setTimeout(() => setAvisoAdm(""), 4000);
+  };
+
+  const abrirSecaoPainelGeralControle = (
+    abaAlvo:
+      | "todos"
+      | "reprise"
+      | "comprovantes"
+      | "cota_pix"
+      | "jogos"
+      | "apuracao"
+      | "transparencia"
+      | "usuarios" = "todos",
+    idElementoScroll = "secao-painel-geral-controle",
+    mensagemAviso = "⚙️ Painel Geral & Controle ativo e atualizado!"
+  ) => {
+    setAbaMenuAdm("painel");
+    setSecaoControleAdmAtiva(abaAlvo);
+    setMenuLateralAdmMobile(false);
+    if (mensagemAviso) {
+      mostrarAvisoAdm(mensagemAviso);
+    }
+    window.setTimeout(() => {
+      const el = document.getElementById(idElementoScroll);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    }, 60);
   };
 
   useEffect(() => {
@@ -4775,7 +4805,7 @@ export default function App() {
 
           {/* Cronômetro Dourado e Verde na Landing Page */}
           <div className="w-full">
-            <CountdownTimerBolaoElite compacto={true} />
+            {CountdownTimerBolaoElite({ compacto: true })}
           </div>
 
           {/* Painel Placar ao Vivo / Status Oficial ESPN (Brasileirão) na Tela Inicial */}
@@ -4872,8 +4902,8 @@ export default function App() {
           </div>
           <div className="text-zinc-600">© 2026 Bolões Elite • Todos os direitos reservados</div>
         </footer>
-        <ModalAreaTransparencia />
-        <ModalPixDireto />
+        {ModalAreaTransparencia()}
+        {ModalPixDireto()}
 
         {showTermosModal && (
           <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 text-left">
@@ -5426,7 +5456,14 @@ export default function App() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => setAbaMenuAdm("painel")}
+                  onClick={() => {
+                    abrirSecaoPainelGeralControle(
+                      "todos",
+                      "secao-painel-geral-controle",
+                      "⚙️ Painel Geral & Controle aberto! Todos os controles estão prontos abaixo."
+                    );
+                    atualizarJogosEspnAoVivo().catch(() => {});
+                  }}
                   className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-black transition cursor-pointer flex items-center justify-between ${
                     abaMenuAdm === "painel"
                       ? "bg-[#FF6B00] text-black shadow-md shadow-[#FF6B00]/20"
@@ -5437,14 +5474,176 @@ export default function App() {
                     <span>⚙️</span> Painel Geral & Controle
                   </span>
                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-black/20 font-bold">
-                    Ativo
+                    {abaMenuAdm === "painel" ? "Ativo" : "Abrir"}
                   </span>
                 </button>
+
+                {/* Submenu Rápido de Controles do Painel Geral */}
+                {abaMenuAdm === "painel" && (
+                  <div className="bg-black/70 border border-zinc-800 rounded-xl p-2 space-y-1">
+                    <div className="text-[9px] font-black uppercase text-[#FF6B00] px-1.5 py-0.5">
+                      ⚡ Atalhos de Controle Rápido:
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        abrirSecaoPainelGeralControle(
+                          "todos",
+                          "secao-painel-geral-controle",
+                          "🎛️ Exibindo todos os controles do Painel Geral!"
+                        )
+                      }
+                      className={`w-full text-left px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition cursor-pointer flex items-center justify-between ${
+                        secaoControleAdmAtiva === "todos"
+                          ? "bg-[#FF6B00]/20 text-[#FF6B00] border border-[#FF6B00]/50"
+                          : "text-zinc-300 hover:bg-zinc-800"
+                      }`}
+                    >
+                      <span>🎛️ Mostrar Todos os Controles</span>
+                      <span className="text-[9px] font-black">TUDO</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        abrirSecaoPainelGeralControle(
+                          "reprise",
+                          "adm-secao-reprise-youtube",
+                          "🎬 Controle de Reprise YouTube & Player Ao Vivo aberto!"
+                        )
+                      }
+                      className={`w-full text-left px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition cursor-pointer flex items-center justify-between ${
+                        secaoControleAdmAtiva === "reprise"
+                          ? "bg-amber-400/20 text-amber-300 border border-amber-400/50"
+                          : "text-amber-300 hover:bg-zinc-800"
+                      }`}
+                    >
+                      <span>🎬 Reprise YouTube & Player</span>
+                      <span className="text-[9px] bg-amber-400 text-black px-1.5 py-0.2 rounded font-black">
+                        LINK
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        abrirSecaoPainelGeralControle(
+                          "comprovantes",
+                          "adm-secao-comprovantes",
+                          "📥 Central de Conferência de Comprovantes PIX aberta!"
+                        )
+                      }
+                      className={`w-full text-left px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition cursor-pointer flex items-center justify-between ${
+                        secaoControleAdmAtiva === "comprovantes"
+                          ? "bg-[#FF6B00]/20 text-[#FF6B00] border border-[#FF6B00]/50"
+                          : "text-zinc-300 hover:bg-zinc-800"
+                      }`}
+                    >
+                      <span>📥 Comprovantes PIX</span>
+                      <span className="text-[9px] bg-zinc-800 text-amber-300 px-1.5 py-0.5 rounded font-black">
+                        {jogadores.filter((jg) => Boolean(jg.comprovante)).length}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        abrirSecaoPainelGeralControle(
+                          "cota_pix",
+                          "adm-secao-cota-pix",
+                          "💰 Controle de Valor da Cota, PIX & InfinitePay aberto!"
+                        )
+                      }
+                      className={`w-full text-left px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition cursor-pointer flex items-center justify-between ${
+                        secaoControleAdmAtiva === "cota_pix"
+                          ? "bg-[#FF6B00]/20 text-[#FF6B00] border border-[#FF6B00]/50"
+                          : "text-zinc-300 hover:bg-zinc-800"
+                      }`}
+                    >
+                      <span>💰 Valor da Cota & Chave PIX</span>
+                      <span className="text-[9px] text-zinc-400 font-bold">R$ {config.valor}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        abrirSecaoPainelGeralControle(
+                          "jogos",
+                          "adm-secao-jogos",
+                          "⚽ Controle de Jogos ESPN & Novo Bolão aberto!"
+                        )
+                      }
+                      className={`w-full text-left px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition cursor-pointer flex items-center justify-between ${
+                        secaoControleAdmAtiva === "jogos"
+                          ? "bg-[#FF6B00]/20 text-[#FF6B00] border border-[#FF6B00]/50"
+                          : "text-zinc-300 hover:bg-zinc-800"
+                      }`}
+                    >
+                      <span>⚽ Jogos ESPN & Novo Bolão</span>
+                      <span className="text-[9px] text-[#FF6B00] font-black">{jogosPublicados.length}/10</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        abrirSecaoPainelGeralControle(
+                          "apuracao",
+                          "adm-secao-apuracao",
+                          "🏁 Apuração de Resultados & Triagem aberta!"
+                        )
+                      }
+                      className={`w-full text-left px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition cursor-pointer flex items-center justify-between ${
+                        secaoControleAdmAtiva === "apuracao"
+                          ? "bg-[#FF6B00]/20 text-[#FF6B00] border border-[#FF6B00]/50"
+                          : "text-zinc-300 hover:bg-zinc-800"
+                      }`}
+                    >
+                      <span>🏁 Apurar Resultados & Ranking</span>
+                      <span className="text-[9px] text-emerald-400 font-black">
+                        {totalJogosEncerrados}/{jogosPublicados.length}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        abrirSecaoPainelGeralControle(
+                          "transparencia",
+                          "adm-secao-transparencia",
+                          "🛡️ Área de Transparência da Premiação aberta!"
+                        )
+                      }
+                      className={`w-full text-left px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition cursor-pointer flex items-center justify-between ${
+                        secaoControleAdmAtiva === "transparencia"
+                          ? "bg-[#FF6B00]/20 text-[#FF6B00] border border-[#FF6B00]/50"
+                          : "text-zinc-300 hover:bg-zinc-800"
+                      }`}
+                    >
+                      <span>🛡️ Transparência Premiação</span>
+                      <span className="text-[9px] text-emerald-400 font-black">
+                        {comprovantesPremiacao.length}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        abrirSecaoPainelGeralControle(
+                          "usuarios",
+                          "adm-secao-usuarios",
+                          "🗄️ Controle de Usuários & Apostas Recebidas aberto!"
+                        )
+                      }
+                      className={`w-full text-left px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition cursor-pointer flex items-center justify-between ${
+                        secaoControleAdmAtiva === "usuarios"
+                          ? "bg-[#FF6B00]/20 text-[#FF6B00] border border-[#FF6B00]/50"
+                          : "text-zinc-300 hover:bg-zinc-800"
+                      }`}
+                    >
+                      <span>🗄️ Usuários & Apostas</span>
+                      <span className="text-[9px] text-zinc-400 font-bold">{jogadores.length}</span>
+                    </button>
+                  </div>
+                )}
 
                 <button
                   type="button"
                   onClick={() => {
                     setAbaMenuAdm("historico");
+                    setMenuLateralAdmMobile(false);
                     if (!bolaoHistoricoSelecionadoId && historicoRankings.length > 0) {
                       setBolaoHistoricoSelecionadoId(historicoRankings[0].id);
                     }
@@ -5595,8 +5794,27 @@ export default function App() {
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
+              onClick={() =>
+                abrirSecaoPainelGeralControle(
+                  "todos",
+                  "secao-painel-geral-controle",
+                  "⚙️ Painel Geral & Controle aberto e atualizado!"
+                )
+              }
+              className={`text-xs px-3.5 py-1.5 rounded-lg cursor-pointer font-black uppercase tracking-wider flex items-center gap-1.5 transition border ${
+                abaMenuAdm === "painel"
+                  ? "bg-[#FF6B00] text-black border-[#FF6B00] shadow-md shadow-[#FF6B00]/20"
+                  : "bg-zinc-900 hover:bg-zinc-800 text-white border-zinc-700"
+              }`}
+            >
+              <span>⚙️</span>
+              <span>Painel Geral & Controle</span>
+            </button>
+            <button
+              type="button"
               onClick={() => {
                 setAbaMenuAdm(abaMenuAdm === "historico" ? "painel" : "historico");
+                setMenuLateralAdmMobile(false);
               }}
               className={`text-xs px-3.5 py-1.5 rounded-lg cursor-pointer font-black uppercase tracking-wider flex items-center gap-1.5 transition border ${
                 abaMenuAdm === "historico"
@@ -5607,7 +5825,7 @@ export default function App() {
               <span>🏆</span>
               <span>
                 {abaMenuAdm === "historico"
-                  ? "← Voltar ao Painel ADM"
+                  ? "← Voltar ao Painel Geral"
                   : `Histórico de Ranking (${historicoRankings.length})`}
               </span>
             </button>
@@ -6027,41 +6245,269 @@ export default function App() {
           </div>
         )}
 
-        {/* Resumo Financeiro */}
-        <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-xl text-xs space-y-2">
-          <div className="font-bold flex flex-wrap gap-2 justify-between border-b border-zinc-800 pb-2">
-            <span>CADASTRADOS: {jogadores.length}</span>
-            <span>DEPOSITANTES NO BOLÃO ATUAL: {pagos} de {jogadores.length}</span>
-            <span>VALOR DA COTA: R$ {config.valor}</span>
-            <span>SALDO ATUAL: R$ {total.toFixed(2)}</span>
-            <span>BANCA 20%: R$ {banca20.toFixed(2)}</span>
-            <span className="text-[#FF6B00]">PRÊMIO 80%: R$ {premio80.toFixed(2)}</span>
-          </div>
-          <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-            <div className="text-[#FF6B00] font-bold flex flex-wrap gap-3">
-              <span>🥇 1º (50%): R$ {premio1.toFixed(2)}</span>
-              <span>🥈 2º (30%): R$ {premio2.toFixed(2)}</span>
-              <span>🥉 3º (20%): R$ {premio3.toFixed(2)}</span>
+        {abaMenuAdm === "painel" && (
+          <div id="secao-painel-geral-controle" className="space-y-6">
+            {/* ================================================================= */}
+            {/* CENTRAL PAINEL GERAL & CONTROLE DO ADMINISTRADOR                  */}
+            {/* ================================================================= */}
+            <div className="bg-zinc-900 border-2 border-[#FF6B00] rounded-2xl p-4 sm:p-5 space-y-4 shadow-2xl">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-zinc-800 pb-3.5">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-[10px] font-black uppercase tracking-wider bg-[#FF6B00] text-black px-2.5 py-0.5 rounded">
+                      ⚙️ PAINEL GERAL & CONTROLE ATIVO
+                    </span>
+                    <span className="text-[10px] text-emerald-400 font-bold">
+                      ⚡ Controle total de Reprise YouTube, Comprovantes PIX, Cota, Jogos e Premiação
+                    </span>
+                  </div>
+                  <h3 className="font-black text-base sm:text-lg text-white flex items-center gap-2 mt-1">
+                    <span>⚙️</span> PAINEL GERAL & CONTROLE — CENTRAL DO ADMINISTRADOR
+                  </h3>
+                  <p className="text-xs text-zinc-400">
+                    Use os botões de controle rápido abaixo para gerenciar reprises do YouTube, aprovar comprovantes PIX, alterar valor da cota ou apurar resultados.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={alternarBloqueioGeralBolaoAdm}
+                    className={`text-xs font-black px-3 py-2 rounded-xl border cursor-pointer transition flex items-center gap-1.5 ${
+                      config.bloqueioManualBolao
+                        ? "bg-green-600 hover:bg-green-500 text-black border-green-400"
+                        : "bg-red-950/80 hover:bg-red-900 text-red-200 border-red-700"
+                    }`}
+                  >
+                    <span>{config.bloqueioManualBolao ? "🔓" : "🔒"}</span>
+                    <span>
+                      {config.bloqueioManualBolao
+                        ? "Liberar Bolão p/ Apostas"
+                        : "Bloquear Bolão Agora"}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await zerarSaldoEDepositantesAposRodada();
+                      mostrarAvisoAdm(
+                        "🔄 Saldo zerado e lista de depositantes limpa! Só voltarão os participantes que fizerem novo depósito para o novo bolão."
+                      );
+                    }}
+                    className="text-xs bg-zinc-800 hover:bg-zinc-700 text-amber-300 border border-amber-500/50 px-3 py-2 rounded-xl font-black uppercase cursor-pointer transition flex items-center gap-1"
+                  >
+                    <span>🔄</span> Zerar Saldo e Depositantes
+                  </button>
+                </div>
+              </div>
+
+              {/* Barra de Abas / Botões de Controle Rápido */}
+              <div className="flex flex-wrap items-center gap-2 bg-black/70 p-2.5 rounded-xl border border-zinc-800">
+                <button
+                  type="button"
+                  onClick={() => setSecaoControleAdmAtiva("todos")}
+                  className={`px-3 py-2 rounded-lg text-xs font-black cursor-pointer transition flex items-center gap-1.5 ${
+                    secaoControleAdmAtiva === "todos"
+                      ? "bg-[#FF6B00] text-black shadow-md"
+                      : "bg-zinc-900 hover:bg-zinc-800 text-zinc-200 border border-zinc-800"
+                  }`}
+                >
+                  <span>🎛️</span>
+                  <span>Todos os Controles</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    abrirSecaoPainelGeralControle(
+                      "reprise",
+                      "adm-secao-reprise-youtube",
+                      "🎬 Controle de Reprise YouTube aberto!"
+                    )
+                  }
+                  className={`px-3 py-2 rounded-lg text-xs font-black cursor-pointer transition flex items-center gap-1.5 ${
+                    secaoControleAdmAtiva === "reprise"
+                      ? "bg-amber-400 text-black shadow-md"
+                      : "bg-zinc-900 hover:bg-zinc-800 text-amber-300 border border-amber-400/50"
+                  }`}
+                >
+                  <span>🎬</span>
+                  <span>Reprise YouTube & Player</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    abrirSecaoPainelGeralControle(
+                      "comprovantes",
+                      "adm-secao-comprovantes",
+                      "📥 Conferência de Comprovantes PIX aberta!"
+                    )
+                  }
+                  className={`px-3 py-2 rounded-lg text-xs font-black cursor-pointer transition flex items-center gap-1.5 ${
+                    secaoControleAdmAtiva === "comprovantes"
+                      ? "bg-[#FF6B00] text-black shadow-md"
+                      : "bg-zinc-900 hover:bg-zinc-800 text-zinc-200 border border-zinc-800"
+                  }`}
+                >
+                  <span>📥</span>
+                  <span>Comprovantes ({jogadores.filter((jg) => Boolean(jg.comprovante)).length})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    abrirSecaoPainelGeralControle(
+                      "cota_pix",
+                      "adm-secao-cota-pix",
+                      "💰 Configuração de Valor da Cota & PIX aberta!"
+                    )
+                  }
+                  className={`px-3 py-2 rounded-lg text-xs font-black cursor-pointer transition flex items-center gap-1.5 ${
+                    secaoControleAdmAtiva === "cota_pix"
+                      ? "bg-[#FF6B00] text-black shadow-md"
+                      : "bg-zinc-900 hover:bg-zinc-800 text-zinc-200 border border-zinc-800"
+                  }`}
+                >
+                  <span>💰</span>
+                  <span>Valor da Cota & PIX (R$ {config.valor})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    abrirSecaoPainelGeralControle(
+                      "jogos",
+                      "adm-secao-jogos",
+                      "⚽ Gerenciamento de Jogos ESPN & Novo Bolão aberto!"
+                    )
+                  }
+                  className={`px-3 py-2 rounded-lg text-xs font-black cursor-pointer transition flex items-center gap-1.5 ${
+                    secaoControleAdmAtiva === "jogos"
+                      ? "bg-[#FF6B00] text-black shadow-md"
+                      : "bg-zinc-900 hover:bg-zinc-800 text-zinc-200 border border-zinc-800"
+                  }`}
+                >
+                  <span>⚽</span>
+                  <span>Jogos & Bolão ({jogosPublicados.length}/10)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    abrirSecaoPainelGeralControle(
+                      "apuracao",
+                      "adm-secao-apuracao",
+                      "🏁 Apuração de Resultados & Triagem aberta!"
+                    )
+                  }
+                  className={`px-3 py-2 rounded-lg text-xs font-black cursor-pointer transition flex items-center gap-1.5 ${
+                    secaoControleAdmAtiva === "apuracao"
+                      ? "bg-[#FF6B00] text-black shadow-md"
+                      : "bg-zinc-900 hover:bg-zinc-800 text-zinc-200 border border-zinc-800"
+                  }`}
+                >
+                  <span>🏁</span>
+                  <span>Apuração & Ranking</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    abrirSecaoPainelGeralControle(
+                      "transparencia",
+                      "adm-secao-transparencia",
+                      "🛡️ Transparência de Premiação aberta!"
+                    )
+                  }
+                  className={`px-3 py-2 rounded-lg text-xs font-black cursor-pointer transition flex items-center gap-1.5 ${
+                    secaoControleAdmAtiva === "transparencia"
+                      ? "bg-[#FF6B00] text-black shadow-md"
+                      : "bg-zinc-900 hover:bg-zinc-800 text-zinc-200 border border-zinc-800"
+                  }`}
+                >
+                  <span>🛡️</span>
+                  <span>Transparência ({comprovantesPremiacao.length})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    abrirSecaoPainelGeralControle(
+                      "usuarios",
+                      "adm-secao-usuarios",
+                      "🗄️ Usuários Cadastrados & Apostas Recebidas!"
+                    )
+                  }
+                  className={`px-3 py-2 rounded-lg text-xs font-black cursor-pointer transition flex items-center gap-1.5 ${
+                    secaoControleAdmAtiva === "usuarios"
+                      ? "bg-[#FF6B00] text-black shadow-md"
+                      : "bg-zinc-900 hover:bg-zinc-800 text-zinc-200 border border-zinc-800"
+                  }`}
+                >
+                  <span>🗄️</span>
+                  <span>Usuários ({jogadores.length})</span>
+                </button>
+              </div>
+
+              {/* Resumo Financeiro em Cards no Painel Geral */}
+              <div className="bg-black/80 border border-zinc-800 p-3.5 rounded-xl text-xs space-y-2.5">
+                <div className="font-bold flex flex-wrap gap-2 justify-between border-b border-zinc-800 pb-2">
+                  <span>CADASTRADOS: {jogadores.length}</span>
+                  <span>DEPOSITANTES NO BOLÃO ATUAL: {pagos} de {jogadores.length}</span>
+                  <span>VALOR DA COTA: R$ {config.valor}</span>
+                  <span>SALDO ATUAL: R$ {total.toFixed(2)}</span>
+                  <span>BANCA 20%: R$ {banca20.toFixed(2)}</span>
+                  <span className="text-[#FF6B00]">PRÊMIO 80%: R$ {premio80.toFixed(2)}</span>
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5">
+                  <div className="text-[#FF6B00] font-bold flex flex-wrap gap-3">
+                    <span>🥇 1º (50%): R$ {premio1.toFixed(2)}</span>
+                    <span>🥈 2º (30%): R$ {premio2.toFixed(2)}</span>
+                    <span>🥉 3º (20%): R$ {premio3.toFixed(2)}</span>
+                  </div>
+                  {secaoControleAdmAtiva !== "todos" && (
+                    <button
+                      type="button"
+                      onClick={() => setSecaoControleAdmAtiva("todos")}
+                      className="text-[11px] bg-[#FF6B00] text-black font-black px-3 py-1 rounded-lg cursor-pointer"
+                    >
+                      👁️ Mostrar Todas as Seções Abaixo
+                    </button>
+                  )}
+                </div>
+              </div>
             </div>
-            <button
-              type="button"
-              onClick={async () => {
-                await zerarSaldoEDepositantesAposRodada();
-                mostrarAvisoAdm(
-                  "🔄 Saldo zerado e lista de depositantes limpa! Só voltarão os participantes que fizerem novo depósito para o novo bolão."
-                );
-              }}
-              className="text-[10px] bg-zinc-800 hover:bg-zinc-700 text-amber-300 border border-amber-500/50 px-3 py-1.5 rounded-lg font-black uppercase cursor-pointer transition flex items-center gap-1"
-            >
-              <span>🔄</span> Zerar Saldo e Lista de Depositantes
-            </button>
-          </div>
-        </div>
+
+            {/* ================================================================= */}
+            {/* CONTROLE DIRETO DE REPRISE YOUTUBE & PLAYER AO VIVO NO PAINEL ADM */}
+            {/* ================================================================= */}
+            {(secaoControleAdmAtiva === "todos" || secaoControleAdmAtiva === "reprise") && (
+              <div
+                id="adm-secao-reprise-youtube"
+                className="bg-zinc-900 p-4 rounded-xl border-2 border-amber-400/80 space-y-3.5 shadow-xl"
+              >
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-800 pb-3">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[10px] font-black uppercase tracking-wider bg-amber-400 text-black px-2 py-0.5 rounded">
+                        CONTROLE DO PLAYER & REPRISE YOUTUBE
+                      </span>
+                      <span className="text-[10px] text-amber-300 font-bold">
+                        ⚡ Sincronizado em tempo real com a Área do Jogador
+                      </span>
+                    </div>
+                    <h3 className="font-black text-sm sm:text-base text-white flex items-center gap-2 mt-1">
+                      <span>🎬</span> GERENCIAR REPRISE DO YOUTUBE E CANAIS AO VIVO
+                    </h3>
+                    <p className="text-[11px] text-zinc-400">
+                      Cole o link do YouTube abaixo (ou clique em &quot;📋 Colar Link&quot;) para transmitir uma reprise no player de todos os jogadores.
+                    </p>
+                  </div>
+                </div>
+
+                <BolaoLiveCard admAbertoPorPadrao={true} />
+              </div>
+            )}
 
         {/* ================================================================= */}
         {/* CENTRAL DE CONFERÊNCIA DE COMPROVANTES DE PAGAMENTO DOS JOGADORES */}
         {/* ================================================================= */}
-        <div className="bg-zinc-900 p-4 rounded-xl border-2 border-amber-500/70 space-y-3.5 shadow-xl">
+        {(secaoControleAdmAtiva === "todos" || secaoControleAdmAtiva === "comprovantes") && (
+        <div id="adm-secao-comprovantes" className="bg-zinc-900 p-4 rounded-xl border-2 border-amber-500/70 space-y-3.5 shadow-xl">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-800 pb-3">
             <div>
               <div className="flex flex-wrap items-center gap-2">
@@ -6252,11 +6698,13 @@ export default function App() {
             </div>
           )}
         </div>
+        )}
 
         {/* ================================================================= */}
         {/* BANCO DE DADOS DE TODOS OS APOSTADORES CADASTRADOS */}
         {/* ================================================================= */}
-        <div className="bg-zinc-900 p-4 rounded-xl border border-zinc-800 space-y-3">
+        {(secaoControleAdmAtiva === "todos" || secaoControleAdmAtiva === "usuarios") && (
+        <div id="adm-secao-usuarios" className="bg-zinc-900 p-4 rounded-xl border border-zinc-800 space-y-3">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-800 pb-2">
             <div>
               <h3 className="font-black text-sm text-white flex items-center gap-2">
@@ -6416,11 +6864,13 @@ export default function App() {
             </div>
           )}
         </div>
+        )}
 
         {/* ================================================================= */}
         {/* SEÇÃO 1: CONFIRMAR OS TIMES VITORIOSOS E RESULTADOS OFICIAIS */}
         {/* ================================================================= */}
-        <div className="bg-zinc-900 p-4 rounded-xl border border-zinc-800 space-y-3">
+        {(secaoControleAdmAtiva === "todos" || secaoControleAdmAtiva === "apuracao") && (
+        <div id="adm-secao-apuracao" className="bg-zinc-900 p-4 rounded-xl border border-zinc-800 space-y-3">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
             <div>
               <h3 className="font-black text-sm text-white flex items-center gap-2">
@@ -6520,11 +6970,13 @@ export default function App() {
             </div>
           )}
         </div>
+        )}
 
         {/* ================================================================= */}
         {/* SEÇÃO 2: TRIAGEM AUTOMÁTICA DE APOSTAS & ORDEM DOS GANHADORES */}
         {/* ================================================================= */}
-        <div className="bg-zinc-900 p-4 rounded-xl border border-zinc-800 space-y-4">
+        {(secaoControleAdmAtiva === "todos" || secaoControleAdmAtiva === "apuracao") && (
+        <div id="adm-secao-ranking" className="bg-zinc-900 p-4 rounded-xl border border-zinc-800 space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-800 pb-2">
             <div>
               <h3 className="font-black text-sm text-white flex items-center gap-2">
@@ -6659,11 +7111,13 @@ export default function App() {
             </div>
           )}
         </div>
+        )}
 
         {/* ================================================================= */}
         {/* SEÇÃO 2.5: ÁREA DE TRANSPARÊNCIA - ENVIAR COMPROVANTES DA PREMIAÇÃO */}
         {/* ================================================================= */}
-        <div className="bg-zinc-900 p-4 rounded-xl border-2 border-emerald-500/60 space-y-4 shadow-xl">
+        {(secaoControleAdmAtiva === "todos" || secaoControleAdmAtiva === "transparencia") && (
+        <div id="adm-secao-transparencia" className="bg-zinc-900 p-4 rounded-xl border-2 border-emerald-500/60 space-y-4 shadow-xl">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-800 pb-3">
             <div>
               <div className="flex items-center gap-2">
@@ -6894,11 +7348,13 @@ export default function App() {
             </div>
           )}
         </div>
+        )}
 
         {/* ================================================================= */}
         {/* SEÇÃO 3: CAMPO DE TODAS AS APOSTAS RECEBIDAS */}
         {/* ================================================================= */}
-        <div className="bg-zinc-900 p-4 rounded-xl border border-zinc-800 space-y-4">
+        {(secaoControleAdmAtiva === "todos" || secaoControleAdmAtiva === "usuarios" || secaoControleAdmAtiva === "comprovantes") && (
+        <div id="adm-secao-apostas" className="bg-zinc-900 p-4 rounded-xl border border-zinc-800 space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-800 pb-2">
             <div>
               <h3 className="font-black text-sm text-white flex items-center gap-2">
@@ -7159,9 +7615,11 @@ export default function App() {
             </div>
           )}
         </div>
+        )}
 
         {/* Configurações & Chave PIX */}
-        <div className="bg-zinc-900 p-4 rounded-xl border border-zinc-800 space-y-4">
+        {(secaoControleAdmAtiva === "todos" || secaoControleAdmAtiva === "cota_pix") && (
+        <div id="adm-secao-cota-pix" className="bg-zinc-900 p-4 rounded-xl border border-zinc-800 space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 border-b border-zinc-800 pb-2">
             <h3 className="font-black text-sm text-white flex items-center gap-2">
               <span className="text-[#FF6B00] text-base">💰</span> VALOR DA COTA & CHAVE PIX DO ADM
@@ -7276,9 +7734,11 @@ export default function App() {
             </div>
           </div>
         </div>
+        )}
 
         {/* Cadastrar Novo Bolão (Deixar Pronto e Salvo) & Gerenciar Confrontos */}
-        <div className="bg-zinc-900 p-4 rounded-xl border border-zinc-800 space-y-4">
+        {(secaoControleAdmAtiva === "todos" || secaoControleAdmAtiva === "jogos") && (
+        <div id="adm-secao-jogos" className="bg-zinc-900 p-4 rounded-xl border border-zinc-800 space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-800 pb-3">
             <div>
               <div className="flex items-center gap-2">
@@ -8016,6 +8476,9 @@ export default function App() {
             )}
           </div>
         </div>
+        )}
+          </div>
+        )}
 
         {/* Modal de Comprovante de Pagamento do Jogador */}
         {modalComprovante && (
@@ -8083,7 +8546,7 @@ export default function App() {
         )}
           </div>
         </div>
-        <ModalAreaTransparencia />
+        {ModalAreaTransparencia()}
       </div>
     );
   }
@@ -8289,7 +8752,7 @@ export default function App() {
         ) : null}
 
         {/* CRONÔMETRO REGRESSIVO HH:MM:SS NO TOPO */}
-        <CountdownTimerBolaoElite compacto={false} />
+        {CountdownTimerBolaoElite({ compacto: false })}
 
         {/* LAYOUT EM GRID ORGANIZADO (2 COLUNAS NO DESKTOP / SEÇÕES LÓGICAS NO MOBILE) */}
         <div className="mt-5 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
@@ -8336,19 +8799,19 @@ export default function App() {
 
             {/* 3. CONTABILIZADOR DE DEPÓSITO EM TEMPO REAL */}
             <div id="secao-depositos-rodada">
-              <ContabilizadorDepositosJogador mostrarBotaoDepositar={true} />
+              {ContabilizadorDepositosJogador({ mostrarBotaoDepositar: true })}
             </div>
 
             {/* 4. ÁREA DE TRANSPARÊNCIA EM TEMPO REAL */}
             <div id="secao-transparencia-rodada">
-              <PainelTransparenciaJogadores />
+              {PainelTransparenciaJogadores()}
             </div>
           </div>
 
           {/* COLUNA DIREITA (7 COLUNAS): CONFRONTOS DA RODADA, MINHAS APOSTAS & PAGAMENTO */}
           <div className="lg:col-span-7 space-y-4">
             {/* Área Minhas Apostas (exibida automaticamente quando o jogador já selecionou seus times / ADM aprovou) */}
-            {meusPalpitesSalvos.length > 0 && !modoNovaAposta && <AreaMinhasApostas modoCompacto={true} />}
+            {meusPalpitesSalvos.length > 0 && !modoNovaAposta && AreaMinhasApostas({ modoCompacto: true })}
 
             {/* Banner de Modo Nova Aposta */}
             {modoNovaAposta && (
