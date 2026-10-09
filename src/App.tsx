@@ -47,6 +47,7 @@ import {
   sincronizarJogosDeHojeEspnComSupabase,
   listarJogosDoSupabase,
   getHojeBrasilISO,
+  toBrasilDateAndTime,
   limparCacheJogosLocal,
   MENSAGEM_DATA_FIFA,
 } from './supabase';
@@ -141,6 +142,8 @@ export interface Jogo {
   statusDetalhe?: string;
   resultadoOficial?: EscolhaResultado;
   publicado?: boolean;
+  iniciadoManualAdm?: boolean;
+  desbloqueadoManualAdm?: boolean;
   bolaoId?: string;
   tituloBolao?: string;
 }
@@ -191,6 +194,7 @@ export default function App() {
     pixAdm: string;
     cicloBolaoAtivoId?: string;
     boloesEncerradosIds?: string[];
+    bloqueioManualBolao?: boolean;
   }>(() => {
     let inicialVal = VALOR_COTA;
     let inicialLink = "";
@@ -289,7 +293,7 @@ export default function App() {
   const [nomeTime2, setNomeTime2] = useState("");
   const [escudoTime1, setEscudoTime1] = useState("");
   const [escudoTime2, setEscudoTime2] = useState("");
-  const [dataJ, setDataJ] = useState("16:00");
+  const [dataJ, setDataJ] = useState("21:30");
   const [estadio, setEstadio] = useState("Brasileirão Série A");
   const [tituloNovoBolao, setTituloNovoBolao] = useState(() => {
     try {
@@ -323,6 +327,91 @@ export default function App() {
     }
   });
 
+  const [agoraTimestamp, setAgoraTimestamp] = useState<number>(() => Date.now());
+  const [modalAvisoJogoComecouAberto, setModalAvisoJogoComecouAberto] = useState<boolean>(false);
+  const [liberarApenasJogosNaoIniciados, setLiberarApenasJogosNaoIniciados] = useState<boolean>(false);
+  const [filtroJogosJogador, setFiltroJogosJogador] = useState<"todos" | "nao_iniciados">("todos");
+  const [avisoJogoBloqueadoDetalhe, setAvisoJogoBloqueadoDetalhe] = useState<string>("");
+
+  // Calcula o timestamp exato (ms) de início de um jogo no Horário de Brasília (UTC-3)
+  const obterTimestampInicioJogo = (j: Jogo): number | null => {
+    if (!j) return null;
+    const strData = String(j.data || "").trim();
+    const matchHora = strData.match(/(\d{1,2})\s*[:hH]\s*(\d{2})/);
+    if (!matchHora) return null;
+
+    const hhJogo = Number(matchHora[1]);
+    const mmJogo = Number(matchHora[2]);
+    if (isNaN(hhJogo) || isNaN(mmJogo) || hhJogo < 0 || hhJogo > 23 || mmJogo < 0 || mmJogo > 59) {
+      return null;
+    }
+
+    const brAgora = toBrasilDateAndTime(new Date(agoraTimestamp));
+    const hojeIso = brAgora.isoDate;
+    let dataIsoJogo = String(j.data_jogo || "").trim().slice(0, 10);
+    const matchDataBr = strData.match(/(\d{2})\/(\d{2})(?:\/(\d{4}))?/);
+    if (matchDataBr) {
+      const dd = matchDataBr[1];
+      const mm = matchDataBr[2];
+      const yyyy = matchDataBr[3] || hojeIso.slice(0, 4);
+      dataIsoJogo = `${yyyy}-${mm}-${dd}`;
+    } else if (!/^\d{4}-\d{2}-\d{2}$/.test(dataIsoJogo)) {
+      dataIsoJogo = hojeIso;
+    }
+
+    const [yyyyStr, mmStr, ddStr] = dataIsoJogo.split("-");
+    const yyyyNum = Number(yyyyStr);
+    const mmNum = Number(mmStr);
+    const ddNum = Number(ddStr);
+    if (isNaN(yyyyNum) || isNaN(mmNum) || isNaN(ddNum)) return null;
+
+    // Horário de Brasília (UTC-3) -> UTC = hhJogo + 3
+    return Date.UTC(yyyyNum, mmNum - 1, ddNum, hhJogo + 3, mmJogo, 0, 0);
+  };
+
+  // Verifica se um jogo específico do bolão já começou (por placar ao vivo ESPN, encerrado, resultado oficial, marcação do ADM ou horário programado de Brasília)
+  const verificarSeJogoJaComecou = (j: Jogo): boolean => {
+    if (!j) return false;
+    if (j.aoVivo || j.encerrado || Boolean(j.resultadoOficial) || j.iniciadoManualAdm) {
+      return true;
+    }
+    if (j.desbloqueadoManualAdm) {
+      return false;
+    }
+    if (config.bloqueioManualBolao) {
+      return true;
+    }
+    const strData = String(j.data || "").trim();
+    const matchHora = strData.match(/(\d{1,2})\s*[:hH]\s*(\d{2})/);
+    if (matchHora) {
+      const hhJogo = Number(matchHora[1]);
+      const mmJogo = Number(matchHora[2]);
+      if (!isNaN(hhJogo) && !isNaN(mmJogo) && hhJogo >= 0 && hhJogo <= 23 && mmJogo >= 0 && mmJogo <= 59) {
+        const brAgora = toBrasilDateAndTime(new Date(agoraTimestamp));
+        const hojeIso = brAgora.isoDate;
+        const [hhAgoraStr, mmAgoraStr] = brAgora.timeStr.split(":");
+        const minutosAgora = Number(hhAgoraStr) * 60 + Number(mmAgoraStr);
+        const minutosJogo = hhJogo * 60 + mmJogo;
+
+        let dataIsoJogo = String(j.data_jogo || "").trim().slice(0, 10);
+        const matchDataBr = strData.match(/(\d{2})\/(\d{2})(?:\/(\d{4}))?/);
+        if (matchDataBr) {
+          const dd = matchDataBr[1];
+          const mm = matchDataBr[2];
+          const yyyy = matchDataBr[3] || hojeIso.slice(0, 4);
+          dataIsoJogo = `${yyyy}-${mm}-${dd}`;
+        } else if (!/^\d{4}-\d{2}-\d{2}$/.test(dataIsoJogo)) {
+          dataIsoJogo = hojeIso;
+        }
+
+        if (dataIsoJogo < hojeIso) return true;
+        if (dataIsoJogo > hojeIso) return false;
+        if (minutosAgora >= minutosJogo) return true;
+      }
+    }
+    return false;
+  };
+
   const getEscolhaDoJogo = (j: Jogo): EscolhaResultado | undefined => {
     const gUuid = (j as any)?.gameUuid;
     const chaveTime = `${(j.casa || "").trim().toLowerCase()}_x_${(j.fora || "").trim().toLowerCase()}`;
@@ -334,6 +423,11 @@ export default function App() {
   };
 
   const selecionarOpcaoJogo = (j: Jogo, escolha: EscolhaResultado) => {
+    if (verificarSeJogoJaComecou(j)) {
+      setAvisoJogoBloqueadoDetalhe(`${j.casa} x ${j.fora}`);
+      setModalAvisoJogoComecouAberto(true);
+      return;
+    }
     const gUuid = (j as any)?.gameUuid;
     const chaveTime = `${(j.casa || "").trim().toLowerCase()}_x_${(j.fora || "").trim().toLowerCase()}`;
     setEscolhasTemp((prev) => {
@@ -945,6 +1039,14 @@ export default function App() {
     return () => window.clearInterval(intervalId);
   }, [page]);
 
+  // Atualiza o cronômetro a cada 1 segundo (1000ms) para travar as apostas automaticamente quando chegar a 00:00:00
+  useEffect(() => {
+    const timer1s = window.setInterval(() => {
+      setAgoraTimestamp(Date.now());
+    }, 1000);
+    return () => window.clearInterval(timer1s);
+  }, []);
+
   // Inicialização automática no Admin com VALOR_COTA = 10 e carregamento de todos os usuários do Supabase
   useEffect(() => {
     if (page === "admin") {
@@ -1008,6 +1110,23 @@ export default function App() {
       setPage("loginJogador");
       return;
     }
+    const publicadosAtuais = jogos.filter((j) => j.publicado !== false);
+    const jaComecaram = publicadosAtuais.filter((j) => verificarSeJogoJaComecou(j));
+    const naoComecaram = publicadosAtuais.filter((j) => !verificarSeJogoJaComecou(j));
+
+    if (publicadosAtuais.length > 0 && jaComecaram.length > 0) {
+      setAvisoJogoBloqueadoDetalhe(
+        jaComecaram[0] ? `${jaComecaram[0].casa} x ${jaComecaram[0].fora}` : ""
+      );
+      setModalAvisoJogoComecouAberto(true);
+      if (naoComecaram.length === 0) {
+        setPage("palpites");
+        return;
+      }
+      setLiberarApenasJogosNaoIniciados(true);
+      setFiltroJogosJogador("nao_iniciados");
+    }
+
     setModoNovaAposta(true);
     setEscolhasTemp({});
     try {
@@ -1588,6 +1707,439 @@ export default function App() {
 
   const jogosPublicados = jogos.filter((j) => j.publicado !== false);
   const jogosSalvosNaoPublicados = jogos.filter((j) => j.publicado === false);
+
+  // Separação em tempo real (1s) dos jogos que já começaram vs jogos que ainda não começaram
+  const jogosJaComecaramLista = jogosPublicados.filter((j) => verificarSeJogoJaComecou(j));
+  const jogosQueNaoComecaramLista = jogosPublicados.filter((j) => !verificarSeJogoJaComecou(j));
+  const primeiroJogoDoBolaoComecou =
+    jogosPublicados.length > 0 &&
+    (Boolean(config.bloqueioManualBolao) || jogosJaComecaramLista.length > 0);
+  const todosJogosDoBolaoComecaram =
+    jogosPublicados.length > 0 &&
+    (Boolean(config.bloqueioManualBolao) || jogosQueNaoComecaramLista.length === 0);
+
+  // Calcula o timestamp alvo para o Cronômetro Regressivo (HH:MM:SS) do próximo jogo / bolão
+  const obterDadosCronometroBolao = () => {
+    if (config.bloqueioManualBolao) {
+      return {
+        bloqueado: true,
+        segundosRestantes: 0,
+        hhmmss: "00:00:00",
+        labelAlvo: "Bloqueado pelo ADM",
+        segundosProximoJogoDisponivel: 0,
+        hhmmssProximoDisponivel: "00:00:00",
+        proximoJogoNome: "",
+      };
+    }
+
+    if (config.timestampProximoBolao && config.timestampProximoBolao > 0) {
+      const diffMs = config.timestampProximoBolao - agoraTimestamp;
+      if (diffMs <= 0) {
+        return {
+          bloqueado: true,
+          segundosRestantes: 0,
+          hhmmss: "00:00:00",
+          labelAlvo: "Tempo esgotado",
+          segundosProximoJogoDisponivel: 0,
+          hhmmssProximoDisponivel: "00:00:00",
+          proximoJogoNome: "",
+        };
+      }
+      const totalSec = Math.floor(diffMs / 1000);
+      const hh = String(Math.floor(totalSec / 3600)).padStart(2, "0");
+      const mm = String(Math.floor((totalSec % 3600) / 60)).padStart(2, "0");
+      const ss = String(totalSec % 60).padStart(2, "0");
+      return {
+        bloqueado: false,
+        segundosRestantes: totalSec,
+        hhmmss: `${hh}:${mm}:${ss}`,
+        labelAlvo: "Próximo Bolão / Jogo",
+        segundosProximoJogoDisponivel: totalSec,
+        hhmmssProximoDisponivel: `${hh}:${mm}:${ss}`,
+        proximoJogoNome: jogosPublicados[0]
+          ? `${jogosPublicados[0].casa} x ${jogosPublicados[0].fora}`
+          : "Próxima Rodada",
+      };
+    }
+
+    // Ordena os timestamps dos jogos publicados
+    const jogosComTs = jogosPublicados
+      .map((j) => ({
+        jogo: j,
+        ts: obterTimestampInicioJogo(j),
+        jaComecou: verificarSeJogoJaComecou(j),
+      }))
+      .filter((x) => x.ts !== null) as Array<{ jogo: Jogo; ts: number; jaComecou: boolean }>;
+
+    jogosComTs.sort((a, b) => a.ts - b.ts);
+
+    const primeiroJogoItem = jogosComTs[0];
+    const proximoNaoIniciadoItem = jogosComTs.find((x) => !x.jaComecou && x.ts > agoraTimestamp);
+
+    let hhmmssProximoDisponivel = "00:00:00";
+    let segundosProximoJogoDisponivel = 0;
+    let proximoJogoNome = "";
+
+    if (proximoNaoIniciadoItem) {
+      const diffProx = Math.max(0, Math.floor((proximoNaoIniciadoItem.ts - agoraTimestamp) / 1000));
+      segundosProximoJogoDisponivel = diffProx;
+      const hhP = String(Math.floor(diffProx / 3600)).padStart(2, "0");
+      const mmP = String(Math.floor((diffProx % 3600) / 60)).padStart(2, "0");
+      const ssP = String(diffProx % 60).padStart(2, "0");
+      hhmmssProximoDisponivel = `${hhP}:${mmP}:${ssP}`;
+      proximoJogoNome = `${proximoNaoIniciadoItem.jogo.casa} x ${proximoNaoIniciadoItem.jogo.fora} (${proximoNaoIniciadoItem.jogo.data})`;
+    }
+
+    // Se o 1º jogo do bolão já começou (ou todos começaram), o cronômetro principal do bolão zera e trava!
+    if (primeiroJogoDoBolaoComecou) {
+      return {
+        bloqueado: true,
+        segundosRestantes: 0,
+        hhmmss: "00:00:00",
+        labelAlvo: jogosJaComecaramLista[0]
+          ? `${jogosJaComecaramLista[0].casa} x ${jogosJaComecaramLista[0].fora}`
+          : "1º Jogo Iniciado",
+        segundosProximoJogoDisponivel,
+        hhmmssProximoDisponivel,
+        proximoJogoNome,
+      };
+    }
+
+    if (primeiroJogoItem && primeiroJogoItem.ts > agoraTimestamp) {
+      const totalSec = Math.max(0, Math.floor((primeiroJogoItem.ts - agoraTimestamp) / 1000));
+      const hh = String(Math.floor(totalSec / 3600)).padStart(2, "0");
+      const mm = String(Math.floor((totalSec % 3600) / 60)).padStart(2, "0");
+      const ss = String(totalSec % 60).padStart(2, "0");
+      return {
+        bloqueado: totalSec <= 0,
+        segundosRestantes: totalSec,
+        hhmmss: `${hh}:${mm}:${ss}`,
+        labelAlvo: `${primeiroJogoItem.jogo.casa} x ${primeiroJogoItem.jogo.fora} (${primeiroJogoItem.jogo.data})`,
+        segundosProximoJogoDisponivel: totalSec,
+        hhmmssProximoDisponivel: `${hh}:${mm}:${ss}`,
+        proximoJogoNome: `${primeiroJogoItem.jogo.casa} x ${primeiroJogoItem.jogo.fora}`,
+      };
+    }
+
+    // Caso não haja jogos publicados ainda ou esteja em modo desbloqueado aguardando próximo jogo
+    return {
+      bloqueado: false,
+      segundosRestantes: 0,
+      hhmmss: "00:00:00",
+      labelAlvo: "Aguardando Próximo Jogo",
+      segundosProximoJogoDisponivel: 0,
+      hhmmssProximoDisponivel: "00:00:00",
+      proximoJogoNome: "",
+    };
+  };
+
+  const cronometroBolao = obterDadosCronometroBolao();
+  const apostasEncerradasPeloCronometroOuJogo = Boolean(
+    primeiroJogoDoBolaoComecou || cronometroBolao.bloqueado
+  );
+
+  // Alterna bloqueio/liberação manual de um jogo específico pelo ADM
+  const alternarBloqueioJogoAdm = (jogoId: string) => {
+    const novaLista = jogos.map((j) => {
+      if (j.id !== jogoId) return j;
+      const jaComecouAtual = verificarSeJogoJaComecou(j);
+      if (jaComecouAtual) {
+        return {
+          ...j,
+          aoVivo: false,
+          iniciadoManualAdm: false,
+          desbloqueadoManualAdm: true,
+        };
+      } else {
+        return {
+          ...j,
+          iniciadoManualAdm: true,
+          desbloqueadoManualAdm: false,
+        };
+      }
+    });
+    saveJogos(novaLista);
+    mostrarAvisoAdm("⏱️ Status de início/bloqueio do jogo atualizado com sucesso!");
+  };
+
+  // Define ou reseta o cronômetro geral do bolão pelo ADM
+  const definirCronometroBolaoAdm = (minutosNoFuturo: number | null, bloquearAgora = false) => {
+    if (bloquearAgora) {
+      const novoCfg = {
+        ...config,
+        bloqueioManualBolao: true,
+        desbloqueioManualBolao: false,
+        timestampProximoBolao: Date.now() - 1000,
+      };
+      saveConfig(novoCfg);
+      mostrarAvisoAdm("🔒 Apostas encerradas imediatamente! Os jogadores já estão vendo o aviso de bloqueio.");
+      return;
+    }
+    if (minutosNoFuturo !== null && minutosNoFuturo > 0) {
+      const novoTs = Date.now() + minutosNoFuturo * 60 * 1000;
+      const novaListaJogos = jogos.map((j) =>
+        j.publicado !== false
+          ? { ...j, iniciadoManualAdm: false, desbloqueadoManualAdm: false }
+          : j
+      );
+      saveJogos(novaListaJogos);
+      const novoCfg = {
+        ...config,
+        bloqueioManualBolao: false,
+        desbloqueioManualBolao: false,
+        timestampProximoBolao: novoTs,
+      };
+      saveConfig(novoCfg);
+      setLiberarApenasJogosNaoIniciados(false);
+      mostrarAvisoAdm(
+        `⏱️ Cronômetro ajustado para ${minutosNoFuturo} minuto(s)! Quando zerar (00:00:00), as apostas serão bloqueadas automaticamente.`
+      );
+      return;
+    }
+    // Seguir horário automático dos jogos
+    const novoCfg = {
+      ...config,
+      bloqueioManualBolao: false,
+      desbloqueioManualBolao: false,
+      timestampProximoBolao: 0,
+    };
+    saveConfig(novoCfg);
+    mostrarAvisoAdm("⏱️ Cronômetro sincronizado automaticamente com o horário do 1º jogo da rodada!");
+  };
+
+  // Componente Countdown Timer (Estilo Dourado e Verde, igual ao Bolão Elite, atualizando a cada 1s em HH:MM:SS)
+  const CountdownTimerBolaoElite = ({ compacto = false }: { compacto?: boolean }) => {
+    const [hhStr, mmStr, ssStr] = (cronometroBolao.hhmmss || "00:00:00").split(":");
+    const encerrado = apostasEncerradasPeloCronometroOuJogo;
+
+    return (
+      <div
+        className={`mt-4 rounded-2xl border-2 p-4 shadow-2xl transition-all ${
+          encerrado
+            ? "bg-gradient-to-br from-amber-950/90 via-zinc-950 to-emerald-950/80 border-amber-400 shadow-amber-500/20"
+            : "bg-gradient-to-br from-emerald-950/90 via-zinc-950 to-amber-950/80 border-emerald-400/90 shadow-emerald-500/20"
+        }`}
+      >
+        {/* Topo Dourado e Verde */}
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-400/30 pb-2.5">
+          <div className="flex items-center gap-2">
+            <span className="w-8 h-8 rounded-xl bg-gradient-to-br from-amber-400 to-yellow-600 text-black font-black flex items-center justify-center text-base shadow-md shadow-amber-400/30">
+              {encerrado ? "🔒" : "⏱️"}
+            </span>
+            <div>
+              <div className="text-[10px] font-black uppercase tracking-widest text-amber-300 flex items-center gap-1.5">
+                <span>BOLÃO ELITE • CRONÔMETRO OFICIAL</span>
+                <span
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-black border ${
+                    encerrado
+                      ? "bg-amber-400 text-black border-yellow-300"
+                      : "bg-emerald-500 text-black border-emerald-300"
+                  }`}
+                >
+                  <span
+                    className={`h-1.5 w-1.5 rounded-full ${
+                      encerrado ? "bg-black" : "bg-black animate-ping"
+                    }`}
+                  ></span>
+                  {encerrado ? "BLOQUEADO" : "AO VIVO 1S"}
+                </span>
+              </div>
+              <h3 className="text-xs sm:text-sm font-black text-white uppercase tracking-wide">
+                {encerrado
+                  ? "Apostas encerradas"
+                  : "Contagem Regressiva p/ o Próximo Jogo / Bolão"}
+              </h3>
+            </div>
+          </div>
+
+          <div className="text-right">
+            <span
+              className={`text-[10px] font-black uppercase px-2.5 py-1 rounded-lg border ${
+                encerrado
+                  ? "bg-amber-500/20 border-amber-400 text-amber-300"
+                  : "bg-emerald-500/20 border-emerald-400 text-emerald-300"
+              }`}
+            >
+              {encerrado ? "🔒 Apostas encerradas" : "🟢 Apostas Abertas"}
+            </span>
+          </div>
+        </div>
+
+        {/* Display Digital HH:MM:SS em Dourado e Verde */}
+        <div className="mt-3 flex flex-col sm:flex-row items-center justify-between gap-3 bg-black/85 border border-amber-400/40 rounded-2xl p-3.5 shadow-inner">
+          <div className="text-center sm:text-left space-y-0.5">
+            <div className="text-[10px] font-black uppercase tracking-wider text-emerald-400">
+              {encerrado
+                ? "Status do Bolão Atual:"
+                : "Tempo Restante para Fechamento (HH:MM:SS):"}
+            </div>
+            {encerrado ? (
+              <div className="text-base sm:text-xl font-black uppercase tracking-wider text-amber-400 flex items-center justify-center sm:justify-start gap-2">
+                <span>🔒</span>
+                <span>Apostas encerradas</span>
+              </div>
+            ) : (
+              <div className="text-xs font-bold text-zinc-300">
+                Próximo confronto:{" "}
+                <strong className="text-amber-300">{cronometroBolao.labelAlvo}</strong>
+              </div>
+            )}
+          </div>
+
+          {/* Caixas HH : MM : SS */}
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            <div className="bg-gradient-to-b from-zinc-900 to-black border-2 border-amber-400/80 rounded-xl px-3 py-2 min-w-[58px] text-center shadow-lg shadow-amber-500/10">
+              <div className="font-mono text-xl sm:text-2xl font-black text-amber-400 leading-none">
+                {hhStr || "00"}
+              </div>
+              <div className="text-[8px] font-black uppercase text-emerald-400 mt-1 tracking-wider">
+                Horas
+              </div>
+            </div>
+
+            <span className="font-mono text-xl sm:text-2xl font-black text-amber-400 animate-pulse">
+              :
+            </span>
+
+            <div className="bg-gradient-to-b from-zinc-900 to-black border-2 border-emerald-400/80 rounded-xl px-3 py-2 min-w-[58px] text-center shadow-lg shadow-emerald-500/10">
+              <div className="font-mono text-xl sm:text-2xl font-black text-emerald-400 leading-none">
+                {mmStr || "00"}
+              </div>
+              <div className="text-[8px] font-black uppercase text-amber-300 mt-1 tracking-wider">
+                Min
+              </div>
+            </div>
+
+            <span className="font-mono text-xl sm:text-2xl font-black text-emerald-400 animate-pulse">
+              :
+            </span>
+
+            <div className="bg-gradient-to-b from-zinc-900 to-black border-2 border-amber-400/80 rounded-xl px-3 py-2 min-w-[58px] text-center shadow-lg shadow-amber-500/10">
+              <div className="font-mono text-xl sm:text-2xl font-black text-amber-300 leading-none">
+                {ssStr || "00"}
+              </div>
+              <div className="text-[8px] font-black uppercase text-emerald-400 mt-1 tracking-wider">
+                Seg
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Aviso Automático quando o 1º jogo começou / cronômetro zerou */}
+        {encerrado && (
+          <div className="mt-3 bg-gradient-to-r from-amber-500/20 via-black to-emerald-500/20 border-2 border-amber-400 rounded-xl p-3.5 space-y-2.5 text-left">
+            <div className="flex items-start gap-2.5">
+              <span className="text-xl shrink-0">⚠️</span>
+              <div className="space-y-1">
+                <div className="text-xs sm:text-sm font-black text-amber-300 uppercase">
+                  Apostas encerradas — O jogo já começou!
+                </div>
+                <p className="text-xs text-white font-bold leading-relaxed">
+                  O jogo já começou! Aguarde o próximo bolão ou aposte nos jogos que não começaram.
+                </p>
+                <div className="flex flex-wrap items-center gap-2 pt-0.5 text-[10px]">
+                  <span className="bg-red-950/90 text-red-300 border border-red-700/80 px-2 py-0.5 rounded font-black">
+                    🔒 {jogosJaComecaramLista.length} jogo(s) já iniciado(s) / bloqueado(s)
+                  </span>
+                  <span className="bg-emerald-950/90 text-emerald-300 border border-emerald-600/80 px-2 py-0.5 rounded font-black">
+                    🟢 {jogosQueNaoComecaramLista.length} jogo(s) que ainda não começaram
+                  </span>
+                  {cronometroBolao.segundosProximoJogoDisponivel > 0 && (
+                    <span className="bg-amber-950/90 text-amber-300 border border-amber-500/80 px-2 py-0.5 rounded font-mono font-black">
+                      ⏱️ Próximo jogo não iniciado em: {cronometroBolao.hhmmssProximoDisponivel}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {!compacto && (
+              <div className="flex flex-col sm:flex-row gap-2 pt-1">
+                {jogosQueNaoComecaramLista.length > 0 && !config.bloqueioManualBolao && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLiberarApenasJogosNaoIniciados(true);
+                      setFiltroJogosJogador("nao_iniciados");
+                      setModalAvisoJogoComecouAberto(false);
+                      // Limpa escolhas temporárias de jogos que já começaram
+                      setEscolhasTemp((prev) => {
+                        const limpo: Record<string, EscolhaResultado> = {};
+                        jogosQueNaoComecaramLista.forEach((jg) => {
+                          const esc = prev[jg.id];
+                          if (esc) limpo[jg.id] = esc;
+                        });
+                        try {
+                          localStorage.setItem("elite_escolhas_temp_v11", JSON.stringify(limpo));
+                        } catch {}
+                        return limpo;
+                      });
+                      const el = document.getElementById("secao-jogos-rodada");
+                      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+                    }}
+                    className="flex-1 bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-400 hover:to-green-500 text-black font-black py-2.5 px-3 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition shadow-lg shadow-emerald-500/25 flex items-center justify-center gap-1.5 border border-emerald-300"
+                  >
+                    <span>⚽</span>
+                    <span>
+                      APOSTAR NOS JOGOS QUE NÃO COMEÇARAM ({jogosQueNaoComecaramLista.length})
+                    </span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setPage("classificacao")}
+                  className="flex-1 bg-gradient-to-r from-amber-400 to-yellow-500 hover:from-amber-300 hover:to-yellow-400 text-black font-black py-2.5 px-3 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition shadow-lg shadow-amber-400/25 flex items-center justify-center gap-1.5 border border-yellow-200"
+                >
+                  <span>⏳</span>
+                  <span>AGUARDAR O PRÓXIMO BOLÃO (VER RANKING)</span>
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const todosJogosJaComecaram = todosJogosDoBolaoComecaram;
+
+  const alternarStatusJogoComecouAdm = (jogoId: string) => {
+    const novaLista = jogos.map((j) => {
+      if (j.id !== jogoId) return j;
+      const jaIniciado = verificarSeJogoJaComecou(j);
+      if (jaIniciado) {
+        return {
+          ...j,
+          aoVivo: false,
+          encerrado: false,
+          iniciadoManualAdm: false,
+          desbloqueadoManualAdm: true,
+        };
+      }
+      return {
+        ...j,
+        iniciadoManualAdm: true,
+        desbloqueadoManualAdm: false,
+      };
+    });
+    saveJogos(novaLista);
+    mostrarAvisoAdm("🔒 Status de bloqueio do jogo atualizado com sucesso!");
+  };
+
+  const alternarBloqueioGeralBolaoAdm = () => {
+    const novoStatus = !config.bloqueioManualBolao;
+    const novoConfig = {
+      ...config,
+      bloqueioManualBolao: novoStatus,
+    };
+    saveConfig(novoConfig);
+    mostrarAvisoAdm(
+      novoStatus
+        ? "🔒 Apostas do bolão bloqueadas! Jogadores verão o aviso de que o jogo já começou."
+        : "🔓 Bloqueio manual geral removido! Jogos que ainda não começaram estão liberados."
+    );
+  };
 
   // Agrupa os bolões salvos (não publicados) por bolaoId
   const boloesSalvosMap = new Map<string, { bolaoId: string; titulo: string; jogos: Jogo[] }>();
@@ -3226,14 +3778,26 @@ export default function App() {
 
   const salvarPalpitesTemporariosSeHouver = async () => {
     if (!user) return;
-    const jogosComPalpite = jogosPublicados.filter((j) => Boolean(getEscolhaDoJogo(j)));
-    if (jogosComPalpite.length === 0) return;
+    const emailUserNorm = (user.email || "").trim().toLowerCase();
+    const palpitesJaSalvosDoJogador = palpites.filter(
+      (p) => (p.jogadorEmail || "").trim().toLowerCase() === emailUserNorm
+    );
+    const mapaJaSalvos = new Map<string, Palpite>();
+    palpitesJaSalvosDoJogador.forEach((p) => {
+      mapaJaSalvos.set(p.jogoId, p);
+    });
+
+    // Permite salvar novos palpites APENAS em jogos que ainda NÃO começaram, mantendo inalterados os palpites já salvos antes do início
+    const jogosNaoIniciadosComPalpite = jogosPublicados.filter(
+      (j) => !verificarSeJogoJaComecou(j) && Boolean(getEscolhaDoJogo(j))
+    );
+    if (jogosNaoIniciadosComPalpite.length === 0 && palpitesJaSalvosDoJogador.length === 0) return;
 
     const jaPago =
       !modoNovaAposta &&
       Boolean(isDepositoConfirmado || isParticipanteDepositanteNoBolaoAtual(user));
 
-    const novosPalpites: Palpite[] = jogosComPalpite.map((j) => ({
+    const novosPalpitesNaoIniciados: Palpite[] = jogosNaoIniciadosComPalpite.map((j) => ({
       jogadorEmail: user.email,
       jogoId: j.id,
       escolha: getEscolhaDoJogo(j)!,
@@ -3241,15 +3805,147 @@ export default function App() {
       bolaoPagoId: jaPago ? cicloBolaoAtivoId : "",
     }));
 
-    const outros = palpites.filter((p) => p.jogadorEmail !== user.email);
-    const todos = [...outros, ...novosPalpites];
+    const idsAtualizados = new Set(novosPalpitesNaoIniciados.map((x) => x.jogoId));
+    const mantidosDeJogosIniciados = modoNovaAposta
+      ? []
+      : palpitesJaSalvosDoJogador.filter((p) => !idsAtualizados.has(p.jogoId));
+
+    const finaisDoJogador = [...mantidosDeJogosIniciados, ...novosPalpitesNaoIniciados];
+    const outros = palpites.filter(
+      (p) => (p.jogadorEmail || "").trim().toLowerCase() !== emailUserNorm
+    );
+    const todos = [...outros, ...finaisDoJogador];
     setPalpites(todos);
     localStorage.setItem("elite_palpites_v11", JSON.stringify(todos));
     setModoNovaAposta(false);
 
-    for (const np of novosPalpites) {
+    for (const np of novosPalpitesNaoIniciados) {
       await upsertPalpiteInDb(np).catch(() => {});
     }
+  };
+
+  const validarPermissaoApostaAntesDePagar = (): boolean => {
+    if (!user) {
+      setPage("loginJogador");
+      return false;
+    }
+    const jogosNaoIniciadosComPalpite = jogosPublicados.filter(
+      (j) => !verificarSeJogoJaComecou(j) && Boolean(getEscolhaDoJogo(j))
+    );
+    const temApostaSalvaAnterior = !modoNovaAposta && meusPalpitesSalvos.length > 0;
+
+    if (todosJogosJaComecaram && !temApostaSalvaAnterior) {
+      setModalAvisoJogoComecouAberto(true);
+      return false;
+    }
+
+    if (primeiroJogoDoBolaoComecou && jogosNaoIniciadosComPalpite.length === 0 && !temApostaSalvaAnterior) {
+      setModalAvisoJogoComecouAberto(true);
+      return false;
+    }
+
+    if (jogosNaoIniciadosComPalpite.length === 0 && !temApostaSalvaAnterior) {
+      alert("Selecione seus palpites nos jogos que ainda não começaram antes de pagar!");
+      return false;
+    }
+    return true;
+  };
+
+  const ModalAvisoJogoJaComecou = () => {
+    if (!modalAvisoJogoComecouAberto) return null;
+    return (
+      <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="bg-zinc-900 border-2 border-red-500 rounded-3xl max-w-md w-full p-6 space-y-4 shadow-2xl text-center animate-fade-in">
+          <div className="w-16 h-16 rounded-2xl bg-red-600/20 border-2 border-red-500 flex items-center justify-center text-3xl mx-auto shadow-lg shadow-red-600/20">
+            🔒
+          </div>
+
+          <div className="space-y-1.5">
+            <span className="inline-block text-[10px] font-black uppercase tracking-wider bg-red-600 text-white px-3 py-1 rounded-full">
+              Acesso às Apostas Bloqueado
+            </span>
+            <h3 className="text-lg sm:text-xl font-black text-white">
+              O Jogo Já Começou!
+            </h3>
+            {avisoJogoBloqueadoDetalhe && (
+              <div className="text-xs font-black text-amber-400">
+                Confronto em andamento/iniciado: {avisoJogoBloqueadoDetalhe}
+              </div>
+            )}
+          </div>
+
+          <div className="bg-red-950/70 border border-red-600/80 rounded-2xl p-4 text-xs sm:text-sm text-red-100 font-bold leading-relaxed">
+            ⚠️ O primeiro jogo do bolão já começou! <br />
+            <span className="text-amber-300 font-black">
+              Aguarde o próximo bolão ou aposte nos jogos que não começaram.
+            </span>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 text-left bg-black/70 border border-zinc-800 p-3 rounded-xl text-xs">
+            <div className="bg-red-950/40 border border-red-800/60 p-2.5 rounded-lg">
+              <div className="text-[10px] text-red-400 font-black uppercase">🔴 Já Começaram</div>
+              <div className="text-base font-black text-white mt-0.5">
+                {jogosJaComecaramLista.length} jogo(s)
+              </div>
+              <div className="text-[10px] text-zinc-400">Bloqueados p/ aposta</div>
+            </div>
+            <div className="bg-green-950/40 border border-green-800/60 p-2.5 rounded-lg">
+              <div className="text-[10px] text-green-400 font-black uppercase">🟢 Não Começaram</div>
+              <div className="text-base font-black text-green-400 mt-0.5">
+                {jogosQueNaoComecaramLista.length} jogo(s)
+              </div>
+              <div className="text-[10px] text-zinc-400">
+                {jogosQueNaoComecaramLista.length > 0 ? "Disponíveis agora" : "Nenhum restante"}
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-2.5 pt-1">
+            {jogosQueNaoComecaramLista.length > 0 && !config.bloqueioManualBolao && (
+              <button
+                type="button"
+                onClick={() => {
+                  setLiberarApenasJogosNaoIniciados(true);
+                  setFiltroJogosJogador("nao_iniciados");
+                  setModalAvisoJogoComecouAberto(false);
+                  if (page !== "palpites") {
+                    setPage("palpites");
+                  }
+                  setTimeout(() => {
+                    const el = document.getElementById("secao-jogos-rodada");
+                    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+                  }, 100);
+                }}
+                className="w-full bg-green-500 hover:bg-green-400 text-black font-black py-3.5 px-4 rounded-xl text-xs sm:text-sm uppercase tracking-wider cursor-pointer transition shadow-lg shadow-green-500/25 flex items-center justify-center gap-2"
+              >
+                <span>⚽</span>
+                <span>APOSTAR NOS JOGOS QUE NÃO COMEÇARAM ({jogosQueNaoComecaramLista.length})</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => {
+                setModalAvisoJogoComecouAberto(false);
+                setPage("classificacao");
+              }}
+              className="w-full bg-[#FF6B00] hover:bg-[#ff7b1a] text-black font-black py-3.5 px-4 rounded-xl text-xs sm:text-sm uppercase tracking-wider cursor-pointer transition shadow-lg shadow-[#FF6B00]/20 flex items-center justify-center gap-2"
+            >
+              <span>⏳</span>
+              <span>AGUARDAR PRÓXIMO BOLÃO • VER RANKING</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setModalAvisoJogoComecouAberto(false)}
+              className="w-full bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold py-2.5 rounded-xl text-xs cursor-pointer transition"
+            >
+              Fechar Aviso
+            </button>
+          </div>
+        </div>
+      </div>
+    );
   };
 
   const BotoesPagamentoDuplo = ({ validarPalpitesAntes = false }: { validarPalpitesAntes?: boolean }) => (
@@ -3268,15 +3964,7 @@ export default function App() {
             type="button"
             onClick={async () => {
               if (validarPalpitesAntes) {
-                if (!user) {
-                  setPage("loginJogador");
-                  return;
-                }
-                const jogosComPalpite = jogosPublicados.filter((j) => Boolean(getEscolhaDoJogo(j)));
-                if (jogosComPalpite.length === 0 && meusPalpitesSalvos.length === 0) {
-                  alert("Selecione seus palpites nos jogos da rodada antes de pagar!");
-                  return;
-                }
+                if (!validarPermissaoApostaAntesDePagar()) return;
                 await salvarPalpitesTemporariosSeHouver();
               }
               await acionarPixDireto();
@@ -3367,15 +4055,7 @@ export default function App() {
             disabled={carregandoInfinitePay}
             onClick={async () => {
               if (validarPalpitesAntes) {
-                if (!user) {
-                  setPage("loginJogador");
-                  return;
-                }
-                const jogosComPalpite = jogosPublicados.filter((j) => Boolean(getEscolhaDoJogo(j)));
-                if (jogosComPalpite.length === 0 && meusPalpitesSalvos.length === 0) {
-                  alert("Selecione seus palpites nos jogos da rodada antes de pagar!");
-                  return;
-                }
+                if (!validarPermissaoApostaAntesDePagar()) return;
                 await salvarPalpitesTemporariosSeHouver();
               }
               await abrirLinkPagamentoInfinitePay();
@@ -4091,6 +4771,11 @@ export default function App() {
               </button>
             </div>
           )}
+
+          {/* Cronômetro Dourado e Verde na Landing Page */}
+          <div className="w-full">
+            <CountdownTimerBolaoElite compacto={true} />
+          </div>
 
           {/* Painel Placar ao Vivo / Status Oficial ESPN (Brasileirão) na Tela Inicial */}
           <div className="w-full mt-5 bg-zinc-900/90 border border-zinc-800 rounded-2xl p-3.5 text-left space-y-2.5 shadow-lg">
@@ -7185,15 +7870,33 @@ export default function App() {
           {/* CAIXA 2: CONFRONTOS ATIVOS (JÁ PUBLICADOS P/ OS JOGADORES)      */}
           {/* =============================================================== */}
           <div className="mt-4 space-y-2">
-            <div className="flex justify-between items-center">
+            <div className="flex flex-wrap justify-between items-center gap-2">
               <div className="text-[11px] uppercase font-bold text-zinc-400">
-                🟢 JOGOS NO BOLÃO ({jogosPublicados.length}) • DISPONÍVEIS PARA OS JOGADORES
+                🟢 JOGOS NO BOLÃO ({jogosPublicados.length}) •{" "}
+                {primeiroJogoDoBolaoComecou
+                  ? `🔒 ${jogosJaComecaramLista.length} INICIADO(S) / ${jogosQueNaoComecaramLista.length} ABERTO(S)`
+                  : "DISPONÍVEIS PARA OS JOGADORES"}
               </div>
               {jogosPublicados.length > 0 && (
-                <span className="text-[10px] text-green-400 font-bold flex items-center gap-1">
-                  <span className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse"></span>
-                  DISPONÍVEIS PARA OS JOGADORES
-                </span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={alternarBloqueioGeralBolaoAdm}
+                    className={`text-[10px] font-black px-2.5 py-1 rounded-lg border cursor-pointer transition ${
+                      config.bloqueioManualBolao
+                        ? "bg-green-600 text-black border-green-400"
+                        : "bg-red-950/80 hover:bg-red-900 text-red-200 border-red-700"
+                    }`}
+                  >
+                    {config.bloqueioManualBolao
+                      ? "🔓 Liberar Bolão p/ Apostas"
+                      : "🔒 Bloquear Bolão Agora (1º Jogo Começou)"}
+                  </button>
+                  <span className="text-[10px] text-green-400 font-bold flex items-center gap-1">
+                    <span className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse"></span>
+                    {primeiroJogoDoBolaoComecou ? "BLOQUEIO AUTOMÁTICO ATIVO" : "DISPONÍVEIS P/ JOGADORES"}
+                  </span>
+                </div>
               )}
             </div>
 
@@ -7207,52 +7910,81 @@ export default function App() {
                 </p>
               </div>
             ) : (
-              jogosPublicados.map((j) => (
-                <div
-                  key={j.id}
-                  className="flex justify-between items-center bg-black p-2.5 rounded-xl text-xs border border-green-900/50 hover:border-green-700/60 transition"
-                >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="text-[9px] bg-green-500/20 text-green-400 border border-green-500/40 px-1.5 py-0.5 rounded font-bold shrink-0">
-                      PUBLICADO
-                    </span>
-                    <Escudo src={j.escudoCasa} nome={j.casa} size={32} />
-                    <span className="font-bold text-white truncate">{j.casa}</span>
-                    <span className="bg-zinc-900 border border-zinc-700 px-2 py-0.5 rounded font-mono text-xs font-black text-[#FF6B00]">
-                      {j.placarCasa ?? 0} x {j.placarFora ?? 0}
-                    </span>
-                    <span className="font-bold text-white truncate">{j.fora}</span>
-                    <Escudo src={j.escudoFora} nome={j.fora} size={32} />
-                    {j.aoVivo && (
-                      <span className="text-[9px] bg-red-600 text-white font-black px-1.5 py-0.5 rounded animate-pulse shrink-0">
-                        🔴 AO VIVO {j.tempoJogo ? `• ${j.tempoJogo}` : ""}
+              jogosPublicados.map((j) => {
+                const jaComecouAdm = verificarSeJogoJaComecou(j);
+                return (
+                  <div
+                    key={j.id}
+                    className={`flex flex-wrap justify-between items-center gap-2 bg-black p-2.5 rounded-xl text-xs border transition ${
+                      jaComecouAdm
+                        ? "border-red-700/70 bg-red-950/15"
+                        : "border-green-900/50 hover:border-green-700/60"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span
+                        className={`text-[9px] px-1.5 py-0.5 rounded font-bold shrink-0 border ${
+                          jaComecouAdm
+                            ? "bg-red-600/20 text-red-300 border-red-500/50"
+                            : "bg-green-500/20 text-green-400 border-green-500/40"
+                        }`}
+                      >
+                        {jaComecouAdm ? "🔒 JÁ COMEÇOU" : "🟢 ABERTO"}
                       </span>
-                    )}
-                    <span className="text-[10px] text-zinc-500 ml-2 hidden sm:inline">
-                      • {j.data} ({j.estadio})
-                    </span>
+                      <Escudo src={j.escudoCasa} nome={j.casa} size={32} />
+                      <span className="font-bold text-white truncate">{j.casa}</span>
+                      <span className="bg-zinc-900 border border-zinc-700 px-2 py-0.5 rounded font-mono text-xs font-black text-[#FF6B00]">
+                        {j.placarCasa ?? 0} x {j.placarFora ?? 0}
+                      </span>
+                      <span className="font-bold text-white truncate">{j.fora}</span>
+                      <Escudo src={j.escudoFora} nome={j.fora} size={32} />
+                      {j.aoVivo && (
+                        <span className="text-[9px] bg-red-600 text-white font-black px-1.5 py-0.5 rounded animate-pulse shrink-0">
+                          🔴 AO VIVO {j.tempoJogo ? `• ${j.tempoJogo}` : ""}
+                        </span>
+                      )}
+                      <span className="text-[10px] text-zinc-400 ml-1">
+                        • {j.data} ({j.estadio})
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => alternarStatusJogoComecouAdm(j.id)}
+                        className={`font-bold px-2 py-1 rounded border cursor-pointer text-[11px] transition ${
+                          jaComecouAdm
+                            ? "text-green-300 hover:text-green-200 bg-green-950/50 border-green-700/70"
+                            : "text-red-300 hover:text-red-200 bg-red-950/50 border-red-800/70"
+                        }`}
+                        title={
+                          jaComecouAdm
+                            ? "Desbloquear este jogo para permitir apostas novamente"
+                            : "Marcar que este jogo já começou e bloquear apostas nele"
+                        }
+                      >
+                        {jaComecouAdm ? "🔓 Liberar Jogo" : "🔒 Já Começou"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => ocultarJogoPublicadoParaRascunho(j.id)}
+                        className="text-amber-300 hover:text-amber-200 font-bold px-2 py-1 bg-amber-950/40 rounded border border-amber-800/60 cursor-pointer text-[11px]"
+                        title="Ocultar dos jogadores e voltar para Bolões Salvos"
+                      >
+                        🔒 Voltar p/ Salvo
+                      </button>
+                      <button
+                        onClick={() => {
+                          const nova = jogos.filter((x) => x.id !== j.id);
+                          saveJogos(nova);
+                        }}
+                        className="text-red-400 hover:text-red-300 font-bold px-2 py-1 bg-red-950/40 rounded border border-red-900/60 cursor-pointer text-xs"
+                      >
+                        Excluir
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => ocultarJogoPublicadoParaRascunho(j.id)}
-                      className="text-amber-300 hover:text-amber-200 font-bold px-2 py-1 bg-amber-950/40 rounded border border-amber-800/60 cursor-pointer text-[11px]"
-                      title="Ocultar dos jogadores e voltar para Bolões Salvos"
-                    >
-                      🔒 Voltar p/ Salvo
-                    </button>
-                    <button
-                      onClick={() => {
-                        const nova = jogos.filter((x) => x.id !== j.id);
-                        saveJogos(nova);
-                      }}
-                      className="text-red-400 hover:text-red-300 font-bold px-2 py-1 bg-red-950/40 rounded border border-red-900/60 cursor-pointer text-xs"
-                    >
-                      Excluir
-                    </button>
-                  </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>
@@ -7516,6 +8248,84 @@ export default function App() {
           </div>
         )}
 
+        {/* CRONÔMETRO REGRESSIVO HH:MM:SS (DOURADO E VERDE - BOLÃO ELITE • ATUALIZA A CADA 1S) */}
+        <CountdownTimerBolaoElite compacto={false} />
+
+        {/* AVISO E BLOQUEIO QUANDO O PRIMEIRO JOGO DO BOLÃO JÁ COMEÇOU */}
+        {primeiroJogoDoBolaoComecou && (
+          <div className="mt-4 bg-gradient-to-r from-red-950 via-zinc-900 to-black border-2 border-red-500 text-red-100 p-4 rounded-2xl shadow-xl space-y-3 animate-fade-in">
+            <div className="flex items-start gap-3">
+              <div className="w-11 h-11 rounded-2xl bg-red-600/25 border-2 border-red-500 flex items-center justify-center text-2xl shrink-0">
+                🔒
+              </div>
+              <div className="space-y-1 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[10px] font-black uppercase tracking-wider bg-red-600 text-white px-2.5 py-0.5 rounded-full">
+                    Acesso às Apostas Bloqueado
+                  </span>
+                  <span className="text-[10px] font-bold text-amber-300">
+                    🔴 {jogosJaComecaramLista.length} jogo(s) já iniciado(s) • 🟢 {jogosQueNaoComecaramLista.length} não iniciado(s)
+                  </span>
+                </div>
+                <div className="text-sm sm:text-base font-black text-white">
+                  ⚠️ O jogo já começou! Aguarde o próximo bolão ou aposte nos jogos que não começaram.
+                </div>
+                <p className="text-xs text-red-200/90 leading-relaxed">
+                  {jogosQueNaoComecaramLista.length > 0 && !config.bloqueioManualBolao
+                    ? `O 1º jogo da rodada já começou e foi bloqueado. Você pode aguardar o próximo bolão ou apostar exclusivamente nos ${jogosQueNaoComecaramLista.length} jogo(s) que ainda não começaram.`
+                    : "Todos os jogos deste bolão já começaram! O acesso a novas apostas está bloqueado. Aguarde a abertura do próximo bolão."}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              {jogosQueNaoComecaramLista.length > 0 && !config.bloqueioManualBolao && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLiberarApenasJogosNaoIniciados(true);
+                    setFiltroJogosJogador("nao_iniciados");
+                  }}
+                  className={`flex-1 min-w-[210px] font-black py-2.5 px-3.5 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition flex items-center justify-center gap-1.5 shadow-lg ${
+                    liberarApenasJogosNaoIniciados && filtroJogosJogador === "nao_iniciados"
+                      ? "bg-green-500 text-black border-2 border-green-300"
+                      : "bg-green-600 hover:bg-green-500 text-black"
+                  }`}
+                >
+                  <span>⚽</span>
+                  <span>
+                    Apostar nos Jogos que Não Começaram ({jogosQueNaoComecaramLista.length})
+                  </span>
+                </button>
+              )}
+
+              {liberarApenasJogosNaoIniciados && jogosQueNaoComecaramLista.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setFiltroJogosJogador(
+                      filtroJogosJogador === "nao_iniciados" ? "todos" : "nao_iniciados"
+                    )
+                  }
+                  className="bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-200 font-bold py-2.5 px-3 rounded-xl text-xs cursor-pointer transition"
+                >
+                  {filtroJogosJogador === "nao_iniciados"
+                    ? `📋 Ver Todos (${jogosPublicados.length})`
+                    : `🟢 Ver Só Não Iniciados (${jogosQueNaoComecaramLista.length})`}
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setPage("classificacao")}
+                className="bg-[#FF6B00] hover:bg-[#ff7b1a] text-black font-black py-2.5 px-3.5 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition shadow"
+              >
+                🏆 Aguardar Próximo Bolão (Ranking)
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Status da Rodada (Dinâmico • Atualiza a cada 1 minuto ao vivo da ESPN) */}
         <div
           id="secao-jogos-rodada"
@@ -7523,10 +8333,12 @@ export default function App() {
         >
           <div className="flex flex-col gap-0.5">
             <div className="flex items-center gap-2">
-              <span className={`h-2 w-2 rounded-full ${jogosPublicados.length > 0 ? "bg-green-500 animate-pulse" : "bg-amber-500"}`}></span>
+              <span className={`h-2 w-2 rounded-full ${primeiroJogoDoBolaoComecou ? "bg-red-500 animate-pulse" : jogosPublicados.length > 0 ? "bg-green-500 animate-pulse" : "bg-amber-500"}`}></span>
               <span className="text-xs font-bold text-white">
                 {jogosPublicados.length > 0
-                  ? `Escolha de Jogos: ${jogosPublicados.length} Jogo(s) Disponível(is) p/ Apostar`
+                  ? primeiroJogoDoBolaoComecou
+                    ? `🔒 1º Jogo Iniciado • ${jogosQueNaoComecaramLista.length} Jogo(s) Que Não Começaram`
+                    : `Escolha de Jogos: ${jogosPublicados.length} Jogo(s) Disponível(is) p/ Apostar`
                   : MENSAGEM_DATA_FIFA}
               </span>
             </div>
@@ -7567,12 +8379,93 @@ export default function App() {
               Conectado ao vivo na API oficial da ESPN (Brasileirão Série A). A página atualiza automaticamente a cada 1 minuto sem usar jogos falsos.
             </p>
           </div>
+        ) : primeiroJogoDoBolaoComecou && (!liberarApenasJogosNaoIniciados || todosJogosJaComecaram) ? (
+          /* TELA DE BLOQUEIO AUTOMÁTICO QUANDO O 1º JOGO DO BOLÃO COMEÇOU */
+          <div className="mt-4 bg-zinc-900 border-2 border-red-500 rounded-3xl p-6 text-center space-y-4 shadow-2xl">
+            <div className="w-16 h-16 rounded-2xl bg-red-600/20 border-2 border-red-500 flex items-center justify-center text-3xl mx-auto shadow-lg shadow-red-600/20">
+              🔒
+            </div>
+            <div className="space-y-1">
+              <span className="inline-block text-[10px] font-black uppercase tracking-wider bg-red-600 text-white px-3 py-1 rounded-full">
+                Acesso às Apostas Bloqueado
+              </span>
+              <h3 className="text-lg sm:text-xl font-black text-white">
+                O Primeiro Jogo do Bolão Já Começou!
+              </h3>
+            </div>
+
+            <div className="bg-red-950/70 border border-red-500/80 rounded-2xl p-4 text-xs sm:text-sm text-red-100 font-bold leading-relaxed max-w-md mx-auto">
+              ⚠️ O jogo já começou! <br />
+              <span className="text-amber-300 font-black">
+                Aguarde o próximo bolão ou aposte nos jogos que não começaram.
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 max-w-md mx-auto text-left">
+              <div className="bg-black/80 border border-red-800/70 p-3 rounded-xl">
+                <div className="text-[10px] text-red-400 font-black uppercase">🔴 Jogos Iniciados</div>
+                <div className="text-lg font-black text-white mt-0.5">
+                  {jogosJaComecaramLista.length} jogo(s)
+                </div>
+                <div className="text-[10px] text-zinc-400">Apostas bloqueadas</div>
+              </div>
+              <div className="bg-black/80 border border-green-800/70 p-3 rounded-xl">
+                <div className="text-[10px] text-green-400 font-black uppercase">🟢 Não Começaram</div>
+                <div className="text-lg font-black text-green-400 mt-0.5">
+                  {jogosQueNaoComecaramLista.length} jogo(s)
+                </div>
+                <div className="text-[10px] text-zinc-400">
+                  {jogosQueNaoComecaramLista.length > 0 ? "Liberados p/ apostar" : "Rodada em andamento"}
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-2.5 max-w-md mx-auto pt-1">
+              {jogosQueNaoComecaramLista.length > 0 && !config.bloqueioManualBolao && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLiberarApenasJogosNaoIniciados(true);
+                    setFiltroJogosJogador("nao_iniciados");
+                  }}
+                  className="w-full bg-green-500 hover:bg-green-400 text-black font-black py-4 px-4 rounded-xl text-xs sm:text-sm uppercase tracking-wider cursor-pointer transition shadow-lg shadow-green-500/25 flex items-center justify-center gap-2"
+                >
+                  <span>⚽</span>
+                  <span>APOSTAR NOS JOGOS QUE NÃO COMEÇARAM ({jogosQueNaoComecaramLista.length})</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setPage("classificacao")}
+                className="w-full bg-[#FF6B00] hover:bg-[#ff7b1a] text-black font-black py-3.5 px-4 rounded-xl text-xs sm:text-sm uppercase tracking-wider cursor-pointer transition shadow-lg shadow-[#FF6B00]/20 flex items-center justify-center gap-2"
+              >
+                <span>⏳</span>
+                <span>AGUARDAR O PRÓXIMO BOLÃO • VER CLASSIFICAÇÃO</span>
+              </button>
+
+              {meusPalpitesSalvos.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setPage("minhasApostas")}
+                  className="w-full bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-white font-bold py-3 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition flex items-center justify-center gap-2"
+                >
+                  <span>🎫</span>
+                  <span>VER MINHAS APOSTAS REGISTRADAS ({meusPalpitesSalvos.length})</span>
+                </button>
+              )}
+            </div>
+          </div>
         ) : (
           <div className="mt-4 space-y-3">
-            {jogosPublicados.map((j, idx) => {
+            {(primeiroJogoDoBolaoComecou && filtroJogosJogador === "nao_iniciados"
+              ? jogosQueNaoComecaramLista
+              : jogosPublicados
+            ).map((j, idx) => {
               const escolhaAtual = getEscolhaDoJogo(j);
               const ganhouJogo = Boolean(escolhaAtual && j.resultadoOficial && j.resultadoOficial === escolhaAtual);
               const perdeuJogo = Boolean(escolhaAtual && j.resultadoOficial && j.resultadoOficial !== escolhaAtual);
+              const jogoBloqueadoJaComecou = verificarSeJogoJaComecou(j);
 
               return (
                 <div
@@ -7582,6 +8475,8 @@ export default function App() {
                       ? "border-green-500"
                       : perdeuJogo
                       ? "border-red-600"
+                      : jogoBloqueadoJaComecou
+                      ? "border-red-700/80 opacity-90"
                       : escolhaAtual
                       ? "border-[#FF6B00] shadow-[#FF6B00]/10"
                       : "border-zinc-800"
@@ -7609,6 +8504,10 @@ export default function App() {
                           <span className="bg-red-600 text-white px-2 py-0.5 rounded font-black uppercase text-[10px] shadow">
                             ❌ PERDEU
                           </span>
+                        ) : jogoBloqueadoJaComecou ? (
+                          <span className="bg-red-950 text-red-300 border border-red-700 px-2 py-0.5 rounded font-black uppercase text-[9px]">
+                            🔒 JOGO JÁ COMEÇOU
+                          </span>
                         ) : escolhaAtual ? (
                           <span className="bg-green-950 text-green-400 border border-green-700/80 px-1.5 py-0.5 rounded font-black uppercase text-[9px]">
                             ✓ Selecionado
@@ -7630,12 +8529,28 @@ export default function App() {
                         <span className="bg-zinc-800 text-zinc-200 font-black px-2 py-0.5 rounded-full">
                           🏁 ENCERRADO
                         </span>
+                      ) : jogoBloqueadoJaComecou ? (
+                        <span className="bg-red-950 text-red-300 border border-red-700 font-black px-2 py-0.5 rounded-full">
+                          🔒 JÁ COMEÇOU • BLOQUEADO
+                        </span>
                       ) : (
                         <span className="bg-black text-green-400 border border-green-800/60 font-mono px-2 py-0.5 rounded-full">
-                          🟢 ESPN AO VIVO
+                          🟢 ABERTO P/ APOSTAR
                         </span>
                       )}
                     </div>
+
+                    {/* Aviso de Jogo Iniciado / Bloqueado */}
+                    {jogoBloqueadoJaComecou && (
+                      <div className="bg-red-950/75 border border-red-600/80 text-red-200 px-3 py-2 rounded-xl text-[11px] font-bold flex items-center justify-between gap-2">
+                        <span>
+                          🔒 Este jogo já começou! Aguarde o próximo bolão ou aposte nos jogos que não começaram.
+                        </span>
+                        <span className="bg-red-600 text-white font-black text-[9px] px-2 py-0.5 rounded uppercase shrink-0">
+                          Bloqueado
+                        </span>
+                      </div>
+                    )}
 
                     {/* Aviso de Resultado Lançado pelo ADM */}
                     {j.resultadoOficial && escolhaAtual && (
@@ -7669,10 +8584,12 @@ export default function App() {
                     <button
                       type="button"
                       onClick={() => selecionarOpcaoJogo(j, "CASA")}
-                      className={`flex items-center gap-2.5 flex-1 min-w-0 text-left p-1.5 rounded-xl transition cursor-pointer ${
-                        escolhaAtual === "CASA"
-                          ? "bg-[#FF6B00]/20 ring-1 ring-[#FF6B00]"
-                          : "hover:bg-zinc-800/60"
+                      className={`flex items-center gap-2.5 flex-1 min-w-0 text-left p-1.5 rounded-xl transition ${
+                        jogoBloqueadoJaComecou
+                          ? "opacity-60 cursor-not-allowed"
+                          : escolhaAtual === "CASA"
+                          ? "bg-[#FF6B00]/20 ring-1 ring-[#FF6B00] cursor-pointer"
+                          : "hover:bg-zinc-800/60 cursor-pointer"
                       }`}
                     >
                       <Escudo src={j.escudoCasa} nome={j.casa} size={42} />
@@ -7695,10 +8612,12 @@ export default function App() {
                     <button
                       type="button"
                       onClick={() => selecionarOpcaoJogo(j, "FORA")}
-                      className={`flex items-center gap-2.5 flex-1 min-w-0 justify-end text-right p-1.5 rounded-xl transition cursor-pointer ${
-                        escolhaAtual === "FORA"
-                          ? "bg-[#FF6B00]/20 ring-1 ring-[#FF6B00]"
-                          : "hover:bg-zinc-800/60"
+                      className={`flex items-center gap-2.5 flex-1 min-w-0 justify-end text-right p-1.5 rounded-xl transition ${
+                        jogoBloqueadoJaComecou
+                          ? "opacity-60 cursor-not-allowed"
+                          : escolhaAtual === "FORA"
+                          ? "bg-[#FF6B00]/20 ring-1 ring-[#FF6B00] cursor-pointer"
+                          : "hover:bg-zinc-800/60 cursor-pointer"
                       }`}
                     >
                       <span className="font-black text-sm truncate text-right text-white">{j.fora}</span>
@@ -7712,13 +8631,19 @@ export default function App() {
                     <button
                       type="button"
                       onClick={() => selecionarOpcaoJogo(j, "CASA")}
-                      className={`p-3 rounded-xl border text-center font-bold text-xs transition cursor-pointer flex flex-col items-center justify-center gap-1 ${
-                        escolhaAtual === "CASA"
-                          ? "bg-[#FF6B00] text-black border-[#FF6B00] shadow-md shadow-[#FF6B00]/30 scale-[1.02]"
-                          : "bg-black/70 text-zinc-300 border-zinc-800 hover:border-zinc-700"
+                      className={`p-3 rounded-xl border text-center font-bold text-xs transition flex flex-col items-center justify-center gap-1 ${
+                        jogoBloqueadoJaComecou
+                          ? escolhaAtual === "CASA"
+                            ? "bg-zinc-800 text-amber-400 border-amber-500/60 cursor-not-allowed"
+                            : "bg-black/40 text-zinc-600 border-zinc-800/60 cursor-not-allowed"
+                          : escolhaAtual === "CASA"
+                          ? "bg-[#FF6B00] text-black border-[#FF6B00] shadow-md shadow-[#FF6B00]/30 scale-[1.02] cursor-pointer"
+                          : "bg-black/70 text-zinc-300 border-zinc-800 hover:border-zinc-700 cursor-pointer"
                       }`}
                     >
-                      <span className="text-[9px] uppercase font-bold opacity-75">Coluna 1</span>
+                      <span className="text-[9px] uppercase font-bold opacity-75">
+                        {jogoBloqueadoJaComecou ? "🔒 Bloqueado" : "Coluna 1"}
+                      </span>
                       <span className="font-black text-xs truncate max-w-full">
                         {j.casa}
                       </span>
@@ -7728,13 +8653,19 @@ export default function App() {
                     <button
                       type="button"
                       onClick={() => selecionarOpcaoJogo(j, "EMPATE")}
-                      className={`p-3 rounded-xl border text-center font-bold text-xs transition cursor-pointer flex flex-col items-center justify-center gap-1 ${
-                        escolhaAtual === "EMPATE"
-                          ? "bg-[#FF6B00] text-black border-[#FF6B00] shadow-md shadow-[#FF6B00]/30 scale-[1.02]"
-                          : "bg-black/70 text-zinc-300 border-zinc-800 hover:border-zinc-700"
+                      className={`p-3 rounded-xl border text-center font-bold text-xs transition flex flex-col items-center justify-center gap-1 ${
+                        jogoBloqueadoJaComecou
+                          ? escolhaAtual === "EMPATE"
+                            ? "bg-zinc-800 text-amber-400 border-amber-500/60 cursor-not-allowed"
+                            : "bg-black/40 text-zinc-600 border-zinc-800/60 cursor-not-allowed"
+                          : escolhaAtual === "EMPATE"
+                          ? "bg-[#FF6B00] text-black border-[#FF6B00] shadow-md shadow-[#FF6B00]/30 scale-[1.02] cursor-pointer"
+                          : "bg-black/70 text-zinc-300 border-zinc-800 hover:border-zinc-700 cursor-pointer"
                       }`}
                     >
-                      <span className="text-[9px] uppercase font-bold opacity-75">Coluna do Meio</span>
+                      <span className="text-[9px] uppercase font-bold opacity-75">
+                        {jogoBloqueadoJaComecou ? "🔒 Bloqueado" : "Coluna do Meio"}
+                      </span>
                       <span className="font-black text-xs">Empate</span>
                     </button>
 
@@ -7742,13 +8673,19 @@ export default function App() {
                     <button
                       type="button"
                       onClick={() => selecionarOpcaoJogo(j, "FORA")}
-                      className={`p-3 rounded-xl border text-center font-bold text-xs transition cursor-pointer flex flex-col items-center justify-center gap-1 ${
-                        escolhaAtual === "FORA"
-                          ? "bg-[#FF6B00] text-black border-[#FF6B00] shadow-md shadow-[#FF6B00]/30 scale-[1.02]"
-                          : "bg-black/70 text-zinc-300 border-zinc-800 hover:border-zinc-700"
+                      className={`p-3 rounded-xl border text-center font-bold text-xs transition flex flex-col items-center justify-center gap-1 ${
+                        jogoBloqueadoJaComecou
+                          ? escolhaAtual === "FORA"
+                            ? "bg-zinc-800 text-amber-400 border-amber-500/60 cursor-not-allowed"
+                            : "bg-black/40 text-zinc-600 border-zinc-800/60 cursor-not-allowed"
+                          : escolhaAtual === "FORA"
+                          ? "bg-[#FF6B00] text-black border-[#FF6B00] shadow-md shadow-[#FF6B00]/30 scale-[1.02] cursor-pointer"
+                          : "bg-black/70 text-zinc-300 border-zinc-800 hover:border-zinc-700 cursor-pointer"
                       }`}
                     >
-                      <span className="text-[9px] uppercase font-bold opacity-75">Coluna 2</span>
+                      <span className="text-[9px] uppercase font-bold opacity-75">
+                        {jogoBloqueadoJaComecou ? "🔒 Bloqueado" : "Coluna 2"}
+                      </span>
                       <span className="font-black text-xs truncate max-w-full">
                         {j.fora}
                       </span>
@@ -7763,15 +8700,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={async () => {
-                  if (!user) {
-                    setPage("loginJogador");
-                    return;
-                  }
-                  const jogosComPalpite = jogosPublicados.filter((j) => Boolean(getEscolhaDoJogo(j)));
-                  if (jogosComPalpite.length === 0) {
-                    alert("Selecione seus palpites nos jogos da rodada antes de finalizar a aposta!");
-                    return;
-                  }
+                  if (!validarPermissaoApostaAntesDePagar()) return;
                   await salvarPalpitesTemporariosSeHouver();
                   setPage("minhasApostas");
                 }}
@@ -7882,6 +8811,7 @@ export default function App() {
         )}
         {inputComprovantePersistenteEl}
         <ModalPixDireto />
+        <ModalAvisoJogoJaComecou />
         <ModalAreaTransparencia />
       </div>
     );

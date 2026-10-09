@@ -1023,6 +1023,8 @@ export async function listarJogosDoSupabase(): Promise<any[]> {
       statusDetalhe: String(meta.statusDetalhe || meta.status || ''),
       resultadoOficial: meta.resultadoOficial || undefined,
       publicado: true,
+      iniciadoManualAdm: Boolean(meta.iniciadoManualAdm),
+      desbloqueadoManualAdm: Boolean(meta.desbloqueadoManualAdm),
       bolaoId: String(meta.bolaoId || 'bolao_1'),
       tituloBolao: String(meta.tituloBolao || 'Rodada Oficial Brasileirão Série A'),
       updatedAt: String(meta.updatedAt || row.created_at || new Date().toISOString()),
@@ -1056,6 +1058,8 @@ export async function upsertJogoInDb(j: any): Promise<void> {
   const tempoJogo = String(j.tempoJogo || '');
   const statusDetalhe = String(j.statusDetalhe || j.status || '');
   const resultadoOficial = j.resultadoOficial || undefined;
+  const iniciadoManualAdm = Boolean(j.iniciadoManualAdm);
+  const desbloqueadoManualAdm = Boolean(j.desbloqueadoManualAdm);
   const updatedAt = new Date().toISOString();
 
   const fullJogoMeta = {
@@ -1076,6 +1080,8 @@ export async function upsertJogoInDb(j: any): Promise<void> {
     tempoJogo,
     statusDetalhe,
     resultadoOficial,
+    iniciadoManualAdm,
+    desbloqueadoManualAdm,
     publicado,
     bolaoId,
     tituloBolao,
