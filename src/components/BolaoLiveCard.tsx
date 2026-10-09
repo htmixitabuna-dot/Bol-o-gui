@@ -594,7 +594,7 @@ function BolaoLiveCardInner({
     setInputTimeCasa('');
     setInputTimeFora('');
     setErroAdm('');
-    setFeedbackAdm('🔴 Reprise removida! Player voltou ao modo Ao Vivo.');
+    setFeedbackAdm('🗑️ Reprise removida com sucesso!');
     setErroEscudoCasa(false);
     setErroEscudoFora(false);
   };
@@ -695,16 +695,9 @@ function BolaoLiveCardInner({
       {/* TOPO DO COMPONENTE COM BOTÃO PEQUENO "⚙️ ADM" */}
       <div className="bg-[#0A0A0A] border-b border-[#222222] px-3.5 py-2 flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
-          {modoRepriseAtivo ? (
-            <span className="bg-amber-400 text-black text-[10px] font-black px-2.5 py-0.5 rounded-full uppercase tracking-wider shrink-0">
-              REPRISE
-            </span>
-          ) : (
-            <span className="bg-[#C41E3A] text-white text-[10px] font-black px-2.5 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1 shrink-0">
-              <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
-              AO VIVO
-            </span>
-          )}
+          <span className="bg-amber-400 text-black text-[10px] font-black px-2.5 py-0.5 rounded-full uppercase tracking-wider shrink-0">
+            REPRISE
+          </span>
           <span className="text-xs font-extrabold text-white truncate">
             {timeCasaExibido} x {timeForaExibido}
           </span>
@@ -883,21 +876,11 @@ function BolaoLiveCardInner({
                 <button
                   type="button"
                   onClick={handleLimparRepriseVoltarAoVivo}
-                  className="w-full bg-[#0A0A0A] hover:bg-zinc-900 text-amber-400 border border-amber-400 font-black py-2.5 px-3 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition"
-                >
-                  🔴 Voltar ao Ao Vivo
-                </button>
-              </div>
-
-              {modoRepriseAtivo && (
-                <button
-                  type="button"
-                  onClick={handleLimparRepriseVoltarAoVivo}
-                  className="w-full bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-700 font-bold py-2 px-3 rounded-lg text-[11px] uppercase cursor-pointer transition"
+                  className="w-full bg-zinc-900 hover:bg-zinc-800 text-amber-400 border border-amber-400/60 font-black py-2.5 px-3 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition"
                 >
                   🗑️ Limpar Reprise
                 </button>
-              )}
+              </div>
             </form>
           </div>
         </div>
@@ -905,19 +888,12 @@ function BolaoLiveCardInner({
 
       {/* 1. ÁREA DO PLAYER DE VÍDEO DENTRO DO CARD (w-full h-[210px]) */}
       <div className="relative w-full h-[210px] overflow-hidden bg-black border-b border-[#C41E3A]">
-        {/* Badge sobre o player: AMARELO "REPRISE" se tiver reprise salva, ou "AO VIVO" normal */}
+        {/* Badge sobre o player: AMARELO "REPRISE" */}
         <div className="absolute top-2.5 left-2.5 z-20 flex items-center gap-2 pointer-events-none">
-          {modoRepriseAtivo ? (
-            <span className="bg-amber-400 text-black text-xs font-black px-3 py-1 rounded-full uppercase tracking-wider shadow-lg flex items-center gap-1.5">
-              <span>📼</span>
-              <span>REPRISE</span>
-            </span>
-          ) : (
-            <span className="bg-[#C41E3A] text-white text-xs font-extrabold px-3 py-1 rounded-full uppercase tracking-wider shadow-lg flex items-center gap-1.5 animate-pulse">
-              <span className="w-2 h-2 rounded-full bg-white animate-ping" />
-              <span>AO VIVO</span>
-            </span>
-          )}
+          <span className="bg-amber-400 text-black text-xs font-black px-3 py-1 rounded-full uppercase tracking-wider shadow-lg flex items-center gap-1.5">
+            <span>📼</span>
+            <span>REPRISE</span>
+          </span>
           <span className="bg-black/85 border border-[#C41E3A] text-white text-[10px] font-bold px-2.5 py-0.5 rounded-full">
             {modoRepriseAtivo
               ? `${repriseSalva!.timeCasa} x ${repriseSalva!.timeFora}`
@@ -958,12 +934,12 @@ function BolaoLiveCardInner({
         <div className="space-y-2">
           <div className="flex items-center justify-between gap-1">
             <span className="text-[11px] font-extrabold uppercase tracking-wider text-white">
-              📺 Canais de Transmissão
+              📼 Canais de Reprises
             </span>
             <span className="text-[10px] font-bold text-white/70">
               {modoRepriseAtivo
                 ? `Reprise: ${repriseSalva!.timeCasa} x ${repriseSalva!.timeFora}`
-                : `${canalAtivo.nome} • ${canalAtivo.timeCasa} x ${canalAtivo.timeFora}`}
+                : `${canalAtivo.nome} • Reprise: ${canalAtivo.timeCasa} x ${canalAtivo.timeFora}`}
             </span>
           </div>
 

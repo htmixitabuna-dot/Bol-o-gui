@@ -4823,7 +4823,7 @@ export default function App() {
                 disabled={carregandoEspnRapido}
                 className="text-[10px] bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold px-2 py-0.5 rounded cursor-pointer transition"
               >
-                {carregandoEspnRapido ? "🔄..." : "🔄 Ao Vivo"}
+                {carregandoEspnRapido ? "🔄..." : "🔄 Atualizar"}
               </button>
             </div>
 
@@ -6491,7 +6491,7 @@ export default function App() {
                       </span>
                     </div>
                     <h3 className="font-black text-sm sm:text-base text-white flex items-center gap-2 mt-1">
-                      <span>🎬</span> GERENCIAR REPRISE DO YOUTUBE E CANAIS AO VIVO
+                      <span>🎬</span> GERENCIAR REPRISE DO YOUTUBE
                     </h3>
                     <p className="text-[11px] text-zinc-400">
                       Cole o link do YouTube abaixo (ou clique em &quot;📋 Colar Link&quot;) para transmitir uma reprise no player de todos os jogadores.
@@ -8648,13 +8648,6 @@ export default function App() {
 
           {/* Barra de Atalhos Rápidos das Seções */}
           <div className="flex items-center gap-2 overflow-x-auto pt-1 pb-0.5 text-[11px]">
-            <button
-              type="button"
-              onClick={() => rolarParaSecao("secao-live-player")}
-              className="bg-[#C41E3A] hover:bg-[#a81830] text-white font-extrabold px-3 py-1.5 rounded-lg shrink-0 cursor-pointer transition"
-            >
-              📺 Player Ao Vivo
-            </button>
             <button
               type="button"
               onClick={() => rolarParaSecao("secao-jogos-rodada")}
