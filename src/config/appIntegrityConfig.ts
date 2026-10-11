@@ -23,9 +23,7 @@ export const PERMANENT_APP_INTEGRITY = {
   divisaoPremio: {
     poteTotalPercent: 80,
     taxaServicoPercent: 20,
-    primeiroLugarPercent: 50,
-    segundoLugarPercent: 30,
-    terceiroLugarPercent: 20,
+    primeiroLugarPercent: 100,
   },
   historicoRankingConfig: {
     automaticoAoFinalizarRodada: true,

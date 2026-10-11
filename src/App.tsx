@@ -475,7 +475,7 @@ export default function App() {
     }
   });
   const [ganhadorPremiacaoNome, setGanhadorPremiacaoNome] = useState("");
-  const [colocacaoPremiacao, setColocacaoPremiacao] = useState("🥇 1º Lugar (50%)");
+  const [colocacaoPremiacao, setColocacaoPremiacao] = useState("🥇 1º Lugar (Campeão)");
   const [valorPremiacaoPago, setValorPremiacaoPago] = useState("");
   const [descricaoPremiacao, setDescricaoPremiacao] = useState("");
   const [imgComprovantePremiacao, setImgComprovantePremiacao] = useState("");
@@ -2673,14 +2673,7 @@ export default function App() {
       return;
     }
 
-    const valorPadraoColocacao =
-      colocacaoPremiacao.includes("1º")
-        ? premio1
-        : colocacaoPremiacao.includes("2º")
-        ? premio2
-        : colocacaoPremiacao.includes("3º")
-        ? premio3
-        : premio80;
+    const valorPadraoColocacao = premio1;
 
     const valorDigitado = parseFloat(String(valorPremiacaoPago).replace(",", "."));
     const valorFinal = !isNaN(valorDigitado) && valorDigitado > 0 ? valorDigitado : Number(valorPadraoColocacao.toFixed(2));
@@ -3128,10 +3121,10 @@ export default function App() {
   const banca20 = total * 0.2;
   const premio80 = total * 0.8;
 
-  // Prêmios individuais
-  const premio1 = premio80 * 0.5;
-  const premio2 = premio80 * 0.3;
-  const premio3 = premio80 * 0.2;
+  // Prêmio exclusivo para o 1º lugar (100% do pote de 80%)
+  const premio1 = premio80;
+  const premio2 = 0;
+  const premio3 = 0;
 
   // Salva automaticamente no Histórico Permanente SOMENTE os 3 primeiros colocados (1º, 2º e 3º) com os dados das partidas ao término da rodada
   const salvarRankingBolaoNoHistorico = async (
@@ -3218,9 +3211,12 @@ export default function App() {
       // Preserva valores financeiros caso o saldo da rodada já tenha sido zerado após finalizar
       const totalHist = total > 0 ? total : Number(registroExistente?.totalArrecadado) || 0;
       const premio80Hist = premio80 > 0 ? premio80 : Number(registroExistente?.premioTotal80) || 0;
-      const premio1Hist = premio1 > 0 ? premio1 : Number(registroExistente?.premio1) || 0;
-      const premio2Hist = premio2 > 0 ? premio2 : Number(registroExistente?.premio2) || 0;
-      const premio3Hist = premio3 > 0 ? premio3 : Number(registroExistente?.premio3) || 0;
+      const premio1Hist =
+        premio1 > 0
+          ? premio1
+          : Number(registroExistente?.premioTotal80 || registroExistente?.premio1) || 0;
+      const premio2Hist = 0;
+      const premio3Hist = 0;
       const pagosHist = pagos > 0 ? pagos : Number(registroExistente?.totalPagos) || 0;
 
       // SOMENTE OS 3 PRIMEIROS COLOCADOS (1º, 2º e 3º lugar) + DADOS DAS PARTIDAS
@@ -3228,17 +3224,13 @@ export default function App() {
 
       const rankingSnapshot: HistoricoRankingJogadorItem[] = top3Ganhadores.map((jg, index) => {
         const isPrimeiro = index === 0 && jg.pontos > 0;
-        const isSegundo = index === 1 && jg.pontos > 0;
-        const isTerceiro = index === 2 && jg.pontos > 0;
         const prevRankItem = registroExistente?.ranking?.find(
           (r) => (r.email || "").toLowerCase() === (jg.email || "").toLowerCase()
         );
         const foiPagoNaRodada = Boolean(jg.isPago || prevRankItem?.isPago);
         let premioEstimado = 0;
-        if (foiPagoNaRodada) {
-          if (isPrimeiro) premioEstimado = premio1Hist;
-          else if (isSegundo) premioEstimado = premio2Hist;
-          else if (isTerceiro) premioEstimado = premio3Hist;
+        if (foiPagoNaRodada && isPrimeiro) {
+          premioEstimado = premio1Hist;
         }
 
         const partidasApostadas: HistoricoRankingPartidaApostada[] = jogosBase
@@ -3674,20 +3666,16 @@ export default function App() {
         </div>
       </div>
 
-      {/* Rateio Acumulado de Prêmios em Tempo Real */}
-      <div className="bg-black/60 border border-zinc-800/90 rounded-xl p-2.5 grid grid-cols-3 gap-2 text-center">
-        <div>
-          <div className="text-[9px] text-zinc-400 font-bold uppercase">🥇 1º Lugar (50%)</div>
-          <div className="text-xs sm:text-sm font-black text-amber-400">R$ {premio1.toFixed(2)}</div>
+      {/* Premiação Acumulada em Tempo Real (Exclusiva 1º Lugar) */}
+      <div className="bg-black/60 border border-amber-500/30 rounded-xl p-3 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="text-base">🥇</span>
+          <div className="text-left">
+            <div className="text-[10px] text-amber-400 font-black uppercase">1º Lugar (Campeão)</div>
+            <div className="text-[9px] text-zinc-400 font-bold">Prêmio Único da Rodada (80% do Pote)</div>
+          </div>
         </div>
-        <div className="border-x border-zinc-800">
-          <div className="text-[9px] text-zinc-400 font-bold uppercase">🥈 2º Lugar (30%)</div>
-          <div className="text-xs sm:text-sm font-black text-zinc-200">R$ {premio2.toFixed(2)}</div>
-        </div>
-        <div>
-          <div className="text-[9px] text-zinc-400 font-bold uppercase">🥉 3º Lugar (20%)</div>
-          <div className="text-xs sm:text-sm font-black text-amber-600">R$ {premio3.toFixed(2)}</div>
-        </div>
+        <div className="text-sm sm:text-base font-black text-amber-400">R$ {premio1.toFixed(2)}</div>
       </div>
 
       {/* Status do Depósito Individual do Jogador Conectado */}
@@ -5932,11 +5920,11 @@ export default function App() {
                       </div>
 
                       {/* Resumo de Premiação daquele Bolão */}
-                      <div className="grid grid-cols-2 sm:grid-cols-6 gap-2 text-center">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
                         <div className="bg-zinc-900/90 border border-zinc-800 p-2.5 rounded-xl">
-                          <div className="text-[9px] text-zinc-400 uppercase font-bold">Premiados Salvos</div>
+                          <div className="text-[9px] text-zinc-400 uppercase font-bold">Classificados Salvos</div>
                           <div className="text-sm font-black text-white">
-                            Top {Math.min(3, bolaoHistoricoAtivo.ranking.length)} (1º, 2º e 3º)
+                            Top {Math.min(3, bolaoHistoricoAtivo.ranking.length)}
                           </div>
                         </div>
                         <div className="bg-zinc-900/90 border border-zinc-800 p-2.5 rounded-xl">
@@ -5952,21 +5940,9 @@ export default function App() {
                           </div>
                         </div>
                         <div className="bg-amber-500/10 border border-amber-500/40 p-2.5 rounded-xl">
-                          <div className="text-[9px] text-amber-300 uppercase font-bold">🥇 1º Lugar (50%)</div>
+                          <div className="text-[9px] text-amber-300 uppercase font-bold">🥇 Prêmio 1º Lugar</div>
                           <div className="text-sm font-black text-amber-400">
-                            R$ {Number(bolaoHistoricoAtivo.premio1 || 0).toFixed(2)}
-                          </div>
-                        </div>
-                        <div className="bg-zinc-900/90 border border-zinc-700 p-2.5 rounded-xl">
-                          <div className="text-[9px] text-zinc-300 uppercase font-bold">🥈 2º Lugar (30%)</div>
-                          <div className="text-sm font-black text-zinc-200">
-                            R$ {Number(bolaoHistoricoAtivo.premio2 || 0).toFixed(2)}
-                          </div>
-                        </div>
-                        <div className="bg-zinc-900/90 border border-amber-800/50 p-2.5 rounded-xl">
-                          <div className="text-[9px] text-amber-500 uppercase font-bold">🥉 3º Lugar (20%)</div>
-                          <div className="text-sm font-black text-amber-500">
-                            R$ {Number(bolaoHistoricoAtivo.premio3 || 0).toFixed(2)}
+                            R$ {Number(bolaoHistoricoAtivo.premioTotal80 || bolaoHistoricoAtivo.premio1 || 0).toFixed(2)}
                           </div>
                         </div>
                       </div>
@@ -6077,11 +6053,11 @@ export default function App() {
                                       </div>
                                     </div>
 
-                                    {jg.premioEstimado > 0 && (
+                                    {isPrimeiro && jg.premioEstimado > 0 && (
                                       <div className="bg-[#FF6B00]/10 border border-[#FF6B00]/40 px-3 py-1.5 rounded-lg text-right">
                                         <div className="text-[9px] text-zinc-400 uppercase font-bold">Prêmio</div>
                                         <div className="text-xs font-black text-[#FF6B00]">
-                                          R$ {Number(jg.premioEstimado).toFixed(2)}
+                                          R$ {Number(bolaoHistoricoAtivo.premioTotal80 || jg.premioEstimado).toFixed(2)}
                                         </div>
                                       </div>
                                     )}
@@ -6409,9 +6385,7 @@ export default function App() {
                 </div>
                 <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5">
                   <div className="text-[#FF6B00] font-bold flex flex-wrap gap-3">
-                    <span>🥇 1º (50%): R$ {premio1.toFixed(2)}</span>
-                    <span>🥈 2º (30%): R$ {premio2.toFixed(2)}</span>
-                    <span>🥉 3º (20%): R$ {premio3.toFixed(2)}</span>
+                    <span>🥇 Prêmio 1º Lugar (Campeão): R$ {premio1.toFixed(2)}</span>
                   </div>
                   {secaoControleAdmAtiva !== "todos" && (
                     <button
@@ -6966,10 +6940,8 @@ export default function App() {
                 const isTerceiro = index === 2 && jg.pontos > 0;
 
                 let premioEstimado = 0;
-                if (jg.isPago) {
-                  if (isPrimeiro) premioEstimado = premio1;
-                  else if (isSegundo) premioEstimado = premio2;
-                  else if (isTerceiro) premioEstimado = premio3;
+                if (jg.isPago && isPrimeiro) {
+                  premioEstimado = premio1;
                 }
 
                 return (
@@ -7101,17 +7073,10 @@ export default function App() {
                 ⚡ Selecionar Ganhador Rápido do Ranking (1 Clique):
               </div>
               <div className="flex flex-wrap gap-1.5">
-                {rankingGanhadores.slice(0, 5).map((jg, i) => {
+                {rankingGanhadores.slice(0, 3).map((jg, i) => {
                   const colSugerida =
-                    i === 0
-                      ? "🥇 1º Lugar (50%)"
-                      : i === 1
-                      ? "🥈 2º Lugar (30%)"
-                      : i === 2
-                      ? "🥉 3º Lugar (20%)"
-                      : "🏆 Premiação do Bolão";
-                  const valSugerido =
-                    i === 0 ? premio1 : i === 1 ? premio2 : i === 2 ? premio3 : premio80;
+                    i === 0 ? "🥇 1º Lugar (Campeão)" : "🏆 Premiação Geral / Rateio";
+                  const valSugerido = premio1;
 
                   return (
                     <button
@@ -7157,15 +7122,11 @@ export default function App() {
                 onChange={(e) => {
                   const col = e.target.value;
                   setColocacaoPremiacao(col);
-                  if (col.includes("1º") && premio1 > 0) setValorPremiacaoPago(premio1.toFixed(2));
-                  else if (col.includes("2º") && premio2 > 0) setValorPremiacaoPago(premio2.toFixed(2));
-                  else if (col.includes("3º") && premio3 > 0) setValorPremiacaoPago(premio3.toFixed(2));
+                  if (premio1 > 0) setValorPremiacaoPago(premio1.toFixed(2));
                 }}
                 className="w-full bg-black border border-zinc-800 p-2.5 rounded-lg text-xs text-white font-bold outline-none focus:border-emerald-500"
               >
-                <option value="🥇 1º Lugar (50%)">🥇 1º Lugar (50%)</option>
-                <option value="🥈 2º Lugar (30%)">🥈 2º Lugar (30%)</option>
-                <option value="🥉 3º Lugar (20%)">🥉 3º Lugar (20%)</option>
+                <option value="🥇 1º Lugar (Campeão)">🥇 1º Lugar (Campeão)</option>
                 <option value="🏆 Premiação Geral / Rateio">🏆 Premiação Geral / Rateio</option>
               </select>
             </div>
@@ -8752,7 +8713,7 @@ export default function App() {
                   <span className="text-[10px] bg-black text-[#FF6B00] font-black px-2 py-0.5 rounded">
                     80% EM PRÊMIOS
                   </span>
-                  <div className="text-[10px] font-bold text-black/75 mt-1">1º 50% • 2º 30% • 3º 20%</div>
+                  <div className="text-[10px] font-bold text-black/80 mt-1">🥇 Prêmio Exclusivo 1º Lugar</div>
                 </div>
               </div>
               <div className="text-xs mt-2 pt-2 border-t border-black/20 break-all">
@@ -9530,10 +9491,8 @@ export default function App() {
               const isTerceiro = index === 2 && jg.pontos > 0;
 
               let premioEstimado = 0;
-              if (jg.isPago) {
-                if (isPrimeiro) premioEstimado = premio1;
-                else if (isSegundo) premioEstimado = premio2;
-                else if (isTerceiro) premioEstimado = premio3;
+              if (jg.isPago && isPrimeiro) {
+                premioEstimado = premio1;
               }
 
               return (
