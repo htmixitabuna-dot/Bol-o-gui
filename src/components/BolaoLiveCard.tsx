@@ -87,66 +87,104 @@ export interface BolaoLiveCardProps {
 
 export const JOGOS_AO_VIVO_GETV_PADRAO: JogoAoVivoGetv[] = [
   {
-    id: 'Y9N8A9vNDRc',
-    titulo: 'MOSAICO AO VIVO: CLÁSSICOS DO BRASILEIRÃO | ge tv',
-    timeCasa: 'Brasileirão',
-    timeFora: 'Clássicos Ao Vivo',
-    campeonato: 'Brasileirão Série A • ge tv',
-    canal: 'ge tv (@getv)',
-    aoVivo: true,
-    youtubeUrl: 'https://www.youtube.com/watch?v=Y9N8A9vNDRc',
-  },
-  {
-    id: 'yL7MzrhVAJk',
-    titulo: 'AO VIVO: BAHIA X SÃO PAULO | BRASILEIRÃO 2026 | ge tv',
-    timeCasa: 'Bahia',
-    timeFora: 'São Paulo',
-    campeonato: 'Brasileirão Série A • ge tv',
-    canal: 'ge tv (@getv)',
-    aoVivo: true,
-    youtubeUrl: 'https://www.youtube.com/watch?v=yL7MzrhVAJk',
-  },
-  {
-    id: 'G5uZaLJn1VM',
-    titulo: 'PALMEIRAS X CORINTHIANS AO VIVO | BRASILEIRÃO 2026 | ge tv',
-    timeCasa: 'Palmeiras',
+    id: 'oxXjXSwQ40w',
+    titulo: 'AO VIVO: FLAMENGO X CORINTHIANS | BRASILEIRÃO 2026 | ge tv',
+    timeCasa: 'Flamengo',
     timeFora: 'Corinthians',
     campeonato: 'Brasileirão Série A • ge tv',
     canal: 'ge tv (@getv)',
     aoVivo: true,
-    youtubeUrl: 'https://www.youtube.com/watch?v=G5uZaLJn1VM',
+    youtubeUrl: 'https://www.youtube.com/watch?v=oxXjXSwQ40w',
   },
   {
-    id: 'L2P-xlllxzo',
-    titulo: 'FLAMENGO X FLUMINENSE AO VIVO | FLA-FLU BRASILEIRÃO | ge tv',
+    id: 'MINxnJ3nHK0',
+    titulo: 'AO VIVO: GRÊMIO X PALMEIRAS | BRASILEIRÃO 2026 | ge tv',
+    timeCasa: 'Grêmio',
+    timeFora: 'Palmeiras',
+    campeonato: 'Brasileirão Série A • ge tv',
+    canal: 'ge tv (@getv)',
+    aoVivo: true,
+    youtubeUrl: 'https://www.youtube.com/watch?v=MINxnJ3nHK0',
+  },
+  {
+    id: 'SLeA4eEgRyo',
+    titulo: 'AO VIVO: FLAMENGO X SÃO PAULO | BRASILEIRÃO 2026 | ge tv',
     timeCasa: 'Flamengo',
-    timeFora: 'Fluminense',
+    timeFora: 'São Paulo',
     campeonato: 'Brasileirão Série A • ge tv',
     canal: 'ge tv (@getv)',
     aoVivo: true,
-    youtubeUrl: 'https://www.youtube.com/watch?v=L2P-xlllxzo',
+    youtubeUrl: 'https://www.youtube.com/watch?v=SLeA4eEgRyo',
   },
   {
-    id: 'C00XM8ryHko',
-    titulo: 'AO VIVO: NÁUTICO X AVAÍ | BRASILEIRÃO 2026 | ge tv',
-    timeCasa: 'Náutico',
-    timeFora: 'Avaí',
-    campeonato: 'Brasileirão • ge tv',
+    id: 't8cvdQv2njI',
+    titulo: 'AO VIVO: PALMEIRAS X ATLÉTICO-MG | BRASILEIRÃO 2026 | ge tv',
+    timeCasa: 'Palmeiras',
+    timeFora: 'Atlético-MG',
+    campeonato: 'Brasileirão Série A • ge tv',
     canal: 'ge tv (@getv)',
     aoVivo: true,
-    youtubeUrl: 'https://www.youtube.com/watch?v=C00XM8ryHko',
+    youtubeUrl: 'https://www.youtube.com/watch?v=t8cvdQv2njI',
   },
   {
-    id: 'XgpkjhfCEWY',
-    titulo: 'ATLÉTICO-MG X SANTOS | BRASILEIRÃO 2026 | ge tv',
+    id: 'dFMhqLTQ18c',
+    titulo: 'AO VIVO: ATLÉTICO-MG X VITÓRIA | BRASILEIRÃO 2026 | ge tv',
     timeCasa: 'Atlético-MG',
-    timeFora: 'Santos',
+    timeFora: 'Vitória',
     campeonato: 'Brasileirão Série A • ge tv',
     canal: 'ge tv (@getv)',
     aoVivo: true,
-    youtubeUrl: 'https://www.youtube.com/watch?v=XgpkjhfCEWY',
+    youtubeUrl: 'https://www.youtube.com/watch?v=dFMhqLTQ18c',
+  },
+  {
+    id: '7wWzgXlUD9Q',
+    titulo: 'AO VIVO: ATLÉTICO-MG X CHAPECOENSE | BRASILEIRÃO 2026 | ge tv',
+    timeCasa: 'Atlético-MG',
+    timeFora: 'Chapecoense',
+    campeonato: 'Brasileirão Série A • ge tv',
+    canal: 'ge tv (@getv)',
+    aoVivo: true,
+    youtubeUrl: 'https://www.youtube.com/watch?v=7wWzgXlUD9Q',
+  },
+  {
+    id: 'CKPXBY6BEEg',
+    titulo: 'AO VIVO: SÃO PAULO X CORITIBA | BRASILEIRÃO 2026 | ge tv',
+    timeCasa: 'São Paulo',
+    timeFora: 'Coritiba',
+    campeonato: 'Brasileirão Série A • ge tv',
+    canal: 'ge tv (@getv)',
+    aoVivo: true,
+    youtubeUrl: 'https://www.youtube.com/watch?v=CKPXBY6BEEg',
+  },
+  {
+    id: 'v-TnCvXG8BQ',
+    titulo: 'AO VIVO: MIRASSOL X VITÓRIA | BRASILEIRÃO 2026 | ge tv',
+    timeCasa: 'Mirassol',
+    timeFora: 'Vitória',
+    campeonato: 'Brasileirão Série A • ge tv',
+    canal: 'ge tv (@getv)',
+    aoVivo: true,
+    youtubeUrl: 'https://www.youtube.com/watch?v=v-TnCvXG8BQ',
   },
 ];
+
+const IDS_SEM_EMBED_OU_ENCERRADOS = new Set([
+  'Y9N8A9vNDRc',
+  'yL7MzrhVAJk',
+  'C00XM8ryHko',
+  'XgpkjhfCEWY',
+  'G5uZaLJn1VM',
+  'L2P-xlllxzo',
+  'hNog7bqOalc',
+  'jOI-1I9MVEQ',
+  'yzCXmmTRypc',
+  'cfgoWt6WZ-0',
+  'LeLslvxE5MU',
+  'zg5i3c9QrEY',
+  '752W0WKh0ck',
+  'QDiNzpZm0Ag',
+  'mWns44CvuHk',
+]);
 
 export function extrairYoutubeID(url: string): string | null {
   if (!url || typeof url !== 'string') return null;
@@ -302,10 +340,12 @@ function lerRepriseSalvaLocalStorage(): RepriseSalvaStorage | null {
     const raw = localStorage.getItem(STORAGE_KEY_REPRISE);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    if (parsed && parsed.youtubeUrl && extrairYoutubeID(parsed.youtubeUrl)) {
-      return parsed;
+    const id = parsed?.youtubeUrl ? extrairYoutubeID(parsed.youtubeUrl) : null;
+    if (!id || IDS_SEM_EMBED_OU_ENCERRADOS.has(id) || /youtube\.com\/@getv/i.test(String(parsed?.youtubeUrl || ''))) {
+      localStorage.removeItem(STORAGE_KEY_REPRISE);
+      return null;
     }
-    return null;
+    return parsed;
   } catch {
     return null;
   }
@@ -493,13 +533,18 @@ function BolaoLiveCardInner({
   const [playerAtivo, setPlayerAtivo] = useState<boolean>(true);
   const [playerPausado, setPlayerPausado] = useState<boolean>(false);
   const [somMutado, setSomMutado] = useState<boolean>(true);
+  const somMutadoRef = useRef<boolean>(somMutado);
+  useEffect(() => {
+    somMutadoRef.current = somMutado;
+  }, [somMutado]);
+
   const [telaCheiaApp, setTelaCheiaApp] = useState<boolean>(false);
   const [avisoBloqueioYoutube, setAvisoBloqueioYoutube] =
     useState<boolean>(false);
   const [atualizandoGetv, setAtualizandoGetv] = useState<boolean>(false);
   const iframePlayerRef = useRef<HTMLIFrameElement | null>(null);
 
-  // Envia comandos para a API do IFrame sem permitir clique direto no YouTube
+  // Envia comandos para a API do IFrame do YouTube após ativar o canal listening
   const enviarComandoPlayer = useCallback(
     (func: string, args: any[] = []) => {
       const win = iframePlayerRef.current?.contentWindow;
@@ -507,9 +552,19 @@ function BolaoLiveCardInner({
       try {
         win.postMessage(
           JSON.stringify({
+            event: 'listening',
+            id: 'bolao-getv-player',
+            channel: 'widget',
+          }),
+          '*'
+        );
+        win.postMessage(
+          JSON.stringify({
             event: 'command',
             func,
             args,
+            id: 'bolao-getv-player',
+            channel: 'widget',
           }),
           '*'
         );
@@ -519,6 +574,134 @@ function BolaoLiveCardInner({
     },
     []
   );
+
+  // Inicializa handshake oficial da YouTube IFrame API e garante que o vídeo role automaticamente
+  const iniciarHandshakePlayer = useCallback(() => {
+    const win = iframePlayerRef.current?.contentWindow;
+    if (!win) return;
+    try {
+      win.postMessage(
+        JSON.stringify({
+          event: 'listening',
+          id: 'bolao-getv-player',
+          channel: 'widget',
+        }),
+        '*'
+      );
+      ['onReady', 'onStateChange', 'onError'].forEach((evName) => {
+        win.postMessage(
+          JSON.stringify({
+            event: 'command',
+            func: 'addEventListener',
+            args: [evName],
+            id: 'bolao-getv-player',
+            channel: 'widget',
+          }),
+          '*'
+        );
+      });
+      win.postMessage(
+        JSON.stringify({
+          event: 'command',
+          func: 'playVideo',
+          args: [],
+          id: 'bolao-getv-player',
+          channel: 'widget',
+        }),
+        '*'
+      );
+      if (!somMutadoRef.current) {
+        win.postMessage(
+          JSON.stringify({
+            event: 'command',
+            func: 'unMute',
+            args: [],
+            id: 'bolao-getv-player',
+            channel: 'widget',
+          }),
+          '*'
+        );
+        win.postMessage(
+          JSON.stringify({
+            event: 'command',
+            func: 'setVolume',
+            args: [100],
+            id: 'bolao-getv-player',
+            channel: 'widget',
+          }),
+          '*'
+        );
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // Reexecuta o handshake nos primeiros segundos após trocar de jogo para garantir reprodução contínua
+  useEffect(() => {
+    if (!playerAtivo) return;
+    const t1 = window.setTimeout(() => iniciarHandshakePlayer(), 350);
+    const t2 = window.setTimeout(() => iniciarHandshakePlayer(), 950);
+    const t3 = window.setTimeout(() => iniciarHandshakePlayer(), 1800);
+    return () => {
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
+      window.clearTimeout(t3);
+    };
+  }, [jogoGetvAtivo.id, playerAtivo, iniciarHandshakePlayer]);
+
+  // Escuta eventos reais do YouTube IFrame API (estado de reprodução, fim do vídeo e recuperação automática de erro)
+  useEffect(() => {
+    const onMessage = (e: MessageEvent) => {
+      if (!e.origin || !e.origin.includes('youtube')) return;
+      let data: any = null;
+      try {
+        data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
+      } catch {
+        return;
+      }
+      if (!data) return;
+
+      if (data.event === 'onReady') {
+        enviarComandoPlayer('playVideo');
+        if (!somMutadoRef.current) {
+          enviarComandoPlayer('unMute');
+          enviarComandoPlayer('setVolume', [100]);
+        }
+      } else if (
+        data.event === 'onStateChange' ||
+        (data.event === 'infoDelivery' &&
+          data.info &&
+          typeof data.info.playerState === 'number')
+      ) {
+        const state =
+          typeof data.info === 'number' ? data.info : data.info?.playerState;
+        if (state === 1) {
+          setPlayerPausado(false);
+          if (!somMutadoRef.current) {
+            enviarComandoPlayer('unMute');
+            enviarComandoPlayer('setVolume', [100]);
+          }
+        } else if (state === 2) {
+          setPlayerPausado(true);
+        } else if (state === 0) {
+          enviarComandoPlayer('seekTo', [0, true]);
+          enviarComandoPlayer('playVideo');
+        }
+      } else if (data.event === 'onError') {
+        setJogosGetv((listaAtual) => {
+          const filtrada = listaAtual.filter((j) => j.id !== jogoGetvAtivo.id);
+          const listaSegura =
+            filtrada.length > 0 ? filtrada : JOGOS_AO_VIVO_GETV_PADRAO;
+          setJogoGetvAtivo(listaSegura[0]);
+          return listaSegura;
+        });
+      }
+    };
+
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [enviarComandoPlayer, jogoGetvAtivo.id]);
 
   // Busca sempre os jogos ao vivo mais recentes da GeTV (@getv)
   const buscarJogosAoVivoGetv = useCallback(async () => {
@@ -533,9 +716,15 @@ function BolaoLiveCardInner({
         if (Array.isArray(data?.jogos) && data.jogos.length > 0) {
           const salvo = lerRepriseSalvaLocalStorage();
           const idSalvo = salvo ? extrairYoutubeID(salvo.youtubeUrl) : null;
-          let lista: JogoAoVivoGetv[] = data.jogos;
+          let lista: JogoAoVivoGetv[] = data.jogos.filter(
+            (item: JogoAoVivoGetv) =>
+              item?.id && !IDS_SEM_EMBED_OU_ENCERRADOS.has(item.id)
+          );
+          if (lista.length === 0) {
+            lista = JOGOS_AO_VIVO_GETV_PADRAO;
+          }
 
-          if (salvo && idSalvo) {
+          if (salvo && idSalvo && !IDS_SEM_EMBED_OU_ENCERRADOS.has(idSalvo)) {
             const customItem: JogoAoVivoGetv = {
               id: idSalvo,
               titulo: `AO VIVO: ${salvo.timeCasa} x ${salvo.timeFora} | ge tv`,
@@ -1055,16 +1244,19 @@ function BolaoLiveCardInner({
     );
   };
 
-  // Controles do Player Blindado Anti-YouTube
+  // Controles do Player Blindado Anti-YouTube (sem recarregar o iframe ao ativar som)
   const handleTogglePlayPause = () => {
     if (!playerAtivo) {
       setPlayerAtivo(true);
       setPlayerPausado(false);
-      setSomMutado(false);
       return;
     }
     if (playerPausado) {
       enviarComandoPlayer('playVideo');
+      if (!somMutadoRef.current) {
+        enviarComandoPlayer('unMute');
+        enviarComandoPlayer('setVolume', [100]);
+      }
       setPlayerPausado(false);
     } else {
       enviarComandoPlayer('pauseVideo');
@@ -1074,14 +1266,16 @@ function BolaoLiveCardInner({
 
   const handleToggleSom = () => {
     if (somMutado) {
+      somMutadoRef.current = false;
+      setSomMutado(false);
+      setPlayerPausado(false);
       enviarComandoPlayer('unMute');
       enviarComandoPlayer('setVolume', [100]);
       enviarComandoPlayer('playVideo');
-      setSomMutado(false);
-      setPlayerPausado(false);
     } else {
-      enviarComandoPlayer('mute');
+      somMutadoRef.current = true;
       setSomMutado(true);
+      enviarComandoPlayer('mute');
     }
   };
 
@@ -1093,6 +1287,13 @@ function BolaoLiveCardInner({
     setPlayerAtivo(true);
     setPlayerPausado(false);
   };
+
+  const originQuery =
+    typeof window !== 'undefined' && window.location?.origin
+      ? `&origin=${encodeURIComponent(
+          window.location.origin
+        )}&widget_referrer=${encodeURIComponent(window.location.origin)}`
+      : '';
 
   // Placar ESPN sempre vinculado aos dados oficiais da ESPN (configurações intactas)
   const temJogoAoVivoNaLista = jogosEspn.some((j) => j.aoVivo);
@@ -1370,19 +1571,17 @@ function BolaoLiveCardInner({
         }
         onContextMenu={(e) => e.preventDefault()}
       >
-        {/* IFRAME BLINDADO: sandbox sem allow-popups e sem allow-top-navigation + pointer-events-none */}
+        {/* IFRAME BLINDADO: autoplay=1&mute=1 garante início imediato em qualquer navegador + escudo Anti-YouTube */}
         {playerAtivo && (
           <iframe
             ref={iframePlayerRef}
-            key={`${jogoGetvAtivo.id}_${somMutado ? 'muted' : 'unmuted'}`}
-            src={`https://www.youtube.com/embed/${jogoGetvAtivo.id}?autoplay=1&mute=${
-              somMutado ? 1 : 0
-            }&controls=0&modestbranding=1&rel=0&playsinline=1&enablejsapi=1&fs=0&iv_load_policy=3&disablekb=1`}
+            key={jogoGetvAtivo.id}
+            onLoad={iniciarHandshakePlayer}
+            src={`https://www.youtube.com/embed/${jogoGetvAtivo.id}?autoplay=1&mute=1&controls=0&modestbranding=1&rel=0&playsinline=1&enablejsapi=1&fs=0&iv_load_policy=3&disablekb=1&loop=1&playlist=${jogoGetvAtivo.id}${originQuery}`}
             title={jogoGetvAtivo.titulo}
-            sandbox="allow-scripts allow-same-origin allow-presentation"
-            className="w-full h-full border-0 block bg-black pointer-events-none select-none scale-[1.03]"
-            allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture"
-            referrerPolicy="strict-origin-when-cross-origin"
+            className="w-full h-full border-0 block bg-black pointer-events-none select-none scale-[1.04]"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            referrerPolicy="origin-when-cross-origin"
           />
         )}
 
@@ -1448,7 +1647,7 @@ function BolaoLiveCardInner({
                   e.stopPropagation();
                   handleTogglePlayPause();
                 }}
-                className="pointer-events-auto bg-black/90 border-2 border-[#C41E3A] rounded-2xl px-5 py-3.5 flex flex-col items-center gap-1.5 shadow-[0_0_30px_rgba(196,30,58,0.6)] cursor-pointer hover:scale-105 transition"
+                className="pointer-events-auto bg-black/95 border-2 border-[#C41E3A] rounded-2xl px-5 py-3.5 flex flex-col items-center gap-1.5 shadow-[0_0_30px_rgba(196,30,58,0.6)] cursor-pointer hover:scale-105 transition"
               >
                 <span className="text-2xl">▶️</span>
                 <span className="text-xs font-black uppercase tracking-wider text-white">
@@ -1463,15 +1662,12 @@ function BolaoLiveCardInner({
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
-                  setSomMutado(false);
-                  enviarComandoPlayer('unMute');
-                  enviarComandoPlayer('setVolume', [100]);
-                  enviarComandoPlayer('playVideo');
+                  handleToggleSom();
                 }}
                 className="pointer-events-auto bg-[#C41E3A]/95 hover:bg-[#C41E3A] border-2 border-white/80 text-white font-black px-4 py-2.5 rounded-2xl text-xs uppercase tracking-wider shadow-[0_0_30px_rgba(0,0,0,0.9)] flex items-center gap-2 cursor-pointer transition transform hover:scale-105"
               >
                 <span className="text-base">🔊</span>
-                <span>Play c/ Som • Jogo Ao Vivo GeTV</span>
+                <span>Ativar Som • Jogo Ao Vivo Rolando</span>
               </button>
             ) : null}
 
@@ -1499,9 +1695,7 @@ function BolaoLiveCardInner({
 
               <button
                 type="button"
-                onClick={() => {
-                  setSomMutado((prev) => !prev);
-                }}
+                onClick={handleToggleSom}
                 className={`font-black text-[10px] uppercase px-2.5 py-1.5 rounded-lg cursor-pointer transition flex items-center gap-1 border ${
                   somMutado
                     ? 'bg-amber-400 text-black border-amber-300'
@@ -1579,10 +1773,17 @@ function BolaoLiveCardInner({
                 key={jg.id}
                 type="button"
                 onClick={() => {
-                  setJogoGetvAtivo(jg);
+                  somMutadoRef.current = false;
+                  setSomMutado(false);
                   setPlayerAtivo(true);
                   setPlayerPausado(false);
-                  setSomMutado(false);
+                  if (jogoGetvAtivo.id === jg.id) {
+                    enviarComandoPlayer('unMute');
+                    enviarComandoPlayer('setVolume', [100]);
+                    enviarComandoPlayer('playVideo');
+                  } else {
+                    setJogoGetvAtivo(jg);
+                  }
                 }}
                 className={`w-full p-2 rounded-xl border text-left transition cursor-pointer flex items-center justify-between gap-2.5 ${
                   ativo
