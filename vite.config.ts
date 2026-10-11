@@ -60,6 +60,7 @@ export default defineConfig(({ mode }) => {
               '/api/pagamento/webhook': './api/pagamento/webhook.js',
               '/api/criar-pagamento-infinitepay': './api/criar-pagamento-infinitepay.js',
               '/api/pagamento/criar': './api/pagamento/criar.js',
+              '/api/getv-live': './api/getv-live.js',
             }
             const modulePath = handlers[pathname]
             if (!modulePath) return next()

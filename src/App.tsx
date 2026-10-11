@@ -6713,17 +6713,17 @@ export default function App() {
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-[10px] font-black uppercase tracking-wider bg-amber-400 text-black px-2 py-0.5 rounded">
-                        CONTROLE DO PLAYER & REPRISE YOUTUBE
+                        CONTROLE DO PLAYER AO VIVO GE TV (@getv)
                       </span>
                       <span className="text-[10px] text-amber-300 font-bold">
-                        ⚡ Sincronizado em tempo real com a Área do Jogador
+                        🔒 Player Blindado Anti-YouTube • Sincronizado c/ Área do Jogador
                       </span>
                     </div>
                     <h3 className="font-black text-sm sm:text-base text-white flex items-center gap-2 mt-1">
-                      <span>🎬</span> GERENCIAR REPRISE DO YOUTUBE
+                      <span>🎬</span> JOGOS AO VIVO GE TV (@getv) & PLAYER NO APP
                     </h3>
                     <p className="text-[11px] text-zinc-400">
-                      Cole o link do YouTube abaixo (ou clique em &quot;📋 Colar Link&quot;) para transmitir uma reprise no player de todos os jogadores.
+                      Exibe sempre os jogos ao vivo da GeTV (com bloqueio de saída para o YouTube) ou cole um link específico abaixo.
                     </p>
                   </div>
                 </div>
@@ -8917,10 +8917,10 @@ export default function App() {
           <div className="bg-zinc-900/95 border border-[#C41E3A] rounded-2xl px-4 py-3 flex items-center justify-between gap-2 shadow-lg">
             <div>
               <span className="text-[10px] font-black uppercase tracking-wider text-[#C41E3A] block">
-                📺 Player na Área do Jogador • Atualização Automática ESPN (30s)
+                📺 Jogos Ao Vivo GeTV (@getv) • Player Blindado (Sem Sair do App) + Placar ESPN
               </span>
               <h3 className="text-sm font-black text-white">
-                ⚽ Brasileirão Série A • Placar ESPN, Resumo & Aposte Agora
+                ⚽ Jogos Ao Vivo GeTV • Placar ESPN, Resumo & Aposte Agora
               </h3>
             </div>
             <button
