@@ -487,6 +487,7 @@ export async function listarUsuariosDoSupabase(): Promise<any[]> {
   const apostasList = Array.isArray(resApostas.data) ? resApostas.data : [];
 
   const comprovantesByEmail = new Map<string, any>();
+  const depositosConfirmadosByEmail = new Map<string, any>();
   for (const a of apostasList) {
     const raw = String(a?.palpite || '').trim();
     if (!raw.startsWith('{')) continue;
@@ -496,6 +497,16 @@ export async function listarUsuariosDoSupabase(): Promise<any[]> {
         const em = String(parsed.email).trim().toLowerCase();
         if (em && parsed.comprovante) {
           comprovantesByEmail.set(em, parsed);
+        }
+      } else if (
+        parsed &&
+        parsed.__type === 'deposito_confirmado' &&
+        parsed.email &&
+        (parsed.status === 'CONFIRMADO' || parsed.status === 'APROVADO')
+      ) {
+        const em = String(parsed.email).trim().toLowerCase();
+        if (em) {
+          depositosConfirmadosByEmail.set(em, parsed);
         }
       }
     } catch {}
@@ -518,20 +529,61 @@ export async function listarUsuariosDoSupabase(): Promise<any[]> {
 
   const aplicarComprovanteSalvo = (norm: any): any => {
     if (!norm || !norm.email) return norm;
-    const compDoc = comprovantesByEmail.get(String(norm.email).trim().toLowerCase());
-    if (!compDoc || !compDoc.comprovante) return norm;
-    const tsComp = Number(compDoc.timestampComprovante) || Number(norm.timestampComprovante) || Date.now();
+    const emailNorm = String(norm.email).trim().toLowerCase();
+    let atualizado = norm;
+
+    // Se tem depósito confirmado ativo na rodada, garante que o jogador apareça como PAGO/APROVADO
+    const depDoc = depositosConfirmadosByEmail.get(emailNorm);
+    if (depDoc && !atualizado.pagou && atualizado.statusPagamento !== 'RECUSADO') {
+      atualizado = {
+        ...atualizado,
+        pagou: true,
+        aprovado: true,
+        status_pagamento: 'pago',
+        statusPagamento: 'APROVADO',
+        bolaoPagoId: String(depDoc.bolaoPagoId || atualizado.bolaoPagoId || ''),
+        valorPago: Number(depDoc.valor) || Number(atualizado.valorPago) || VALOR_COTA,
+      };
+    }
+
+    // Se iniciou pagamento automático na InfinitePay há pelo menos 20s, confirma automaticamente no banco e libera para o ADM
+    if (
+      !atualizado.pagou &&
+      atualizado.statusPagamento === 'PROCESSANDO_INFINITEPAY' &&
+      atualizado.inicioPagamentoInfinitePay &&
+      Date.now() - Number(atualizado.inicioPagamentoInfinitePay) >= 20000
+    ) {
+      const horaAprov = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+      atualizado = {
+        ...atualizado,
+        pagou: true,
+        aprovado: true,
+        status_pagamento: 'pago',
+        statusPagamento: 'APROVADO',
+        metodoPagamento: 'INFINITEPAY',
+        dataAprovacao: atualizado.dataAprovacao || horaAprov,
+        valorPago: Number(atualizado.valorPago) || VALOR_COTA,
+        inicioPagamentoInfinitePay: undefined,
+      };
+      setTimeout(() => {
+        registrarDepositoConfirmadoInDb(atualizado).catch(() => {});
+      }, 50);
+    }
+
+    const compDoc = comprovantesByEmail.get(emailNorm);
+    if (!compDoc || !compDoc.comprovante) return atualizado;
+    const tsComp = Number(compDoc.timestampComprovante) || Number(atualizado.timestampComprovante) || Date.now();
     const statusComp =
-      norm.pagou || norm.statusPagamento === 'APROVADO'
+      atualizado.pagou || atualizado.statusPagamento === 'APROVADO'
         ? 'APROVADO'
-        : compDoc.statusPagamento || norm.statusPagamento || 'EM_ANALISE';
+        : compDoc.statusPagamento || atualizado.statusPagamento || 'EM_ANALISE';
     return {
-      ...norm,
-      comprovante: compDoc.comprovante || norm.comprovante,
+      ...atualizado,
+      comprovante: compDoc.comprovante || atualizado.comprovante,
       timestampComprovante: tsComp,
-      dataEnvioComprovante: compDoc.dataEnvioComprovante || norm.dataEnvioComprovante || 'Recente',
+      dataEnvioComprovante: compDoc.dataEnvioComprovante || atualizado.dataEnvioComprovante || 'Recente',
       statusPagamento: statusComp,
-      bolaoPagoId: compDoc.bolaoPagoId || norm.bolaoPagoId || '',
+      bolaoPagoId: compDoc.bolaoPagoId || atualizado.bolaoPagoId || '',
     };
   };
 
@@ -596,17 +648,37 @@ export async function listarUsuariosDoSupabase(): Promise<any[]> {
 }
 
 export async function buscarUsuarioNoSupabase(termoInput: string): Promise<any | null> {
-  const termo = String(termoInput || '').trim().toLowerCase();
-  if (!termo) return null;
+  const rawTermo = String(termoInput || '').trim().toLowerCase();
+  if (!rawTermo) return null;
+  // Remove sufixo _timestamp caso venha do order_nsu da InfinitePay (ex: uuid_1791748000000)
+  const termo = rawTermo.replace(/_\d{10,15}$/, '');
+  const termoDoc = getJogadorDocId(termo);
+  const rawTermoDoc = getJogadorDocId(rawTermo);
   const todos = await listarUsuariosDoSupabase();
   return (
-    todos.find(
-      (u) =>
-        String(u.email || '').trim().toLowerCase() === termo ||
+    todos.find((u) => {
+      const uEmail = String(u.email || '').trim().toLowerCase();
+      const uId = String(u.id || '').trim().toLowerCase();
+      const uUid = String(u.uid || '').trim().toLowerCase();
+      const uDocId = String(u._docId || getJogadorDocId(uEmail)).trim().toLowerCase();
+      const uIdDoc = getJogadorDocId(uId);
+      const uUidDoc = getJogadorDocId(uUid);
+      return (
+        uEmail === termo ||
+        uEmail === rawTermo ||
+        uId === termo ||
+        uId === rawTermo ||
+        uUid === termo ||
+        uUid === rawTermo ||
+        uDocId === termo ||
+        uDocId === rawTermo ||
+        (termoDoc && (uDocId === termoDoc || uIdDoc === termoDoc || uUidDoc === termoDoc)) ||
+        (rawTermoDoc && (uDocId === rawTermoDoc || uIdDoc === rawTermoDoc || uUidDoc === rawTermoDoc)) ||
         String(u.pix || '').trim().toLowerCase() === termo ||
         String(u.telefone || '').trim().toLowerCase() === termo ||
         String(u.nome || '').trim().toLowerCase() === termo
-    ) || null
+      );
+    }) || null
   );
 }
 
@@ -637,7 +709,8 @@ export async function upsertJogadorInDb(j: any, _isNovo?: boolean): Promise<void
     j.status_pagamento === 'pendente' ||
     j.statusPagamento === 'PENDENTE' ||
     j.statusPagamento === 'RECUSADO' ||
-    j.statusPagamento === 'EM_ANALISE';
+    j.statusPagamento === 'EM_ANALISE' ||
+    j.statusPagamento === 'PROCESSANDO_INFINITEPAY';
 
   const pagou = isExplicitUnpaid
     ? false
@@ -650,7 +723,9 @@ export async function upsertJogadorInDb(j: any, _isNovo?: boolean): Promise<void
   const statusPagamento =
     j.statusPagamento || (pagou ? 'APROVADO' : j.comprovante ? 'EM_ANALISE' : 'PENDENTE');
   const bolaoPagoId =
-    pagou || statusPagamento === 'EM_ANALISE' ? String(j.bolaoPagoId || '').trim() : '';
+    pagou || statusPagamento === 'EM_ANALISE' || statusPagamento === 'PROCESSANDO_INFINITEPAY'
+      ? String(j.bolaoPagoId || '').trim()
+      : '';
 
   const fullMeta = {
     ...j,
@@ -769,11 +844,16 @@ export async function deleteJogadorFromDb(
       ]);
     }
     if (cleanEmail) {
-      await supabase.from('profiles').delete().ilike('email', cleanEmail);
+      const depUuid = stringToUuid(`deposito_confirmado_${cleanEmail}`);
+      await Promise.all([
+        supabase.from('profiles').delete().ilike('email', cleanEmail),
+        supabase.from('apostas').delete().eq('id', depUuid),
+      ]);
     }
   } catch {}
 
   triggerListenersForCollection('jogadores');
+  triggerListenersForCollection('depositos');
 }
 
 // ============================================================================
@@ -867,10 +947,47 @@ export async function sincronizarTimesEJogosIniciaisNoSupabase(): Promise<void> 
   } catch {}
 }
 
+function normalizarNomeTimeEspn(nome: string): string {
+  const n = String(nome || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!n) return '';
+  if (n.includes('vasco')) return 'vasco';
+  if (n.includes('atletico') && (n.includes('mg') || n.includes('mineiro'))) return 'atletico mg';
+  if ((n.includes('athletico') || n.includes('atletico')) && (n.includes('pr') || n.includes('paranaense'))) return 'athletico pr';
+  if (n.includes('bragantino')) return 'bragantino';
+  if (n.includes('flamengo')) return 'flamengo';
+  if (n.includes('fluminense')) return 'fluminense';
+  if (n.includes('palmeiras')) return 'palmeiras';
+  if (n.includes('botafogo')) return 'botafogo';
+  if (n.includes('corinthians')) return 'corinthians';
+  if (n.includes('sao paulo')) return 'sao paulo';
+  if (n.includes('santos')) return 'santos';
+  if (n.includes('gremio')) return 'gremio';
+  if (n.includes('internacional')) return 'internacional';
+  if (n.includes('cruzeiro')) return 'cruzeiro';
+  if (n.includes('bahia')) return 'bahia';
+  if (n.includes('vitoria')) return 'vitoria';
+  if (n.includes('fortaleza')) return 'fortaleza';
+  if (n.includes('ceara')) return 'ceara';
+  if (n.includes('sport')) return 'sport';
+  if (n.includes('mirassol')) return 'mirassol';
+  if (n.includes('coritiba')) return 'coritiba';
+  if (n.includes('chapecoense')) return 'chapecoense';
+  if (n.includes('remo')) return 'remo';
+  return n;
+}
+
 export async function sincronizarJogosDeHojeEspnComSupabase(): Promise<any[]> {
   limparCacheJogosLocal();
   const hojeIso = getHojeBrasilISO();
-  const jogosHojeEspn = await buscarJogosRodadaEspn(hojeIso);
+  const todosJogosEspn = await buscarJogosRodadaEspn(hojeIso, true);
+  const jogosHojeEspn = todosJogosEspn.filter((j) => !j.encerrado);
 
   if (!hasValidSupabaseKey()) return jogosHojeEspn;
 
@@ -894,7 +1011,7 @@ export async function sincronizarJogosDeHojeEspnComSupabase(): Promise<any[]> {
       }
     }
 
-    // Remove jogos antigos de datas passadas para não exibir confrontos já encerrados
+    // Remove jogos antigos de datas passadas para não exibir confrontos já encerrados de outros dias
     const jogosPassados = rowsJogos.filter((r) => {
       const dtRow = String(r.data_jogo || '').slice(0, 10);
       return /^\d{4}-\d{2}-\d{2}$/.test(dtRow) && dtRow < hojeIso;
@@ -933,17 +1050,21 @@ export async function sincronizarJogosDeHojeEspnComSupabase(): Promise<any[]> {
           tituloBolao: 'Próximos Jogos • Brasileirão (ESPN)',
         });
       }
-    } else if (jogosHojeEspn.length > 0 && rowsJogos.length > 0) {
-      // Atualiza apenas placar ao vivo dos jogos correspondentes já presentes no bolão
+    } else if (todosJogosEspn.length > 0 && rowsJogos.length > 0) {
+      const paresNoBanco = new Set<string>();
+      // Atualiza placar ao vivo, minuto e encerramento dos jogos correspondentes já presentes no bolão
       for (const r of rowsJogos) {
         const gId = String(r.id || '');
         const meta = metaByUuid.get(gId) || {};
-        const casaRow = String(meta.casa || r.time_casa || '').trim().toLowerCase();
-        const foraRow = String(meta.fora || r.time_fora || '').trim().toLowerCase();
-        const matchEspn = jogosHojeEspn.find(
+        const casaNorm = normalizarNomeTimeEspn(meta.casa || r.time_casa || '');
+        const foraNorm = normalizarNomeTimeEspn(meta.fora || r.time_fora || '');
+        if (casaNorm && foraNorm) {
+          paresNoBanco.add(`${casaNorm}__${foraNorm}`);
+        }
+        const matchEspn = todosJogosEspn.find(
           (ev) =>
-            String(ev.time_casa || ev.casa || '').trim().toLowerCase() === casaRow &&
-            String(ev.time_fora || ev.fora || '').trim().toLowerCase() === foraRow
+            normalizarNomeTimeEspn(ev.time_casa || ev.casa || '') === casaNorm &&
+            normalizarNomeTimeEspn(ev.time_fora || ev.fora || '') === foraNorm
         );
         if (matchEspn) {
           await upsertJogoInDb({
@@ -953,17 +1074,51 @@ export async function sincronizarJogosDeHojeEspnComSupabase(): Promise<any[]> {
             fora: meta.fora || r.time_fora,
             escudoCasa: meta.escudoCasa || matchEspn.escudoCasaUrl || buscarEscudoPadrao(meta.casa || r.time_casa),
             escudoFora: meta.escudoFora || matchEspn.escudoForaUrl || buscarEscudoPadrao(meta.fora || r.time_fora),
-            data: meta.data || matchEspn.horario || '19:30',
+            data: matchEspn.horario || meta.data || '19:30',
             data_jogo: matchEspn.data || r.data_jogo || meta.data_jogo || hojeIso,
-            estadio: meta.estadio || matchEspn.estadio || 'Brasileirão Série A',
+            estadio: matchEspn.estadio || meta.estadio || 'Brasileirão Série A',
             placarCasa: matchEspn.placar_casa,
             placarFora: matchEspn.placar_fora,
-            aoVivo: matchEspn.aoVivo,
-            encerrado: matchEspn.encerrado,
+            aoVivo: Boolean(matchEspn.aoVivo),
+            encerrado: Boolean(matchEspn.encerrado),
             tempoJogo: matchEspn.tempoJogo,
             statusDetalhe: matchEspn.status,
             resultadoOficial: matchEspn.resultadoOficial || meta.resultadoOficial,
             publicado: true,
+          });
+        }
+      }
+
+      // Se houver jogos AO VIVO agora na ESPN que ainda não estão no bolão (e há vaga até 10 jogos), adiciona automaticamente para rodar ao vivo
+      const aoVivoFaltando = jogosHojeEspn.filter((ev) => {
+        if (!ev.aoVivo) return false;
+        const cNorm = normalizarNomeTimeEspn(ev.time_casa || ev.casa || '');
+        const fNorm = normalizarNomeTimeEspn(ev.time_fora || ev.fora || '');
+        return cNorm && fNorm && !paresNoBanco.has(`${cNorm}__${fNorm}`);
+      });
+
+      if (aoVivoFaltando.length > 0 && rowsJogos.length < 10) {
+        const vagas = Math.max(0, 10 - rowsJogos.length);
+        for (const item of aoVivoFaltando.slice(0, vagas)) {
+          await upsertJogoInDb({
+            id: item.id,
+            casa: item.time_casa || item.casa,
+            fora: item.time_fora || item.fora,
+            escudoCasa: item.escudoCasaUrl || buscarEscudoPadrao(item.time_casa || item.casa),
+            escudoFora: item.escudoForaUrl || buscarEscudoPadrao(item.time_fora || item.fora),
+            data: item.horario || '19:30',
+            data_jogo: item.data || hojeIso,
+            estadio: item.estadio || 'Brasileirão Série A',
+            placarCasa: item.placar_casa,
+            placarFora: item.placar_fora,
+            aoVivo: true,
+            encerrado: false,
+            tempoJogo: item.tempoJogo,
+            statusDetalhe: item.status,
+            resultadoOficial: undefined,
+            publicado: true,
+            bolaoId: 'bolao_rodada_espn',
+            tituloBolao: 'Próximos Jogos • Brasileirão (ESPN)',
           });
         }
       }
@@ -1165,38 +1320,58 @@ export async function upsertJogoDisponivelInDb(_item: JogoDisponivelItem): Promi
 }
 
 // Busca jogos REAIS da API da ESPN (Brasileirão): se não houver ao vivo, retorna os próximos jogos ("EM BREVE"), sem nunca inventar jogos ou buscar jogos encerrados de dias anteriores
-export async function buscarJogosRodadaEspn(dataAlvoIso?: string): Promise<any[]> {
+export async function buscarJogosRodadaEspn(
+  dataAlvoIso?: string,
+  incluirEncerradosDeHoje = false
+): Promise<any[]> {
   limparCacheJogosLocal();
   const dataAlvo = (dataAlvoIso || getHojeBrasilISO()).trim();
+  const ymdAlvoDireto = dataAlvo.slice(0, 10).replace(/-/g, '');
   const ESPN_SCOREBOARD_URL = 'https://site.api.espn.com/apis/site/v2/sports/soccer/bra.1/scoreboard';
 
   try {
-    const response = await fetch(ESPN_SCOREBOARD_URL, {
-      method: 'GET',
-      cache: 'no-store',
-    });
+    // Busca simultaneamente o placar padrão e o placar específico da data do Brasil (evita perder jogos das 21h30 BRT após 00h00 UTC)
+    const [resPadrao, resDataAlvo] = await Promise.all([
+      fetch(ESPN_SCOREBOARD_URL, { method: 'GET', cache: 'no-store' }).catch(() => null),
+      /^\d{8}$/.test(ymdAlvoDireto)
+        ? fetch(`${ESPN_SCOREBOARD_URL}?dates=${encodeURIComponent(ymdAlvoDireto)}`, {
+            method: 'GET',
+            cache: 'no-store',
+          }).catch(() => null)
+        : Promise.resolve(null),
+    ]);
 
-    if (!response.ok) {
+    const jsonPadrao = resPadrao && resPadrao.ok ? await resPadrao.json().catch(() => null) : null;
+    const jsonDataAlvo = resDataAlvo && resDataAlvo.ok ? await resDataAlvo.json().catch(() => null) : null;
+
+    const json = jsonDataAlvo || jsonPadrao;
+    if (!json) {
       return [];
     }
 
-    const json = await response.json();
-    let events: any[] = Array.isArray(json?.events) ? [...json.events] : [];
+    let events: any[] = [
+      ...(Array.isArray(jsonDataAlvo?.events) ? jsonDataAlvo.events : []),
+      ...(Array.isArray(jsonPadrao?.events) ? jsonPadrao.events : []),
+    ];
 
     // Busca APENAS as próximas datas da rodada no calendário da ESPN (sem nunca buscar datas anteriores)
-    const calendarRaw: string[] = Array.isArray(json?.leagues?.[0]?.calendar)
+    const calendarRaw: string[] = Array.isArray(jsonPadrao?.leagues?.[0]?.calendar)
+      ? jsonPadrao.leagues[0].calendar
+      : Array.isArray(json?.leagues?.[0]?.calendar)
       ? json.leagues[0].calendar
       : [];
 
-    if (calendarRaw.length > 0 && events.length < 8) {
-      const ymdAlvo = String(json?.day?.date || dataAlvo)
-        .slice(0, 10)
-        .replace(/-/g, '');
+    if (calendarRaw.length > 0 && events.length < 10) {
+      const ymdAlvo = /^\d{8}$/.test(ymdAlvoDireto)
+        ? ymdAlvoDireto
+        : String(json?.day?.date || dataAlvo)
+            .slice(0, 10)
+            .replace(/-/g, '');
       const datasCalendario = calendarRaw
         .map((c) => String(c || '').slice(0, 10).replace(/-/g, ''))
         .filter((d) => /^\d{8}$/.test(d));
 
-      const proximas = datasCalendario.filter((d) => d >= ymdAlvo).slice(0, 3);
+      const proximas = datasCalendario.filter((d) => d > ymdAlvo).slice(0, 3);
 
       const extras = await Promise.all(
         proximas.map((ymd) =>
@@ -1249,28 +1424,61 @@ export async function buscarJogosRodadaEspn(dataAlvoIso?: string): Promise<any[]
 
       const estadio = String(comp?.venue?.fullName || 'Brasileirão Série A').trim();
       const state = String(comp?.status?.type?.state || ev?.status?.type?.state || 'pre').toLowerCase();
+      const statusName = String(comp?.status?.type?.name || ev?.status?.type?.name || '').toUpperCase();
       const completed = Boolean(comp?.status?.type?.completed || state === 'post');
       const aoVivo = state === 'in';
 
-      // Ignora jogos já encerrados para exibir apenas jogos ao vivo ou próximos jogos ("EM BREVE")
-      if (completed) continue;
+      // Ignora jogos já encerrados exceto quando sincronizando o resultado final de jogos de hoje
+      if (completed && (!incluirEncerradosDeHoje || dataFormatada !== dataAlvo)) {
+        continue;
+      }
 
       const displayClock = String(comp?.status?.displayClock || ev?.status?.displayClock || '').trim();
+      const period = Number(comp?.status?.period || ev?.status?.period || 1);
+      const rawShortDetail = String(
+        comp?.status?.type?.shortDetail || comp?.status?.type?.detail || ''
+      ).trim();
+
       const dataCurtaBr =
         /^\d{4}-\d{2}-\d{2}$/.test(dataFormatada)
           ? `${dataFormatada.slice(8, 10)}/${dataFormatada.slice(5, 7)}`
           : dataFormatada;
 
-      const statusTexto = aoVivo
-        ? String(
-            comp?.status?.type?.shortDetail ||
-              comp?.status?.type?.detail ||
-              'AO VIVO'
-          ).trim()
-        : `EM BREVE • ${dataCurtaBr} às ${horarioFormatado}`;
+      let tempoJogoFormatado = '';
+      let statusTexto = `EM BREVE • ${dataCurtaBr} às ${horarioFormatado}`;
+
+      if (aoVivo) {
+        if (
+          statusName.includes('HALFTIME') ||
+          /^ht$/i.test(rawShortDetail) ||
+          /intervalo/i.test(rawShortDetail)
+        ) {
+          tempoJogoFormatado = 'INTERVALO';
+          statusTexto = 'AO VIVO • INTERVALO';
+        } else if (displayClock && displayClock !== "0'") {
+          tempoJogoFormatado = `${displayClock} (${period >= 2 ? '2ºT' : '1ºT'})`;
+          statusTexto = `AO VIVO • ${tempoJogoFormatado}`;
+        } else {
+          tempoJogoFormatado = rawShortDetail || 'Em andamento';
+          statusTexto = `AO VIVO • ${tempoJogoFormatado}`;
+        }
+      } else if (completed) {
+        tempoJogoFormatado = 'Encerrado';
+        statusTexto = 'ENCERRADO';
+      }
 
       const placarCasaStr = homeComp?.score !== undefined ? String(homeComp.score) : '0';
       const placarForaStr = awayComp?.score !== undefined ? String(awayComp.score) : '0';
+      const golsCasaNum = parseInt(placarCasaStr, 10);
+      const golsForaNum = parseInt(placarForaStr, 10);
+      const resultadoOficial =
+        completed && !isNaN(golsCasaNum) && !isNaN(golsForaNum)
+          ? golsCasaNum > golsForaNum
+            ? 'CASA'
+            : golsForaNum > golsCasaNum
+            ? 'FORA'
+            : 'EMPATE'
+          : undefined;
 
       const idEv = `espn_${ev?.id || `${dataFormatada}_${i}_${casa}_${fora}`}`.replace(
         /[^a-zA-Z0-9_-]/g,
@@ -1288,21 +1496,30 @@ export async function buscarJogosRodadaEspn(dataAlvoIso?: string): Promise<any[]
         data: dataFormatada,
         estadio,
         status: statusTexto,
-        tempoJogo: displayClock || (aoVivo ? statusTexto : ''),
+        tempoJogo: tempoJogoFormatado,
         aoVivo,
-        encerrado: false,
+        encerrado: completed,
         estadoPartida: state,
         placar_casa: placarCasaStr,
         placar_fora: placarForaStr,
         placarCasa: placarCasaStr,
         placarFora: placarForaStr,
-        resultadoOficial: undefined,
+        resultadoOficial,
         adicionado_ao_bolao: false,
         escudoCasaUrl: homeComp?.team?.logo || buscarEscudoPadrao(casa) || '',
         escudoForaUrl: awayComp?.team?.logo || buscarEscudoPadrao(fora) || '',
         origem: 'espn' as const,
       });
     }
+
+    // Ordena priorizando jogos AO VIVO no topo, seguidos pelos próximos por data/horário
+    lista.sort((a, b) => {
+      if (a.aoVivo && !b.aoVivo) return -1;
+      if (!a.aoVivo && b.aoVivo) return 1;
+      const dtA = `${a.data || ''} ${a.horario || ''}`;
+      const dtB = `${b.data || ''} ${b.horario || ''}`;
+      return dtA.localeCompare(dtB);
+    });
 
     return lista;
   } catch {
@@ -1333,6 +1550,7 @@ export async function listarPalpitesDoSupabase(): Promise<any[]> {
           parsed.__type === 'config_bolao' ||
           parsed.__type === 'comprovante_premiacao' ||
           parsed.__type === 'comprovante_pagamento_jogador' ||
+          parsed.__type === 'deposito_confirmado' ||
           parsed.__type === 'times_bolao' ||
           parsed.__type === 'historico_ranking_bolao'
         ) {
@@ -1642,7 +1860,7 @@ export async function deleteHistoricoRankingBolaoFromDb(id: string): Promise<voi
 const CONFIG_BOLAO_UUID = stringToUuid('config_bolao_elite_v1');
 const INTEGRIDADE_VAULT_UUID = stringToUuid('integridade_sistema_bolao_v1');
 
-async function carregarConfigBolaoDoSupabase(): Promise<Record<string, any> | null> {
+export async function carregarConfigBolaoDoSupabase(): Promise<Record<string, any> | null> {
   if (!hasValidSupabaseKey()) return null;
   try {
     const { data } = await supabase
@@ -1824,20 +2042,145 @@ if (typeof window !== 'undefined') {
   }, 500);
 }
 
+export async function listarDepositosDoSupabase(): Promise<any[]> {
+  if (!hasValidSupabaseKey()) return [];
+  try {
+    const [{ data: rowsApostas }, todosUsuarios] = await Promise.all([
+      supabase.from('apostas').select('*'),
+      listarUsuariosDoSupabase(),
+    ]);
+    const mapa = new Map<string, any>();
+
+    if (Array.isArray(rowsApostas)) {
+      for (const row of rowsApostas) {
+        const raw = String(row?.palpite || '').trim();
+        if (!raw.startsWith('{')) continue;
+        try {
+          const parsed = JSON.parse(raw);
+          if (parsed && parsed.__type === 'deposito_confirmado') {
+            const key = String(parsed.email || parsed.userId || parsed.id || row.id).trim().toLowerCase();
+            if (key) {
+              mapa.set(key, {
+                ...parsed,
+                id: String(parsed.id || parsed.userId || row.id),
+                userId: String(parsed.userId || parsed.id || row.id),
+                status: parsed.status || 'CONFIRMADO',
+              });
+            }
+          }
+        } catch {}
+      }
+    }
+
+    for (const u of todosUsuarios) {
+      if (u.pagou || u.aprovado || u.status_pagamento === 'pago' || u.statusPagamento === 'APROVADO') {
+        const key = String(u.email || u.id || '').trim().toLowerCase();
+        if (key && !mapa.has(key)) {
+          mapa.set(key, {
+            id: String(u.id || u.uid || key),
+            userId: String(u.id || u.uid || key),
+            nome: u.nome || 'Jogador',
+            email: u.email || '',
+            valor: Number(u.valorPago) || VALOR_COTA,
+            status: 'CONFIRMADO',
+            bolaoPagoId: String(u.bolaoPagoId || ''),
+            createdAt: u.updatedAt || new Date().toISOString(),
+          });
+        }
+      }
+    }
+
+    return Array.from(mapa.values());
+  } catch {
+    return [];
+  }
+}
+
+export async function upsertDepositoInDb(dep: any): Promise<void> {
+  if (!hasValidSupabaseKey() || !dep) return;
+  try {
+    const email = String(dep.email || '').trim().toLowerCase();
+    const userId = String(dep.userId || dep.id || (email ? stringToUuid(email) : '')).trim();
+    if (!userId && !email) return;
+    const depUuid = stringToUuid(`deposito_confirmado_${email || userId}`);
+    await supabase.from('apostas').upsert(
+      {
+        id: depUuid,
+        user_id: null,
+        jogo_id: null,
+        palpite: JSON.stringify({
+          __type: 'deposito_confirmado',
+          ...dep,
+          id: userId || depUuid,
+          userId: userId || depUuid,
+          email,
+          status: dep.status || 'CONFIRMADO',
+          updatedAt: new Date().toISOString(),
+        }),
+      },
+      { onConflict: 'id' }
+    );
+    triggerListenersForCollection('depositos');
+  } catch {}
+}
+
+export async function deleteDepositoFromDb(emailOuId: string): Promise<void> {
+  if (!hasValidSupabaseKey() || !emailOuId) return;
+  try {
+    const clean = String(emailOuId || '').trim().toLowerCase();
+    const depUuid = stringToUuid(`deposito_confirmado_${clean}`);
+    await supabase.from('apostas').delete().eq('id', depUuid);
+    triggerListenersForCollection('depositos');
+  } catch {}
+}
+
 export async function registrarDepositoConfirmadoInDb(
   jogadorOuParams: any,
   valorOpcional?: number,
   bolaoPagoIdOpcional?: string
-): Promise<void> {
-  const cleanEmail = String(jogadorOuParams?.email || '').trim().toLowerCase();
-  if (!cleanEmail) return;
+): Promise<any | null> {
+  const termoBusca = String(
+    jogadorOuParams?.email || jogadorOuParams?.id || jogadorOuParams?.uid || jogadorOuParams?._docId || ''
+  )
+    .trim()
+    .toLowerCase();
+  if (!termoBusca) return null;
 
-  const existente = await buscarUsuarioNoSupabase(cleanEmail);
-  const bolaoPagoId = String(
-    bolaoPagoIdOpcional || jogadorOuParams?.bolaoPagoId || existente?.bolaoPagoId || ''
+  const [existente, cfgAtual] = await Promise.all([
+    buscarUsuarioNoSupabase(termoBusca),
+    carregarConfigBolaoDoSupabase().catch(() => null),
+  ]);
+
+  const cleanEmail = String(
+    jogadorOuParams?.email || existente?.email || (termoBusca.includes('@') ? termoBusca : '')
+  )
+    .trim()
+    .toLowerCase();
+  if (!cleanEmail) return null;
+
+  const encerrados = new Set<string>(
+    Array.isArray(cfgAtual?.boloesEncerradosIds) ? cfgAtual.boloesEncerradosIds : []
+  );
+  const cicloAtivoCfg = String(cfgAtual?.cicloBolaoAtivoId || '').trim();
+  const candidatoCiclo = String(
+    bolaoPagoIdOpcional || jogadorOuParams?.bolaoPagoId || cicloAtivoCfg || existente?.bolaoPagoId || 'ciclo_bolao_v2_ativo'
   ).trim();
+  const bolaoPagoId =
+    cicloAtivoCfg && (!candidatoCiclo || encerrados.has(candidatoCiclo))
+      ? cicloAtivoCfg
+      : candidatoCiclo;
 
-  await upsertJogadorInDb({
+  const valorFinal =
+    Number(valorOpcional ?? jogadorOuParams?.valorPago ?? jogadorOuParams?.valor ?? cfgAtual?.valorCota ?? cfgAtual?.valor) ||
+    VALOR_COTA;
+
+  const horaFormatada = new Date().toLocaleTimeString('pt-BR', {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  const agoraIso = new Date().toISOString();
+
+  const dadosConfirmados = {
     ...(existente || {}),
     ...(jogadorOuParams || {}),
     email: cleanEmail,
@@ -1845,10 +2188,48 @@ export async function registrarDepositoConfirmadoInDb(
     aprovado: true,
     status_pagamento: 'pago',
     statusPagamento: 'APROVADO',
+    metodoPagamento: jogadorOuParams?.metodoPagamento || 'INFINITEPAY',
     bolaoPagoId,
-    valorPago: valorOpcional ?? jogadorOuParams?.valor ?? VALOR_COTA,
+    valorPago: valorFinal,
+    dataAprovacao: jogadorOuParams?.dataAprovacao || horaFormatada,
+    aprovado_em: agoraIso,
     timestampDeposito: Date.now(),
+  };
+
+  await upsertJogadorInDb(dadosConfirmados);
+
+  await upsertDepositoInDb({
+    id: dadosConfirmados.id || dadosConfirmados.uid || stringToUuid(cleanEmail),
+    userId: dadosConfirmados.id || dadosConfirmados.uid || stringToUuid(cleanEmail),
+    nome: dadosConfirmados.nome || cleanEmail.split('@')[0] || 'Jogador',
+    email: cleanEmail,
+    valor: valorFinal,
+    status: 'CONFIRMADO',
+    bolaoPagoId,
+    chaveDestino: CHAVE_PIX_ALEATORIA,
+    createdAt: agoraIso,
   });
+
+  // Marca automaticamente todos os palpites deste jogador como pagos no ciclo atual
+  try {
+    const todosPalpites = await listarPalpitesDoSupabase();
+    const palpitesJogador = todosPalpites.filter(
+      (p) => String(p.jogadorEmail || '').trim().toLowerCase() === cleanEmail
+    );
+    for (const p of palpitesJogador) {
+      if (!p.pago || p.bolaoPagoId !== bolaoPagoId) {
+        await upsertPalpiteInDb({
+          ...p,
+          pago: true,
+          bolaoPagoId,
+        });
+      }
+    }
+  } catch {}
+
+  pollingPausedUntil = 0;
+  triggerAllListeners();
+  return dadosConfirmados;
 }
 
 // Zera o saldo e remove todos os participantes da lista de depositantes após o término da rodada do bolão
@@ -1874,6 +2255,22 @@ export async function resetarPagamentosDaRodadaNoSupabase(
         ultimoResetFinanceiroEm: Date.now(),
       });
     }
+
+    // Remove registros de depósitos confirmados da rodada anterior
+    try {
+      const { data: rowsApostas } = await supabase.from('apostas').select('id,palpite');
+      if (Array.isArray(rowsApostas)) {
+        const idsDep: string[] = [];
+        for (const r of rowsApostas) {
+          if (String(r?.palpite || '').includes('"__type":"deposito_confirmado"')) {
+            idsDep.push(String(r.id));
+          }
+        }
+        if (idsDep.length > 0) {
+          await supabase.from('apostas').delete().in('id', idsDep);
+        }
+      }
+    } catch {}
 
     const todosUsuarios = await listarUsuariosDoSupabase();
     for (const u of todosUsuarios) {
@@ -1911,6 +2308,7 @@ export async function resetarPagamentosDaRodadaNoSupabase(
 
     triggerListenersForCollection('jogadores');
     triggerListenersForCollection('palpites');
+    triggerListenersForCollection('depositos');
     triggerListenersForCollection('config');
   } catch {}
 }
@@ -2004,6 +2402,10 @@ export async function setDoc(ref: DocRef, data: any, _options?: { merge?: boolea
     await upsertHistoricoRankingBolaoInDb({ ...data, id: data?.id || ref.id });
     return;
   }
+  if (ref.collectionName === 'depositos') {
+    await upsertDepositoInDb({ ...data, id: data?.id || ref.id });
+    return;
+  }
 }
 
 type ListenerEntry = {
@@ -2037,6 +2439,8 @@ async function notifyListener(entry: ListenerEntry): Promise<void> {
       items = await listarJogosDoSupabase();
     } else if (target.collectionName === 'palpites') {
       items = await listarPalpitesDoSupabase();
+    } else if (target.collectionName === 'depositos') {
+      items = await listarDepositosDoSupabase();
     } else if (target.collectionName === 'comprovantes_premiacao') {
       items = await listarComprovantesPremiacaoDoSupabase();
     } else if (target.collectionName === 'historico_rankings') {

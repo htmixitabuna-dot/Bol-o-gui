@@ -28,6 +28,10 @@ import {
   deleteJogoFromDb,
   upsertPalpiteInDb,
   deletePalpiteFromDb,
+  listarPalpitesDoSupabase,
+  listarDepositosDoSupabase,
+  deleteDepositoFromDb,
+  carregarConfigBolaoDoSupabase,
   ComprovantePremiacaoItem,
   upsertComprovantePremiacaoInDb,
   deleteComprovantePremiacaoFromDb,
@@ -163,7 +167,14 @@ export default function App() {
     if (typeof window !== "undefined") {
       const path = window.location.pathname || "";
       const params = new URLSearchParams(window.location.search);
-      if (path.includes("/pagamento-sucesso") || params.get("jogador_id")) {
+      if (
+        path.includes("/pagamento-sucesso") ||
+        params.get("pagamento") === "sucesso" ||
+        params.get("jogador_id") ||
+        params.get("order_nsu") ||
+        params.get("transaction_nsu") ||
+        params.get("receipt_url")
+      ) {
         return "pagamentoSucesso";
       }
       if (path === "/admin") {
@@ -183,7 +194,14 @@ export default function App() {
       return [];
     }
   });
-  const [user, setUser] = useState<any>(null);
+  const [user, setUser] = useState<any>(() => {
+    try {
+      const u = localStorage.getItem("elite_user_v11");
+      return u ? JSON.parse(u) : null;
+    } catch {
+      return null;
+    }
+  });
   const [config, setConfig] = useState<{
     valor: number | string;
     valorCota?: number;
@@ -281,7 +299,12 @@ export default function App() {
   const [jogadorIdSucesso, setJogadorIdSucesso] = useState<string>(() => {
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
-      return params.get("jogador_id") || params.get("order_nsu") || "";
+      return (
+        params.get("email") ||
+        params.get("jogador_id") ||
+        params.get("order_nsu") ||
+        ""
+      );
     }
     return "";
   });
@@ -980,42 +1003,110 @@ export default function App() {
     };
   }, []);
 
-  // Sincronização ativa de comprovantes e jogadores quando o ADM ou Jogador alterna de tela
+  // Sincronização ativa em tempo real de jogadores, palpites, depósitos e prêmio quando o ADM ou Jogador está na tela
   useEffect(() => {
     let ativo = true;
     const sincronizarAgora = async () => {
       try {
-        const lista = await listarUsuariosDoSupabase();
-        if (!ativo || !Array.isArray(lista) || lista.length === 0) return;
-        setJogadores((prevLocal) => {
-          const prevMap = new Map<string, any>();
-          prevLocal.forEach((loc) => {
-            const em = (loc.email || "").trim().toLowerCase();
-            if (em) prevMap.set(em, loc);
+        const [lista, listaPalp, listaDep, cfgRemoto] = await Promise.all([
+          listarUsuariosDoSupabase().catch(() => []),
+          listarPalpitesDoSupabase().catch(() => []),
+          listarDepositosDoSupabase().catch(() => []),
+          carregarConfigBolaoDoSupabase().catch(() => null),
+        ]);
+        if (!ativo) return;
+
+        if (cfgRemoto && typeof cfgRemoto === "object") {
+          setConfig((prev) => {
+            const valorAtual =
+              Number(cfgRemoto.valorCota ?? cfgRemoto.valor ?? cfgRemoto.precoCota) ||
+              Number(prev.valorCota ?? prev.valor) ||
+              10;
+            const novoCiclo = String(
+              cfgRemoto.cicloBolaoAtivoId || prev.cicloBolaoAtivoId || "ciclo_bolao_v2_ativo"
+            ).trim();
+            const novosEncerrados = Array.from(
+              new Set([
+                ...(Array.isArray(prev.boloesEncerradosIds) ? prev.boloesEncerradosIds : []),
+                ...(Array.isArray(cfgRemoto.boloesEncerradosIds) ? cfgRemoto.boloesEncerradosIds : []),
+              ])
+            );
+            const next = {
+              ...prev,
+              ...cfgRemoto,
+              valor: valorAtual,
+              valorCota: valorAtual,
+              precoCota: valorAtual,
+              cicloBolaoAtivoId: novoCiclo,
+              boloesEncerradosIds: novosEncerrados,
+            };
+            safeSetLocalStorage("elite_config_v11", JSON.stringify(next));
+            return next;
           });
-          const mesclada = lista.map((rem) => {
-            const em = (rem.email || "").trim().toLowerCase();
-            const loc = prevMap.get(em);
-            if (
-              loc?.comprovante &&
-              !rem.comprovante &&
-              loc.timestampComprovante &&
-              Date.now() - Number(loc.timestampComprovante) < 300000
-            ) {
-              return {
-                ...rem,
-                comprovante: loc.comprovante,
-                timestampComprovante: loc.timestampComprovante,
-                dataEnvioComprovante: loc.dataEnvioComprovante,
-                statusPagamento: loc.statusPagamento || "EM_ANALISE",
-                bolaoPagoId: loc.bolaoPagoId || rem.bolaoPagoId,
-              };
+        }
+
+        if (Array.isArray(lista) && lista.length > 0) {
+          setJogadores((prevLocal) => {
+            const prevMap = new Map<string, any>();
+            prevLocal.forEach((loc) => {
+              const em = (loc.email || "").trim().toLowerCase();
+              if (em) prevMap.set(em, loc);
+            });
+            const mesclada = lista.map((rem) => {
+              const em = (rem.email || "").trim().toLowerCase();
+              const loc = prevMap.get(em);
+              if (
+                loc?.comprovante &&
+                !rem.comprovante &&
+                loc.timestampComprovante &&
+                Date.now() - Number(loc.timestampComprovante) < 300000
+              ) {
+                return {
+                  ...rem,
+                  comprovante: loc.comprovante,
+                  timestampComprovante: loc.timestampComprovante,
+                  dataEnvioComprovante: loc.dataEnvioComprovante,
+                  statusPagamento: rem.pagou ? "APROVADO" : loc.statusPagamento || "EM_ANALISE",
+                  bolaoPagoId: rem.bolaoPagoId || loc.bolaoPagoId,
+                };
+              }
+              return rem;
+            });
+            safeSetLocalStorage("elite_jogadores_v11", JSON.stringify(mesclada));
+            return mesclada;
+          });
+
+          setUser((prevUser: any) => {
+            if (!prevUser?.email) return prevUser;
+            const atualizado = lista.find(
+              (x) => (x.email || "").trim().toLowerCase() === prevUser.email.trim().toLowerCase()
+            );
+            if (atualizado) {
+              safeSetLocalStorage("elite_user_v11", JSON.stringify(atualizado));
+              return atualizado;
             }
-            return rem;
+            return prevUser;
           });
-          safeSetLocalStorage("elite_jogadores_v11", JSON.stringify(mesclada));
-          return mesclada;
-        });
+        }
+
+        if (Array.isArray(listaPalp) && listaPalp.length > 0) {
+          setPalpites((prevLocal) => {
+            const idsNoBanco = new Set(listaPalp.map((p) => p.id));
+            const locaisExtras = prevLocal.filter((loc) => {
+              if (!loc.id || idsNoBanco.has(loc.id)) return false;
+              if (isJogadorDeletedLocal(loc.jogadorEmail)) return false;
+              return true;
+            });
+            const combinada = [...listaPalp, ...locaisExtras];
+            safeSetLocalStorage("elite_palpites_v11", JSON.stringify(combinada));
+            return combinada;
+          });
+        }
+
+        if (Array.isArray(listaDep)) {
+          setDepositos(listaDep);
+          safeSetLocalStorage("elite_depositos_v11", JSON.stringify(listaDep));
+        }
       } catch {
         // ignore
       }
@@ -1023,21 +1114,28 @@ export default function App() {
 
     sincronizarAgora();
     const timer = setInterval(sincronizarAgora, 4000);
+    const onFocusOrVisible = () => {
+      if (document.visibilityState === "visible") {
+        sincronizarAgora();
+      }
+    };
+    window.addEventListener("focus", onFocusOrVisible);
+    document.addEventListener("visibilitychange", onFocusOrVisible);
     return () => {
       ativo = false;
       clearInterval(timer);
+      window.removeEventListener("focus", onFocusOrVisible);
+      document.removeEventListener("visibilitychange", onFocusOrVisible);
     };
   }, [page]);
 
-  // Busca ao vivo os jogos de hoje na ESPN ao abrir a página e sincroniza os jogos ativos do Bolão no Supabase a cada 1 minuto (60.000 ms), sem cache
+  // Busca ao vivo os jogos de hoje na ESPN ao abrir a página e sincroniza os jogos ativos do Bolão no Supabase a cada 15 segundos, sem cache
   const atualizarJogosEspnAoVivo = async () => {
     limparCacheJogosLocal();
     setCarregandoEspnRapido(true);
     try {
-      const [listaHoje, jogosNoBanco] = await Promise.all([
-        sincronizarJogosDeHojeEspnComSupabase(),
-        listarJogosDoSupabase(),
-      ]);
+      const listaHoje = await sincronizarJogosDeHojeEspnComSupabase();
+      const jogosNoBanco = await listarJogosDoSupabase();
       setJogosEspnRapido(listaHoje || []);
       if (Array.isArray(jogosNoBanco)) {
         const normalizados: Jogo[] = jogosNoBanco
@@ -1045,7 +1143,11 @@ export default function App() {
             ...d,
             publicado: true,
           }))
-          .sort((a: Jogo, b: Jogo) => String(a.id).localeCompare(String(b.id)));
+          .sort((a: Jogo, b: Jogo) => {
+            if (a.aoVivo && !b.aoVivo) return -1;
+            if (!a.aoVivo && b.aoVivo) return 1;
+            return String(a.id).localeCompare(String(b.id));
+          });
         setJogos(normalizados);
       }
       setUltimaAtualizacaoJogos(
@@ -1066,7 +1168,7 @@ export default function App() {
     atualizarJogosEspnAoVivo();
     const intervalId = window.setInterval(() => {
       atualizarJogosEspnAoVivo();
-    }, 60000);
+    }, 15000);
     return () => window.clearInterval(intervalId);
   }, [page]);
 
@@ -1174,59 +1276,85 @@ export default function App() {
     }, 100);
   };
 
-  // Confirmação automática ao retornar da InfinitePay (/pagamento-sucesso?jogador_id=XXX)
+  // Confirmação automática ao retornar da InfinitePay (/pagamento-sucesso ou /?pagamento=sucesso)
   useEffect(() => {
     if (page !== "pagamentoSucesso") return;
     const params = new URLSearchParams(window.location.search);
-    const idParam = params.get("jogador_id") || params.get("order_nsu") || jogadorIdSucesso || user?.id || user?.email;
-    if (!idParam) return;
+    let pendenteLocal: any = null;
+    try {
+      const rawPend = localStorage.getItem("elite_infinitepay_pendente_v11");
+      if (rawPend) pendenteLocal = JSON.parse(rawPend);
+    } catch {}
+    let userSalvoLocal: any = null;
+    try {
+      const rawU = localStorage.getItem("elite_user_v11");
+      if (rawU) userSalvoLocal = JSON.parse(rawU);
+    } catch {}
+
+    const emailParam =
+      params.get("email") ||
+      pendenteLocal?.email ||
+      user?.email ||
+      userSalvoLocal?.email ||
+      "";
+    const idParam =
+      params.get("jogador_id") ||
+      params.get("order_nsu") ||
+      jogadorIdSucesso ||
+      emailParam ||
+      pendenteLocal?.jogadorId ||
+      user?.id ||
+      userSalvoLocal?.id ||
+      "";
+    const bolaoIdParam =
+      params.get("bolao_id") ||
+      pendenteLocal?.bolaoPagoId ||
+      cicloBolaoAtivoId;
+
+    if (!idParam && !emailParam) return;
 
     let cancelado = false;
     const confirmarNoBanco = async () => {
       setConfirmandoSucesso(true);
       try {
-        const docId = getJogadorDocId(idParam);
-        const snap = await getDoc(doc(db, "jogadores", docId));
-        const agoraIso = new Date().toISOString();
-        const horaFormatada = new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+        const valorCotaConfirm = Number(config.valorCota ?? config.valor) || 10;
+        const jgConfirmado = await registrarDepositoConfirmadoInDb(
+          {
+            ...(userSalvoLocal || {}),
+            ...(user || {}),
+            ...(pendenteLocal || {}),
+            id: idParam,
+            email: emailParam || (String(idParam).includes("@") ? idParam : ""),
+            metodoPagamento: "INFINITEPAY",
+          },
+          valorCotaConfirm,
+          bolaoIdParam
+        );
 
-        let dadosJogador: any = snap.exists() ? snap.data() : null;
-        if (!dadosJogador) {
-          dadosJogador = jogadores.find(
-            (x: any) =>
-              getJogadorDocId(x.id || x.email || "") === docId ||
-              (x.email || "").toLowerCase() === String(idParam).toLowerCase()
-          );
-        }
-        if (!dadosJogador && user) {
-          dadosJogador = user;
-        }
-
-        if (dadosJogador && !cancelado) {
-          const jgConfirmado = {
-            ...dadosJogador,
-            id: docId,
-            pagou: true,
-            status_pagamento: "pago",
-            aprovado: true,
-            aprovado_em: agoraIso,
-            statusPagamento: "APROVADO",
-            dataAprovacao: horaFormatada,
-            bolaoPagoId: cicloBolaoAtivoId,
-            valorPago: Number(config.valorCota ?? config.valor) || 10,
-            timestampDeposito: Date.now(),
-          };
-          await upsertJogadorInDb(jgConfirmado);
+        if (jgConfirmado && !cancelado) {
           setUser(jgConfirmado);
-          localStorage.setItem("elite_user_v11", JSON.stringify(jgConfirmado));
+          setPagamentoConfirmadoLocal(true);
+          safeSetLocalStorage("elite_user_v11", JSON.stringify(jgConfirmado));
+          localStorage.setItem("elite_pix_confirmado_v11", "true");
+          localStorage.removeItem("elite_infinitepay_pendente_v11");
 
-          // Marca automaticamente os palpites desse jogador como pagos no ciclo atual
-          const emailAlvo = (jgConfirmado.email || "").toLowerCase();
-          palpites.forEach((p) => {
-            if ((p.jogadorEmail || "").toLowerCase() === emailAlvo && (!p.pago || p.bolaoPagoId !== cicloBolaoAtivoId)) {
-              upsertPalpiteInDb({ ...p, pago: true, bolaoPagoId: cicloBolaoAtivoId }).catch(() => {});
-            }
-          });
+          const [usuariosAtualizados, palpitesAtualizados, depositosAtualizados] = await Promise.all([
+            listarUsuariosDoSupabase().catch(() => []),
+            listarPalpitesDoSupabase().catch(() => []),
+            listarDepositosDoSupabase().catch(() => []),
+          ]);
+          if (Array.isArray(usuariosAtualizados) && usuariosAtualizados.length > 0) {
+            setJogadores(usuariosAtualizados);
+            safeSetLocalStorage("elite_jogadores_v11", JSON.stringify(usuariosAtualizados));
+          }
+          if (Array.isArray(palpitesAtualizados) && palpitesAtualizados.length > 0) {
+            setPalpites(palpitesAtualizados);
+            safeSetLocalStorage("elite_palpites_v11", JSON.stringify(palpitesAtualizados));
+          }
+          if (Array.isArray(depositosAtualizados)) {
+            setDepositos(depositosAtualizados);
+            safeSetLocalStorage("elite_depositos_v11", JSON.stringify(depositosAtualizados));
+          }
         }
       } catch (err) {
         console.error("Erro ao confirmar pagamento no retorno do PIX:", err);
@@ -1274,12 +1402,21 @@ export default function App() {
   const abrirLinkPagamentoInfinitePay = async () => {
     setCarregandoInfinitePay(true);
     try {
-      const usuarioLogado = user || {
-        id: auth.currentUser?.uid || "inho_jogador",
-        nome: auth.currentUser?.displayName || "Jogador Bolao",
-        email: auth.currentUser?.email || "inhobahia29@gmail.com",
-        pix: "",
-      };
+      await salvarPalpitesTemporariosSeHouver().catch(() => {});
+
+      let usuarioSalvoLocal: any = null;
+      try {
+        const rawU = localStorage.getItem("elite_user_v11");
+        if (rawU) usuarioSalvoLocal = JSON.parse(rawU);
+      } catch {}
+
+      const usuarioLogado = user ||
+        usuarioSalvoLocal || {
+          id: auth.currentUser?.uid || "inho_jogador",
+          nome: auth.currentUser?.displayName || "Jogador Bolao",
+          email: auth.currentUser?.email || "inhobahia29@gmail.com",
+          pix: "",
+        };
       const jogadorId = usuarioLogado.id || getJogadorDocId(usuarioLogado.email || usuarioLogado.nome || "jogador");
       const name = String(usuarioLogado.nome || "Jogador Bolao").trim();
       const email = String(usuarioLogado.email || "jogador@bolao.com").trim().toLowerCase();
@@ -1294,6 +1431,33 @@ export default function App() {
         phone_number = `+${digits}`;
       }
 
+      const cfgRemoto = await carregarConfigBolaoDoSupabase().catch(() => null);
+      const cicloAtivo = String(cfgRemoto?.cicloBolaoAtivoId || cicloBolaoAtivoId || "ciclo_bolao_v2_ativo").trim();
+      const valorCotaNum = Number(cfgRemoto?.valorCota ?? config.valorCota ?? config.valor) || 10;
+      const precoCentavos = Math.round(valorCotaNum * 100);
+      const orderNsu = `${jogadorId}_${Date.now()}`;
+      const origin = typeof window !== "undefined" ? window.location.origin : "https://bol-o-gui.vercel.app";
+      const redirectUrl = `${origin}/?pagamento=sucesso&jogador_id=${encodeURIComponent(
+        jogadorId
+      )}&email=${encodeURIComponent(email)}&bolao_id=${encodeURIComponent(cicloAtivo)}`;
+      const webhookUrl = `${origin}/api/webhook-infinitepay`;
+
+      // Registra início do pagamento InfinitePay para liberação automática no ADM e no prêmio
+      const dadosEmProcessamento = {
+        ...usuarioLogado,
+        id: jogadorId,
+        email,
+        nome: name,
+        statusPagamento: "PROCESSANDO_INFINITEPAY",
+        metodoPagamento: "INFINITEPAY",
+        inicioPagamentoInfinitePay: Date.now(),
+        ultimoOrderNsu: orderNsu,
+        bolaoPagoId: cicloAtivo,
+        valorPago: valorCotaNum,
+      };
+      localStorage.setItem("elite_infinitepay_pendente_v11", JSON.stringify(dadosEmProcessamento));
+      upsertJogadorInDb(dadosEmProcessamento).catch(() => {});
+
       let checkoutUrl = "";
       try {
         const resp = await fetch("/api/criar-pagamento-infinitepay", {
@@ -1304,6 +1468,9 @@ export default function App() {
             nome: name,
             email,
             phone_number,
+            order_nsu: orderNsu,
+            redirect_url: redirectUrl,
+            webhook_url: webhookUrl,
             customer: {
               name,
               email,
@@ -1312,7 +1479,7 @@ export default function App() {
             items: [
               {
                 quantity: 1,
-                price: 1000,
+                price: precoCentavos,
                 description: "Cota Bolao Elite",
               },
             ],
@@ -1330,7 +1497,6 @@ export default function App() {
 
       if (!checkoutUrl) {
         try {
-          const origin = typeof window !== "undefined" ? window.location.origin : "https://bol-o-gui.vercel.app";
           const directResp = await fetch("https://api.checkout.infinitepay.io/links", {
             method: "POST",
             headers: {
@@ -1339,8 +1505,9 @@ export default function App() {
             },
             body: JSON.stringify({
               handle: "irailson-da-472",
-              order_nsu: `${jogadorId}_${Date.now()}`,
-              redirect_url: `${origin}/pagamento-sucesso?jogador_id=${encodeURIComponent(jogadorId)}`,
+              order_nsu: orderNsu,
+              redirect_url: redirectUrl,
+              webhook_url: webhookUrl,
               customer: {
                 name,
                 email,
@@ -1349,7 +1516,7 @@ export default function App() {
               items: [
                 {
                   quantity: 1,
-                  price: 1000,
+                  price: precoCentavos,
                   description: "Cota Bolao Elite",
                 },
               ],
@@ -1365,17 +1532,56 @@ export default function App() {
       }
 
       if (!checkoutUrl) {
-        const origin = typeof window !== "undefined" ? window.location.origin : "https://bol-o-gui.vercel.app";
-        checkoutUrl = `https://checkout.infinitepay.io/irailson-da-472?items=[{"name":"Cota+Bolao+Elite","price":1000,"quantity":1}]&customer_name=${encodeURIComponent(
+        checkoutUrl = `https://checkout.infinitepay.io/irailson-da-472?items=[{"name":"Cota+Bolao+Elite","price":${precoCentavos},"quantity":1}]&customer_name=${encodeURIComponent(
           name
         )}&customer_email=${encodeURIComponent(email)}&customer_cellphone=${encodeURIComponent(
           phone_number
-        )}&order_nsu=${encodeURIComponent(jogadorId)}&redirect_url=${encodeURIComponent(
-          `${origin}/pagamento-sucesso?jogador_id=${encodeURIComponent(jogadorId)}`
-        )}`;
+        )}&order_nsu=${encodeURIComponent(orderNsu)}&redirect_url=${encodeURIComponent(redirectUrl)}`;
       }
 
       window.open(checkoutUrl, "_blank");
+
+      // Confirmação automática após abertura do checkout InfinitePay (atualiza status no ADM e soma o valor no prêmio automaticamente)
+      setTimeout(async () => {
+        try {
+          const confirmado = await registrarDepositoConfirmadoInDb(
+            {
+              ...usuarioLogado,
+              id: jogadorId,
+              email,
+              nome: name,
+              metodoPagamento: "INFINITEPAY",
+            },
+            valorCotaNum,
+            cicloAtivo
+          );
+          if (confirmado) {
+            setUser(confirmado);
+            setPagamentoConfirmadoLocal(true);
+            safeSetLocalStorage("elite_user_v11", JSON.stringify(confirmado));
+            localStorage.setItem("elite_pix_confirmado_v11", "true");
+            localStorage.removeItem("elite_infinitepay_pendente_v11");
+
+            const [uList, pList, dList] = await Promise.all([
+              listarUsuariosDoSupabase().catch(() => []),
+              listarPalpitesDoSupabase().catch(() => []),
+              listarDepositosDoSupabase().catch(() => []),
+            ]);
+            if (Array.isArray(uList) && uList.length > 0) {
+              setJogadores(uList);
+              safeSetLocalStorage("elite_jogadores_v11", JSON.stringify(uList));
+            }
+            if (Array.isArray(pList) && pList.length > 0) {
+              setPalpites(pList);
+              safeSetLocalStorage("elite_palpites_v11", JSON.stringify(pList));
+            }
+            if (Array.isArray(dList)) {
+              setDepositos(dList);
+              safeSetLocalStorage("elite_depositos_v11", JSON.stringify(dList));
+            }
+          }
+        } catch {}
+      }, 20000);
     } finally {
       setCarregandoInfinitePay(false);
     }
@@ -2304,13 +2510,22 @@ export default function App() {
   };
 
   const toggleStatusPago = (email: string) => {
+    const emailAlvo = (email || "").trim().toLowerCase();
+    if (!emailAlvo) return;
+    const jgAlvo = jogadores.find((x: any) => (x.email || "").trim().toLowerCase() === emailAlvo);
+    const jaPago = jgAlvo ? isParticipanteDepositanteNoBolaoAtual(jgAlvo) : false;
+
+    if (!jaPago) {
+      aprovarPagamento(emailAlvo);
+      return;
+    }
+
     const atualizados = palpites.map((p: any) => {
-      if (p.jogadorEmail === email) {
-        const novoPago = !p.pago;
+      if ((p.jogadorEmail || "").trim().toLowerCase() === emailAlvo) {
         const nextP = {
           ...p,
-          pago: novoPago,
-          bolaoPagoId: novoPago ? cicloBolaoAtivoId : "",
+          pago: false,
+          bolaoPagoId: "",
         };
         upsertPalpiteInDb(nextP).catch(() => {});
         return nextP;
@@ -2318,7 +2533,31 @@ export default function App() {
       return p;
     });
     setPalpites(atualizados);
-    localStorage.setItem("elite_palpites_v11", JSON.stringify(atualizados));
+    safeSetLocalStorage("elite_palpites_v11", JSON.stringify(atualizados));
+
+    const jogadoresAtualizados = jogadores.map((jg: any) => {
+      if ((jg.email || "").trim().toLowerCase() === emailAlvo) {
+        const nextJg = {
+          ...jg,
+          pagou: false,
+          aprovado: false,
+          status_pagamento: "pendente",
+          statusPagamento: "PENDENTE",
+          bolaoPagoId: "",
+          valorPago: 0,
+          inicioPagamentoInfinitePay: undefined,
+        };
+        upsertJogadorInDb(nextJg).catch(() => {});
+        return nextJg;
+      }
+      return jg;
+    });
+    setJogadores(jogadoresAtualizados);
+    safeSetLocalStorage("elite_jogadores_v11", JSON.stringify(jogadoresAtualizados));
+    deleteDepositoFromDb(emailAlvo).catch(() => {});
+    setDepositos((prev) =>
+      prev.filter((d: any) => (d.email || "").trim().toLowerCase() !== emailAlvo)
+    );
   };
 
   const aprovarPagamento = (email: string) => {
@@ -2353,6 +2592,7 @@ export default function App() {
           bolaoPagoId: cicloBolaoAtivoId,
           valorPago: valorCotaAprov,
           timestampDeposito: Date.now(),
+          inicioPagamentoInfinitePay: undefined,
         };
         jogadorAprovadoObj = nextJg;
         upsertJogadorInDb(nextJg).catch(() => {});
@@ -2376,6 +2616,7 @@ export default function App() {
         bolaoPagoId: cicloBolaoAtivoId,
         valorPago: valorCotaAprov,
         timestampDeposito: Date.now(),
+        inicioPagamentoInfinitePay: undefined,
       };
       setUser(userAtualizado);
       safeSetLocalStorage("elite_user_v11", JSON.stringify(userAtualizado));
@@ -2410,6 +2651,7 @@ export default function App() {
           statusPagamento: "RECUSADO",
           bolaoPagoId: "",
           valorPago: 0,
+          inicioPagamentoInfinitePay: undefined,
         };
         upsertJogadorInDb(nextJg).catch(() => {});
         return nextJg;
@@ -2418,6 +2660,10 @@ export default function App() {
     });
     setJogadores(jogadoresAtualizados);
     safeSetLocalStorage("elite_jogadores_v11", JSON.stringify(jogadoresAtualizados));
+    deleteDepositoFromDb(emailAlvo).catch(() => {});
+    setDepositos((prev) =>
+      prev.filter((d: any) => (d.email || "").trim().toLowerCase() !== emailAlvo)
+    );
 
     if (user && (user.email || "").trim().toLowerCase() === emailAlvo) {
       const userAtualizado = {
@@ -2428,6 +2674,7 @@ export default function App() {
         statusPagamento: "RECUSADO",
         bolaoPagoId: "",
         valorPago: 0,
+        inicioPagamentoInfinitePay: undefined,
       };
       setUser(userAtualizado);
       safeSetLocalStorage("elite_user_v11", JSON.stringify(userAtualizado));
@@ -2959,22 +3206,29 @@ export default function App() {
   const isParticipanteDepositanteNoBolaoAtual = (jg: any): boolean => {
     if (!jg) return false;
     const bId = String(jg.bolaoPagoId || "").trim();
-    if (!bId || bId !== cicloBolaoAtivoId || boloesEncerradosSet.has(bId)) {
+    if (bId && boloesEncerradosSet.has(bId)) {
       return false;
     }
-    const apostasPagasNoCiclo = palpites.some(
-      (p: any) =>
-        (p.jogadorEmail || "").toLowerCase() === (jg.email || "").toLowerCase() &&
-        p.pago &&
-        p.bolaoPagoId === cicloBolaoAtivoId
+    const emailJg = (jg.email || "").trim().toLowerCase();
+    const apostasPagasNoCiclo = Boolean(
+      emailJg &&
+        palpites.some(
+          (p: any) =>
+            (p.jogadorEmail || "").trim().toLowerCase() === emailJg &&
+            p.pago &&
+            (!p.bolaoPagoId || !boloesEncerradosSet.has(String(p.bolaoPagoId).trim()))
+        )
     );
-    return Boolean(
+    const temStatusPago = Boolean(
       jg.pagou === true ||
         jg.status_pagamento === "pago" ||
         jg.aprovado === true ||
-        jg.statusPagamento === "APROVADO" ||
-        apostasPagasNoCiclo
+        jg.statusPagamento === "APROVADO"
     );
+    if (temStatusPago) {
+      return !bId || bId === cicloBolaoAtivoId || bId === "ciclo_bolao_v2_ativo" || !boloesEncerradosSet.has(bId);
+    }
+    return apostasPagasNoCiclo;
   };
 
   const isParticipanteEmAnaliseNoBolaoAtual = (jg: any): boolean => {
@@ -3054,25 +3308,45 @@ export default function App() {
   const jogadoresPagosLista = jogadores.filter((jg: any) => isParticipanteDepositanteNoBolaoAtual(jg));
   const jogadoresEmAnaliseLista = jogadores.filter((jg: any) => isParticipanteEmAnaliseNoBolaoAtual(jg));
 
-  // Depósitos confirmados na coleção depositos exclusivamente do bolão atual
+  // Depósitos confirmados na coleção depositos exclusivamente do bolão atual (exclui bolões encerrados)
   const depositosConfirmadosColecao = depositos.filter(
     (d: any) =>
       (d.status === "CONFIRMADO" || d.status === "APROVADO") &&
-      d.bolaoPagoId === cicloBolaoAtivoId &&
       !boloesEncerradosSet.has(String(d.bolaoPagoId || ""))
   );
 
-  // Lista de depósitos recentes (Confirmados + Sendo Depositados) para o Contabilizador do Jogador
-  const movDepositosBase = [
-    ...depositosConfirmadosColecao.map((d: any) => ({
-      nome: d.nome || user?.nome || "Jogador",
-      email: d.email || user?.email || d.userId || "",
-      userId: d.userId || d.id,
+  // Lista unificada e sem duplicidade de depósitos (Confirmados + Sendo Depositados) para o Contabilizador e Prêmio
+  const mapaConfirmadosUnicos = new Map<string, any>();
+  jogadoresPagosLista.forEach((jg: any) => {
+    const chave = String(jg.email || jg.id || getJogadorDocId(jg.email || "")).trim().toLowerCase();
+    if (!chave) return;
+    mapaConfirmadosUnicos.set(chave, {
+      nome: jg.nome || "Jogador",
+      email: jg.email || "",
+      userId: jg.id || getJogadorDocId(jg.email || ""),
+      status: "APROVADO" as const,
+      valor: Number(jg.valorPago) || valorCotaNumerico,
+      horario: jg.dataAprovacao ? `Aprovado às ${jg.dataAprovacao}` : "Confirmado via PIX",
+      ordem: (jg.timestampDeposito || jg.timestampComprovante || Date.now()) + 1,
+    });
+  });
+  depositosConfirmadosColecao.forEach((d: any) => {
+    const chave = String(d.email || d.userId || d.id || "").trim().toLowerCase();
+    if (!chave || mapaConfirmadosUnicos.has(chave)) return;
+    if (d.email && isJogadorDeletedLocal(d.email)) return;
+    mapaConfirmadosUnicos.set(chave, {
+      nome: d.nome || "Jogador",
+      email: d.email || "",
+      userId: d.userId || d.id || chave,
       status: "APROVADO" as const,
       valor: Number(d.valor) || valorCotaNumerico,
       horario: "Confirmado via PIX",
       ordem: Date.now() + 10,
-    })),
+    });
+  });
+
+  const movDepositosBase = [
+    ...Array.from(mapaConfirmadosUnicos.values()),
     ...jogadoresEmAnaliseLista.map((jg: any) => ({
       nome: jg.nome || "Jogador",
       email: jg.email,
@@ -3082,24 +3356,6 @@ export default function App() {
       horario: jg.dataEnvioComprovante || "Agora mesmo",
       ordem: jg.timestampComprovante || Date.now(),
     })),
-    ...jogadoresPagosLista
-      .filter(
-        (jg: any) =>
-          !depositosConfirmadosColecao.some(
-            (d: any) =>
-              d.userId === (jg.id || getJogadorDocId(jg.email || "")) ||
-              (d.email && jg.email && d.email.toLowerCase() === jg.email.toLowerCase())
-          )
-      )
-      .map((jg: any) => ({
-        nome: jg.nome || "Jogador",
-        email: jg.email,
-        userId: jg.id || getJogadorDocId(jg.email || ""),
-        status: "APROVADO" as const,
-        valor: Number(jg.valorPago) || valorCotaNumerico,
-        horario: jg.dataAprovacao ? `Aprovado às ${jg.dataAprovacao}` : "Confirmado",
-        ordem: (jg.timestampDeposito || jg.timestampComprovante || 0) + 1,
-      })),
   ].sort((a, b) => b.ordem - a.ordem);
 
   const movDepositos = movDepositosBase;
@@ -3817,6 +4073,7 @@ export default function App() {
       Boolean(isDepositoConfirmado || isParticipanteDepositanteNoBolaoAtual(user));
 
     const novosPalpitesNaoIniciados: Palpite[] = jogosNaoIniciadosComPalpite.map((j) => ({
+      id: `${emailUserNorm}__${j.id}`,
       jogadorEmail: user.email,
       jogoId: j.id,
       escolha: getEscolhaDoJogo(j)!,
@@ -4839,7 +5096,7 @@ export default function App() {
               onClick={() => setShowTermosModal(true)}
               className="text-[#FF6B00] hover:underline font-bold cursor-pointer"
             >
-              📄 Termos de Uso e Regulamento - Elite do Bolão
+              📄 Termos de Uso Oficial - Bolão Elite
             </button>
           </div>
           <div className="text-zinc-600">© 2026 Bolões Elite • Todos os direitos reservados</div>
@@ -4852,7 +5109,7 @@ export default function App() {
             <div className="bg-zinc-900 border border-zinc-800 rounded-3xl max-w-lg w-full p-6 max-h-[85vh] overflow-y-auto space-y-4 shadow-2xl">
               <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
                 <h3 className="text-sm sm:text-base font-black text-[#FF6B00] uppercase">
-                  TERMOS DE USO E REGULAMENTO - ELITE DO BOLÃO - ATUALIZADO
+                  TERMOS DE USO OFICIAL - BOLÃO ELITE
                 </h3>
                 <button
                   type="button"
@@ -4862,46 +5119,68 @@ export default function App() {
                   ✕
                 </button>
               </div>
-              <div className="text-xs text-zinc-300 space-y-3.5 leading-relaxed">
-                <div>
-                  <strong className="text-white block mb-0.5">1. NATUREZA DA PLATAFORMA</strong>
+              <div className="text-xs text-zinc-300 space-y-4 leading-relaxed">
+                <div className="space-y-1.5">
+                  <strong className="text-white block">1. DA NATUREZA JURÍDICA E RESPALDO LEGAL</strong>
                   <p>
-                    O ELITE DO BOLÃO é uma plataforma de tecnologia para organização de concursos de prognósticos esportivos recreativos entre participantes. NÃO somos casa de apostas de quota fixa (Lei 14.790/2023), não operamos como banca e não definimos odds.
+                    1.1. O Bolão Elite <strong>NÃO SE TRATA DE APOSTA ESPORTIVA DE QUOTA FIXA</strong>, nos termos da Lei nº 13.756/2018 e Lei nº 14.790/2023.
+                  </p>
+                  <p>
+                    1.2. Não trabalhamos com cota fixa, odds, multiplicadores ou cotações. Não existe banca x apostador.
+                  </p>
+                  <p>
+                    1.3. Trata-se de <strong>CONCURSO DE PROGNÓSTICOS POR HABILIDADE</strong>, previsto nos artigos 854 a 856 do Código Civil (Dos Concursos). A classificação é por pontos de conhecimento esportivo.
+                  </p>
+                  <p>
+                    1.4. Por ser modelo de rateio entre participantes (peer-to-peer) e não haver odd definida no ato da aposta, não se submete à autorização da SECAP/MF para apostas de quota fixa.
                   </p>
                 </div>
 
-                <div>
-                  <strong className="text-white block mb-0.5">2. COMPOSIÇÃO DA PARTICIPAÇÃO</strong>
-                  <p>Toda participação paga pelo usuário é dividida de forma transparente e automática:</p>
-                  <p className="mt-1">
-                    <strong>80% (oitenta por cento) = POTE DE PRÊMIOS:</strong> valor destinado integralmente e rateado entre os acertadores do bolão.
+                <div className="space-y-1.5">
+                  <strong className="text-white block">2. DA TAXA DE ADMINISTRAÇÃO E PREMIAÇÃO</strong>
+                  <p>
+                    2.1. Do valor total arrecadado com as inscrições do Bolão Elite, a distribuição será feita da seguinte forma:
                   </p>
-                  <p className="mt-1">
-                    <strong>20% (vinte por cento) = TAXA DE SERVIÇO:</strong> valor destinado à plataforma para custos de tecnologia, hospedagem, processamento de pagamentos (InfinitePay/PIX), suporte e organização.
+                  <p className="pl-2">
+                    a) <strong>20% (vinte por cento)</strong> será destinado à banca a título de <strong>TAXA DE MANUTENÇÃO, ADMINISTRAÇÃO E ORGANIZAÇÃO</strong> do concurso, cobrindo custos de sistema, apuração e gestão.
                   </p>
-                  <p className="mt-1.5 text-zinc-400 bg-black/50 p-2.5 rounded-xl border border-zinc-800">
-                    Exemplos ilustrativos: Bolão de R$10 = R$8 de pote + R$2 de taxa. Bolão de R$20 = R$16 de pote + R$4 de taxa. Bolão de R$50 = R$40 de pote + R$10 de taxa.
+                  <p className="pl-2">
+                    b) <strong>80% (oitenta por cento)</strong> será destinado à <strong>PREMIAÇÃO do 1º LUGAR</strong>.
+                  </p>
+                  <p>
+                    2.2. A premiação será destinada <strong>EXCLUSIVAMENTE</strong> ao(s) participante(s) que estiver(em) em <strong>1º LUGAR</strong> no ranking final.
+                  </p>
+                  <p>
+                    2.3. <strong>EM CASO DE EMPATE NA 1ª COLOCAÇÃO:</strong> O valor correspondente aos 80% da premiação será <strong>DIVIDIDO IGUALMENTE</strong> entre todos os participantes que terminarem empatados em 1º lugar.
+                  </p>
+                  <p className="text-zinc-400 bg-black/50 p-2.5 rounded-xl border border-zinc-800">
+                    Exemplo: Se 2 pessoas empatarem em 1º, cada uma recebe 40% do total arrecadado. Se 3 pessoas empatarem, cada uma recebe 26,66% e assim por diante.
+                  </p>
+                  <p>
+                    2.4. O critério de desempate para fins de ranking/troféu (quando necessário) será: maior nº de placares cravados, depois maior nº de acertos de vencedor, depois quem fez a inscrição primeiro.
                   </p>
                 </div>
 
-                <div>
-                  <strong className="text-white block mb-0.5">3. PRÊMIOS</strong>
+                <div className="space-y-1.5">
+                  <strong className="text-white block">3. DA CONDIÇÃO DE BOLÃO ACUMULADO</strong>
                   <p>
-                    100% do valor arrecadado a título de POTE (os 80%) é distribuído entre os ganhadores conforme regras de cada bolão. A plataforma não retém nenhuma porcentagem do pote de prêmios.
+                    3.1. Caso não haja nenhum pontuador no Bolão Elite ao final da apuração, situação extremamente rara de acontecer, não haverá ganhador naquela edição.
+                  </p>
+                  <p>
+                    3.2. Nesta hipótese, os 80% que seriam da premiação não serão pagos e ficarão retidos pela banca como <strong>BOLÃO ACUMULADO</strong>.
+                  </p>
+                  <p>
+                    3.3. O valor acumulado será somado integralmente aos 80% da premiação da próxima edição do Bolão Elite, aumentando o prêmio do 1º lugar.
+                  </p>
+                  <p>
+                    3.4. O bolão acumulado não gera direito a reembolso.
                   </p>
                 </div>
 
-                <div>
-                  <strong className="text-white block mb-0.5">4. RESPONSABILIDADE DO USUÁRIO</strong>
+                <div className="space-y-1.5">
+                  <strong className="text-white block">4. DISPOSIÇÕES FINAIS</strong>
                   <p>
-                    O usuário declara que participa de forma voluntária de um bolão recreativo e social, e que a taxa de 20% é uma taxa de serviço digital, faturada pelo CPF da plataforma.
-                  </p>
-                </div>
-
-                <div>
-                  <strong className="text-white block mb-0.5">5. LEGISLAÇÃO</strong>
-                  <p>
-                    Esta atividade não se confunde com apostas de quota fixa, loterias ou jogos de azar explorados contra a banca, por não haver banca.
+                    Ao participar, o usuário declara que leu e concorda que o Bolão Elite é um concurso de prognósticos, concorda com a taxa de 20% da banca e que apenas o 1º lugar (ou os empatados em 1º) recebe os 80% da premiação.
                   </p>
                 </div>
               </div>
@@ -5188,7 +5467,7 @@ export default function App() {
                       className="mt-1 w-4 h-4 rounded accent-[#FF6B00] cursor-pointer"
                     />
                     <span className="text-xs text-zinc-300 leading-snug">
-                      Li e concordo com os Termos de Uso e Regulamento - Elite do Bolão.
+                      Li e concordo com os Termos de Uso Oficial - Bolão Elite.
                     </span>
                   </label>
                   <button
@@ -5196,7 +5475,7 @@ export default function App() {
                     onClick={() => setShowTermosModal(true)}
                     className="text-[11px] text-[#FF6B00] hover:underline font-bold block ml-6 cursor-pointer"
                   >
-                    📄 Ler Termos de Uso e Regulamento Atualizado
+                    📄 Ler Termos de Uso Oficial - Bolão Elite
                   </button>
                 </div>
 
@@ -5217,7 +5496,7 @@ export default function App() {
             <div className="bg-zinc-900 border border-zinc-800 rounded-3xl max-w-lg w-full p-6 max-h-[85vh] overflow-y-auto space-y-4 shadow-2xl">
               <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
                 <h3 className="text-sm sm:text-base font-black text-[#FF6B00] uppercase">
-                  TERMOS DE USO E REGULAMENTO - ELITE DO BOLÃO - ATUALIZADO
+                  TERMOS DE USO OFICIAL - BOLÃO ELITE
                 </h3>
                 <button
                   type="button"
@@ -5227,46 +5506,68 @@ export default function App() {
                   ✕
                 </button>
               </div>
-              <div className="text-xs text-zinc-300 space-y-3.5 leading-relaxed">
-                <div>
-                  <strong className="text-white block mb-0.5">1. NATUREZA DA PLATAFORMA</strong>
+              <div className="text-xs text-zinc-300 space-y-4 leading-relaxed">
+                <div className="space-y-1.5">
+                  <strong className="text-white block">1. DA NATUREZA JURÍDICA E RESPALDO LEGAL</strong>
                   <p>
-                    O ELITE DO BOLÃO é uma plataforma de tecnologia para organização de concursos de prognósticos esportivos recreativos entre participantes. NÃO somos casa de apostas de quota fixa (Lei 14.790/2023), não operamos como banca e não definimos odds.
+                    1.1. O Bolão Elite <strong>NÃO SE TRATA DE APOSTA ESPORTIVA DE QUOTA FIXA</strong>, nos termos da Lei nº 13.756/2018 e Lei nº 14.790/2023.
+                  </p>
+                  <p>
+                    1.2. Não trabalhamos com cota fixa, odds, multiplicadores ou cotações. Não existe banca x apostador.
+                  </p>
+                  <p>
+                    1.3. Trata-se de <strong>CONCURSO DE PROGNÓSTICOS POR HABILIDADE</strong>, previsto nos artigos 854 a 856 do Código Civil (Dos Concursos). A classificação é por pontos de conhecimento esportivo.
+                  </p>
+                  <p>
+                    1.4. Por ser modelo de rateio entre participantes (peer-to-peer) e não haver odd definida no ato da aposta, não se submete à autorização da SECAP/MF para apostas de quota fixa.
                   </p>
                 </div>
 
-                <div>
-                  <strong className="text-white block mb-0.5">2. COMPOSIÇÃO DA PARTICIPAÇÃO</strong>
-                  <p>Toda participação paga pelo usuário é dividida de forma transparente e automática:</p>
-                  <p className="mt-1">
-                    <strong>80% (oitenta por cento) = POTE DE PRÊMIOS:</strong> valor destinado integralmente e rateado entre os acertadores do bolão.
+                <div className="space-y-1.5">
+                  <strong className="text-white block">2. DA TAXA DE ADMINISTRAÇÃO E PREMIAÇÃO</strong>
+                  <p>
+                    2.1. Do valor total arrecadado com as inscrições do Bolão Elite, a distribuição será feita da seguinte forma:
                   </p>
-                  <p className="mt-1">
-                    <strong>20% (vinte por cento) = TAXA DE SERVIÇO:</strong> valor destinado à plataforma para custos de tecnologia, hospedagem, processamento de pagamentos (InfinitePay/PIX), suporte e organização.
+                  <p className="pl-2">
+                    a) <strong>20% (vinte por cento)</strong> será destinado à banca a título de <strong>TAXA DE MANUTENÇÃO, ADMINISTRAÇÃO E ORGANIZAÇÃO</strong> do concurso, cobrindo custos de sistema, apuração e gestão.
                   </p>
-                  <p className="mt-1.5 text-zinc-400 bg-black/50 p-2.5 rounded-xl border border-zinc-800">
-                    Exemplos ilustrativos: Bolão de R$10 = R$8 de pote + R$2 de taxa. Bolão de R$20 = R$16 de pote + R$4 de taxa. Bolão de R$50 = R$40 de pote + R$10 de taxa.
+                  <p className="pl-2">
+                    b) <strong>80% (oitenta por cento)</strong> será destinado à <strong>PREMIAÇÃO do 1º LUGAR</strong>.
+                  </p>
+                  <p>
+                    2.2. A premiação será destinada <strong>EXCLUSIVAMENTE</strong> ao(s) participante(s) que estiver(em) em <strong>1º LUGAR</strong> no ranking final.
+                  </p>
+                  <p>
+                    2.3. <strong>EM CASO DE EMPATE NA 1ª COLOCAÇÃO:</strong> O valor correspondente aos 80% da premiação será <strong>DIVIDIDO IGUALMENTE</strong> entre todos os participantes que terminarem empatados em 1º lugar.
+                  </p>
+                  <p className="text-zinc-400 bg-black/50 p-2.5 rounded-xl border border-zinc-800">
+                    Exemplo: Se 2 pessoas empatarem em 1º, cada uma recebe 40% do total arrecadado. Se 3 pessoas empatarem, cada uma recebe 26,66% e assim por diante.
+                  </p>
+                  <p>
+                    2.4. O critério de desempate para fins de ranking/troféu (quando necessário) será: maior nº de placares cravados, depois maior nº de acertos de vencedor, depois quem fez a inscrição primeiro.
                   </p>
                 </div>
 
-                <div>
-                  <strong className="text-white block mb-0.5">3. PRÊMIOS</strong>
+                <div className="space-y-1.5">
+                  <strong className="text-white block">3. DA CONDIÇÃO DE BOLÃO ACUMULADO</strong>
                   <p>
-                    100% do valor arrecadado a título de POTE (os 80%) é distribuído entre os ganhadores conforme regras de cada bolão. A plataforma não retém nenhuma porcentagem do pote de prêmios.
+                    3.1. Caso não haja nenhum pontuador no Bolão Elite ao final da apuração, situação extremamente rara de acontecer, não haverá ganhador naquela edição.
+                  </p>
+                  <p>
+                    3.2. Nesta hipótese, os 80% que seriam da premiação não serão pagos e ficarão retidos pela banca como <strong>BOLÃO ACUMULADO</strong>.
+                  </p>
+                  <p>
+                    3.3. O valor acumulado será somado integralmente aos 80% da premiação da próxima edição do Bolão Elite, aumentando o prêmio do 1º lugar.
+                  </p>
+                  <p>
+                    3.4. O bolão acumulado não gera direito a reembolso.
                   </p>
                 </div>
 
-                <div>
-                  <strong className="text-white block mb-0.5">4. RESPONSABILIDADE DO USUÁRIO</strong>
+                <div className="space-y-1.5">
+                  <strong className="text-white block">4. DISPOSIÇÕES FINAIS</strong>
                   <p>
-                    O usuário declara que participa de forma voluntária de um bolão recreativo e social, e que a taxa de 20% é uma taxa de serviço digital, faturada pelo CPF da plataforma.
-                  </p>
-                </div>
-
-                <div>
-                  <strong className="text-white block mb-0.5">5. LEGISLAÇÃO</strong>
-                  <p>
-                    Esta atividade não se confunde com apostas de quota fixa, loterias ou jogos de azar explorados contra a banca, por não haver banca.
+                    Ao participar, o usuário declara que leu e concorda que o Bolão Elite é um concurso de prognósticos, concorda com a taxa de 20% da banca e que apenas o 1º lugar (ou os empatados em 1º) recebe os 80% da premiação.
                   </p>
                 </div>
               </div>
@@ -7730,8 +8031,9 @@ export default function App() {
                     onClick={async () => {
                       setCarregandoEspnRapido(true);
                       try {
-                        const lista = await buscarJogosRodadaEspn(getHojeBrasilISO());
-                        const lote = (lista || []).slice(0, 10);
+                        const lista = await buscarJogosRodadaEspn(getHojeBrasilISO(), true);
+                        const ativosOuProximos = (lista || []).filter((x: any) => !x.encerrado);
+                        const lote = (ativosOuProximos.length > 0 ? ativosOuProximos : lista || []).slice(0, 10);
                         const novos: Jogo[] = lote.map((item: any, i: number) => ({
                           id: item.id || `espn_${Date.now()}_${i}`,
                           casa: item.time_casa || item.casa,
@@ -7739,7 +8041,15 @@ export default function App() {
                           escudoCasa: getEscudoPadrao(item.time_casa || item.casa) || item.escudoCasaUrl || "",
                           escudoFora: getEscudoPadrao(item.time_fora || item.fora) || item.escudoForaUrl || "",
                           data: item.horario || "19:30",
+                          data_jogo: item.data || getHojeBrasilISO(),
                           estadio: item.estadio || item.campeonato || "Brasileirão Série A",
+                          placarCasa: item.placar_casa ?? "0",
+                          placarFora: item.placar_fora ?? "0",
+                          aoVivo: Boolean(item.aoVivo),
+                          encerrado: Boolean(item.encerrado),
+                          tempoJogo: item.tempoJogo || "",
+                          statusDetalhe: item.status || "",
+                          resultadoOficial: item.resultadoOficial,
                           publicado: true,
                           bolaoId: bolaoEmPreparoId,
                           tituloBolao: "Jogos de Hoje • Brasileirão (ESPN)",
@@ -7749,7 +8059,7 @@ export default function App() {
                         setRodadaPublicadaAviso(true);
                         setTimeout(() => setRodadaPublicadaAviso(false), 5000);
                         mostrarAvisoAdm(
-                          `🚀 ${novos.length} jogos de hoje da ESPN foram lançados no bolão e salvos no Supabase com 1 clique!`
+                          `🚀 ${novos.length} jogos de hoje da ESPN foram lançados no bolão e sincronizados ao vivo no Supabase!`
                         );
                       } finally {
                         setCarregandoEspnRapido(false);
@@ -8900,86 +9210,61 @@ export default function App() {
               Conectado ao vivo na API oficial da ESPN (Brasileirão Série A). A página atualiza automaticamente a cada 1 minuto sem usar jogos falsos.
             </p>
           </div>
-        ) : primeiroJogoDoBolaoComecou && (!liberarApenasJogosNaoIniciados || todosJogosJaComecaram) ? (
-          /* TELA DE BLOQUEIO AUTOMÁTICO QUANDO O 1º JOGO DO BOLÃO COMEÇOU */
-          <div className="mt-4 bg-zinc-900 border-2 border-red-500 rounded-3xl p-6 text-center space-y-4 shadow-2xl">
-            <div className="w-16 h-16 rounded-2xl bg-red-600/20 border-2 border-red-500 flex items-center justify-center text-3xl mx-auto shadow-lg shadow-red-600/20">
-              🔒
-            </div>
-            <div className="space-y-1">
-              <span className="inline-block text-[10px] font-black uppercase tracking-wider bg-red-600 text-white px-3 py-1 rounded-full">
-                Acesso às Apostas Bloqueado
-              </span>
-              <h3 className="text-lg sm:text-xl font-black text-white">
-                O Primeiro Jogo do Bolão Já Começou!
-              </h3>
-            </div>
-
-            <div className="bg-red-950/70 border border-red-500/80 rounded-2xl p-4 text-xs sm:text-sm text-red-100 font-bold leading-relaxed max-w-md mx-auto">
-              ⚠️ O jogo já começou! <br />
-              <span className="text-amber-300 font-black">
-                Aguarde o próximo bolão ou aposte nos jogos que não começaram.
-              </span>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3 max-w-md mx-auto text-left">
-              <div className="bg-black/80 border border-red-800/70 p-3 rounded-xl">
-                <div className="text-[10px] text-red-400 font-black uppercase">🔴 Jogos Iniciados</div>
-                <div className="text-lg font-black text-white mt-0.5">
-                  {jogosJaComecaramLista.length} jogo(s)
-                </div>
-                <div className="text-[10px] text-zinc-400">Apostas bloqueadas</div>
-              </div>
-              <div className="bg-black/80 border border-green-800/70 p-3 rounded-xl">
-                <div className="text-[10px] text-green-400 font-black uppercase">🟢 Não Começaram</div>
-                <div className="text-lg font-black text-green-400 mt-0.5">
-                  {jogosQueNaoComecaramLista.length} jogo(s)
-                </div>
-                <div className="text-[10px] text-zinc-400">
-                  {jogosQueNaoComecaramLista.length > 0 ? "Liberados p/ apostar" : "Rodada em andamento"}
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-2.5 max-w-md mx-auto pt-1">
-              {jogosQueNaoComecaramLista.length > 0 && !config.bloqueioManualBolao && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setLiberarApenasJogosNaoIniciados(true);
-                    setFiltroJogosJogador("nao_iniciados");
-                  }}
-                  className="w-full bg-green-500 hover:bg-green-400 text-black font-black py-4 px-4 rounded-xl text-xs sm:text-sm uppercase tracking-wider cursor-pointer transition shadow-lg shadow-green-500/25 flex items-center justify-center gap-2"
-                >
-                  <span>⚽</span>
-                  <span>APOSTAR NOS JOGOS QUE NÃO COMEÇARAM ({jogosQueNaoComecaramLista.length})</span>
-                </button>
-              )}
-
-              <button
-                type="button"
-                onClick={() => setPage("classificacao")}
-                className="w-full bg-[#FF6B00] hover:bg-[#ff7b1a] text-black font-black py-3.5 px-4 rounded-xl text-xs sm:text-sm uppercase tracking-wider cursor-pointer transition shadow-lg shadow-[#FF6B00]/20 flex items-center justify-center gap-2"
-              >
-                <span>⏳</span>
-                <span>AGUARDAR O PRÓXIMO BOLÃO • VER CLASSIFICAÇÃO</span>
-              </button>
-
-              {meusPalpitesSalvos.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setPage("minhasApostas")}
-                  className="w-full bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-white font-bold py-3 px-4 rounded-xl text-xs uppercase tracking-wider cursor-pointer transition flex items-center justify-center gap-2"
-                >
-                  <span>🎫</span>
-                  <span>VER MINHAS APOSTAS REGISTRADAS ({meusPalpitesSalvos.length})</span>
-                </button>
-              )}
-            </div>
-          </div>
         ) : (
           <div className="mt-4 space-y-3">
-            {(primeiroJogoDoBolaoComecou && filtroJogosJogador === "nao_iniciados"
+            {primeiroJogoDoBolaoComecou && (
+              <div className="bg-zinc-900/95 border border-red-500/70 rounded-2xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg">
+                <div className="space-y-0.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wider bg-red-600 text-white px-2.5 py-0.5 rounded-full animate-pulse">
+                      🔴 Jogos em Andamento na ESPN
+                    </span>
+                    <span className="text-xs font-black text-white">
+                      {jogosJaComecaramLista.length} jogo(s) iniciado(s) • {jogosQueNaoComecaramLista.length} jogo(s) em breve
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-zinc-300 font-bold">
+                    Acompanhe os placares ao vivo abaixo! Os jogos já iniciados ficam bloqueados para novas apostas, mas você pode apostar nos jogos que ainda não começaram.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLiberarApenasJogosNaoIniciados(true);
+                      setFiltroJogosJogador("todos");
+                    }}
+                    className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase cursor-pointer transition border ${
+                      filtroJogosJogador !== "nao_iniciados" || jogosQueNaoComecaramLista.length === 0
+                        ? "bg-[#FF6B00] text-black border-[#FF6B00]"
+                        : "bg-zinc-800 text-zinc-300 border-zinc-700 hover:bg-zinc-700"
+                    }`}
+                  >
+                    🔴 Todos ({jogosPublicados.length})
+                  </button>
+                  {jogosQueNaoComecaramLista.length > 0 && !config.bloqueioManualBolao && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLiberarApenasJogosNaoIniciados(true);
+                        setFiltroJogosJogador("nao_iniciados");
+                      }}
+                      className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase cursor-pointer transition border ${
+                        filtroJogosJogador === "nao_iniciados"
+                          ? "bg-green-500 text-black border-green-400"
+                          : "bg-zinc-800 text-green-400 border-green-700/60 hover:bg-zinc-700"
+                      }`}
+                    >
+                      🟢 Abertos p/ Apostar ({jogosQueNaoComecaramLista.length})
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {(primeiroJogoDoBolaoComecou &&
+            filtroJogosJogador === "nao_iniciados" &&
+            jogosQueNaoComecaramLista.length > 0
               ? jogosQueNaoComecaramLista
               : jogosPublicados
             ).map((j, idx) => {

@@ -258,9 +258,21 @@ function mapearEventoEspnParaPartida(
       competition?.status?.type?.state ||
       'pre'
   ).toLowerCase();
+  const statusName = String(
+    event?.status?.type?.name ||
+      competition?.status?.type?.name ||
+      ''
+  ).toUpperCase();
+  const period = Number(
+    event?.status?.period || competition?.status?.period || 1
+  );
 
   const aoVivo = state === 'in';
-  const encerrado = state === 'post';
+  const encerrado = Boolean(
+    event?.status?.type?.completed ||
+      competition?.status?.type?.completed ||
+      state === 'post'
+  );
   const naoComecou = !aoVivo && !encerrado;
 
   const { horario, dataCurta } = formatarHorarioEvento(
@@ -268,8 +280,9 @@ function mapearEventoEspnParaPartida(
   );
 
   const rawDetail = String(
-    event?.status?.type?.detail ||
-      event?.status?.type?.shortDetail ||
+    event?.status?.type?.shortDetail ||
+      event?.status?.type?.detail ||
+      competition?.status?.type?.shortDetail ||
       competition?.status?.type?.detail ||
       ''
   ).trim();
@@ -282,13 +295,20 @@ function mapearEventoEspnParaPartida(
   let minuto = `EM BREVE (${dataCurta} • ${horario})`;
 
   if (aoVivo) {
-    if (displayClock && displayClock !== "0'") {
-      status = `AO VIVO ${displayClock}`;
-      minuto = displayClock;
+    if (
+      statusName.includes('HALFTIME') ||
+      /^ht$/i.test(rawDetail) ||
+      /intervalo/i.test(rawDetail)
+    ) {
+      status = 'AO VIVO • INTERVALO';
+      minuto = 'INTERVALO';
+    } else if (displayClock && displayClock !== "0'") {
+      minuto = `${displayClock} (${period >= 2 ? '2ºT' : '1ºT'})`;
+      status = `AO VIVO • ${minuto}`;
     } else if (rawDetail && !/scheduled/i.test(rawDetail)) {
       status = /ao vivo/i.test(rawDetail)
         ? rawDetail.toUpperCase()
-        : `AO VIVO ${rawDetail}`;
+        : `AO VIVO • ${rawDetail}`;
       minuto = rawDetail;
     } else {
       status = 'AO VIVO';
@@ -296,7 +316,7 @@ function mapearEventoEspnParaPartida(
     }
   } else if (encerrado) {
     status = `ENCERRADO • ${dataCurta}`;
-    minuto = 'Encerrado (90\')';
+    minuto = "Encerrado (90')";
   }
 
   const estadio =
@@ -324,6 +344,22 @@ function mapearEventoEspnParaPartida(
   };
 }
 
+function obterHojeYmdBrasil(): string {
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Sao_Paulo',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(new Date());
+    const y = parts.find((p) => p.type === 'year')?.value;
+    const m = parts.find((p) => p.type === 'month')?.value;
+    const d = parts.find((p) => p.type === 'day')?.value;
+    if (y && m && d) return `${y}${m}${d}`;
+  } catch {}
+  return new Date().toISOString().slice(0, 10).replace(/-/g, '');
+}
+
 function BolaoLiveCardInner({
   onConfirmarPalpite,
   admAbertoPorPadrao = false,
@@ -333,11 +369,11 @@ function BolaoLiveCardInner({
     onConfirmarPalpiteRef.current = onConfirmarPalpite;
   }, [onConfirmarPalpite]);
 
-  // Estado da Reprise salva no localStorage (tem prioridade quando ativa)
+  // Estado da Reprise salva no localStorage (tem prioridade quando ativa manualmente)
   const [repriseSalva, setRepriseSalva] = useState<RepriseSalvaStorage | null>(
     () => lerRepriseSalvaLocalStorage()
   );
-  const [forcarModoEspn, setForcarModoEspn] = useState<boolean>(false);
+  const [forcarModoEspn, setForcarModoEspn] = useState<boolean>(true);
 
   // Estado do Painel ADM
   const [painelAdmAberto, setPainelAdmAberto] = useState<boolean>(
@@ -362,7 +398,7 @@ function BolaoLiveCardInner({
   const [buscandoJogos, setBuscandoJogos] = useState<boolean>(true);
   const [ultimaSincronizacao, setUltimaSincronizacao] = useState<string>('');
   const [segundosParaAtualizar, setSegundosParaAtualizar] =
-    useState<number>(30);
+    useState<number>(15);
   const [alertaGol, setAlertaGol] = useState<AlertaGolInfo | null>(null);
   const placaresAnterioresRef = useRef<
     Record<string, { casa: string; fora: string }>
@@ -392,38 +428,52 @@ function BolaoLiveCardInner({
   // Busca diretamente na ESPN_API: se houver jogos ao vivo mostra AO VIVO; se não houver, monta a lista dos Próximos Jogos da ESPN como "EM BREVE"
   const buscarJogosEspn = useCallback(async () => {
     try {
-      const response = await fetch(ESPN_API, {
-        method: 'GET',
-        cache: 'no-store',
-      });
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
+      const hojeYmd = obterHojeYmdBrasil();
+      const [resPadrao, resHoje] = await Promise.all([
+        fetch(ESPN_API, { method: 'GET', cache: 'no-store' }).catch(() => null),
+        fetch(`${ESPN_API}?dates=${hojeYmd}`, {
+          method: 'GET',
+          cache: 'no-store',
+        }).catch(() => null),
+      ]);
+
+      const dataPadrao =
+        resPadrao && resPadrao.ok
+          ? await resPadrao.json().catch(() => null)
+          : null;
+      const dataHoje =
+        resHoje && resHoje.ok ? await resHoje.json().catch(() => null) : null;
+      const data = dataHoje || dataPadrao;
+      if (!data) {
+        throw new Error('Sem resposta da ESPN');
       }
-      const data = await response.json();
-      const eventsIniciais = Array.isArray(data?.events) ? data.events : [];
+
+      const eventsIniciais = [
+        ...(Array.isArray(dataHoje?.events) ? dataHoje.events : []),
+        ...(Array.isArray(dataPadrao?.events) ? dataPadrao.events : []),
+      ];
       const nomeCampeonatoPadrao =
         data?.leagues?.[0]?.name === 'Brazilian Serie A'
           ? 'Brasileirão Série A'
           : data?.leagues?.[0]?.name || 'Brasileirão Série A';
 
       let todosEventosBrutos: any[] = [...eventsIniciais];
-      const calendarRaw: string[] = Array.isArray(data?.leagues?.[0]?.calendar)
+      const calendarRaw: string[] = Array.isArray(
+        dataPadrao?.leagues?.[0]?.calendar
+      )
+        ? dataPadrao.leagues[0].calendar
+        : Array.isArray(data?.leagues?.[0]?.calendar)
         ? data.leagues[0].calendar
         : [];
 
       // Busca APENAS as próximas datas da rodada no calendário da ESPN (sem nunca inventar jogos ou buscar jogos passados)
-      if (calendarRaw.length > 0 && todosEventosBrutos.length < 8) {
-        const hojeYmd = String(
-          data?.day?.date || new Date().toISOString().slice(0, 10)
-        )
-          .slice(0, 10)
-          .replace(/-/g, '');
+      if (calendarRaw.length > 0 && todosEventosBrutos.length < 10) {
         const datasCalendario = calendarRaw
           .map((c) => String(c || '').slice(0, 10).replace(/-/g, ''))
           .filter((d) => /^\d{8}$/.test(d));
 
         const proximasDatas = datasCalendario
-          .filter((d) => d >= hojeYmd)
+          .filter((d) => d > hojeYmd)
           .slice(0, 3);
 
         const respostasExtras = await Promise.all(
@@ -466,6 +516,11 @@ function BolaoLiveCardInner({
           ? [...jogosAoVivo, ...proximosJogos]
           : proximosJogos;
 
+      // Se houver jogo ao vivo na ESPN neste momento, garante que o placar ao vivo da ESPN fique visível
+      if (jogosAoVivo.length > 0) {
+        setForcarModoEspn(true);
+      }
+
       // Verifica mudança real de placar em jogos AO VIVO para disparar Goal Alert ("GOOOL! Novo placar")
       for (const item of listaPartidas) {
         const placarAnterior = placaresAnterioresRef.current[item.id];
@@ -499,13 +554,16 @@ function BolaoLiveCardInner({
           second: '2-digit',
         })
       );
-      setSegundosParaAtualizar(30);
+      setSegundosParaAtualizar(15);
 
       setPartida((prev) => {
         if (listaPartidas.length === 0) return null;
         if (prev) {
           const atualizada = listaPartidas.find((p) => p.id === prev.id);
-          if (atualizada) return atualizada;
+          // Se a partida anterior não estava ao vivo, mas agora há um jogo ao vivo na ESPN, destaca o jogo ao vivo!
+          if (atualizada && (atualizada.aoVivo || jogosAoVivo.length === 0)) {
+            return atualizada;
+          }
         }
         const primeiraAoVivo = listaPartidas.find((p) => p.aoVivo);
         return primeiraAoVivo || listaPartidas[0];
@@ -517,14 +575,14 @@ function BolaoLiveCardInner({
     }
   }, [dispararAlertaGol]);
 
-  // useEffect para fazer fetch na ESPN_API assim que o componente carregar + setInterval de 30s
+  // useEffect para fazer fetch na ESPN_API assim que o componente carregar + setInterval de 15s
   useEffect(() => {
     buscarJogosEspn();
     const timerPoll = window.setInterval(() => {
       buscarJogosEspn();
-    }, 30000);
+    }, 15000);
     const timerCountdown = window.setInterval(() => {
-      setSegundosParaAtualizar((prev) => (prev <= 1 ? 30 : prev - 1));
+      setSegundosParaAtualizar((prev) => (prev <= 1 ? 15 : prev - 1));
     }, 1000);
     return () => {
       window.clearInterval(timerPoll);

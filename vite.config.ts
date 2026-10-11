@@ -49,6 +49,72 @@ export default defineConfig(({ mode }) => {
       'process.env.SUPABASE_SERVICE_ROLE_KEY': JSON.stringify(supabaseSecretKey),
     },
     plugins: [
+      {
+        name: 'bolao-api-middleware',
+        configureServer(server) {
+          server.middlewares.use(async (req, res, next) => {
+            const rawUrl = req.url || ''
+            const pathname = rawUrl.split('?')[0]
+            const handlers: Record<string, string> = {
+              '/api/webhook-infinitepay': './api/webhook-infinitepay.js',
+              '/api/pagamento/webhook': './api/pagamento/webhook.js',
+              '/api/criar-pagamento-infinitepay': './api/criar-pagamento-infinitepay.js',
+              '/api/pagamento/criar': './api/pagamento/criar.js',
+            }
+            const modulePath = handlers[pathname]
+            if (!modulePath) return next()
+
+            try {
+              const chunks: Buffer[] = []
+              for await (const chunk of req) {
+                chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk)
+              }
+              const bodyStr = Buffer.concat(chunks).toString('utf-8')
+              let parsedBody: any = {}
+              if (bodyStr) {
+                try {
+                  parsedBody = JSON.parse(bodyStr)
+                } catch {
+                  parsedBody = bodyStr
+                }
+              }
+
+              const queryObj: Record<string, string> = {}
+              const searchPart = rawUrl.includes('?') ? rawUrl.split('?')[1] : ''
+              const sp = new URLSearchParams(searchPart)
+              sp.forEach((v, k) => {
+                queryObj[k] = v
+              })
+
+              const mod = await server.ssrLoadModule(modulePath)
+              const handler = mod.default
+              const wrappedReq = Object.assign(req, {
+                body: parsedBody,
+                query: queryObj,
+              })
+              const wrappedRes = Object.assign(res, {
+                status(code: number) {
+                  res.statusCode = code
+                  return wrappedRes
+                },
+                json(data: any) {
+                  if (!res.headersSent) {
+                    res.setHeader('Content-Type', 'application/json; charset=utf-8')
+                  }
+                  res.end(JSON.stringify(data))
+                  return wrappedRes
+                },
+              })
+
+              await handler(wrappedReq, wrappedRes)
+            } catch (err: any) {
+              res.statusCode = 500
+              res.setHeader('Content-Type', 'application/json')
+              res.end(JSON.stringify({ ok: false, error: String(err?.message || err) }))
+            }
+          })
+        },
+      },
       react(),
       VitePWA({
       registerType: 'autoUpdate',

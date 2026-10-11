@@ -25,23 +25,32 @@ export default async function handler(req, res) {
     const origin =
       (req.headers && (req.headers.origin || (req.headers.host ? `https://${req.headers.host}` : ""))) ||
       "https://bol-o-gui-d57d-eight.vercel.app";
+    const orderNsu = String(body.order_nsu || `${jogadorId}_${Date.now()}`);
+    const redirectUrl =
+      body.redirect_url ||
+      `${origin}/?pagamento=sucesso&jogador_id=${encodeURIComponent(jogadorId)}&email=${encodeURIComponent(email)}`;
+    const webhookUrl = body.webhook_url || `${origin}/api/webhook-infinitepay`;
 
     const payload = {
       handle: "irailson-da-472",
-      order_nsu: `${jogadorId}_${Date.now()}`,
-      redirect_url: `${origin}/pagamento-sucesso?jogador_id=${encodeURIComponent(jogadorId)}`,
+      order_nsu: orderNsu,
+      redirect_url: redirectUrl,
+      webhook_url: webhookUrl,
       customer: {
         name,
         email,
         phone_number,
       },
-      items: [
-        {
-          quantity: 1,
-          price: 1000,
-          description: "Cota Bolao Elite",
-        },
-      ],
+      items:
+        Array.isArray(body.items) && body.items.length > 0
+          ? body.items
+          : [
+              {
+                quantity: 1,
+                price: 1000,
+                description: "Cota Bolao Elite",
+              },
+            ],
     };
 
     const response = await fetch("https://api.checkout.infinitepay.io/links", {
@@ -63,9 +72,7 @@ export default async function handler(req, res) {
         name
       )}&customer_email=${encodeURIComponent(email)}&customer_cellphone=${encodeURIComponent(
         phone_number
-      )}&order_nsu=${encodeURIComponent(jogadorId)}&redirect_url=${encodeURIComponent(
-        `${origin}/pagamento-sucesso?jogador_id=${encodeURIComponent(jogadorId)}`
-      )}`;
+      )}&order_nsu=${encodeURIComponent(orderNsu)}&redirect_url=${encodeURIComponent(redirectUrl)}`;
 
     return res.status(200).json({ url });
   } catch (error) {
