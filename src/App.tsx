@@ -5751,7 +5751,7 @@ export default function App() {
                         abrirSecaoPainelGeralControle(
                           "reprise",
                           "adm-secao-reprise-youtube",
-                          "🎬 Controle de Reprise YouTube & Player Ao Vivo aberto!"
+                          "📺 Controle de Jogos Ao Vivo GeTV (@getv) & Player aberto!"
                         )
                       }
                       className={`w-full text-left px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition cursor-pointer flex items-center justify-between ${
@@ -5760,9 +5760,9 @@ export default function App() {
                           : "text-amber-300 hover:bg-zinc-800"
                       }`}
                     >
-                      <span>🎬 Reprise YouTube & Player</span>
+                      <span>📺 Jogos Ao Vivo GeTV & Player</span>
                       <span className="text-[9px] bg-amber-400 text-black px-1.5 py-0.2 rounded font-black">
-                        LINK
+                        AO VIVO
                       </span>
                     </button>
                     <button
@@ -6489,14 +6489,14 @@ export default function App() {
                       ⚙️ PAINEL GERAL & CONTROLE ATIVO
                     </span>
                     <span className="text-[10px] text-emerald-400 font-bold">
-                      ⚡ Controle total de Reprise YouTube, Comprovantes PIX, Cota, Jogos e Premiação
+                      ⚡ Controle total de Jogos Ao Vivo GeTV (@getv), Comprovantes PIX, Cota, Jogos e Premiação
                     </span>
                   </div>
                   <h3 className="font-black text-base sm:text-lg text-white flex items-center gap-2 mt-1">
                     <span>⚙️</span> PAINEL GERAL & CONTROLE — CENTRAL DO ADMINISTRADOR
                   </h3>
                   <p className="text-xs text-zinc-400">
-                    Use os botões de controle rápido abaixo para gerenciar reprises do YouTube, aprovar comprovantes PIX, alterar valor da cota ou apurar resultados.
+                    Use os botões de controle rápido abaixo para gerenciar os Jogos Ao Vivo da GeTV (@getv), aprovar comprovantes PIX, alterar valor da cota ou apurar resultados.
                   </p>
                 </div>
 
@@ -6552,7 +6552,7 @@ export default function App() {
                     abrirSecaoPainelGeralControle(
                       "reprise",
                       "adm-secao-reprise-youtube",
-                      "🎬 Controle de Reprise YouTube aberto!"
+                      "📺 Controle de Jogos Ao Vivo GeTV (@getv) aberto!"
                     )
                   }
                   className={`px-3 py-2 rounded-lg text-xs font-black cursor-pointer transition flex items-center gap-1.5 ${
@@ -6561,8 +6561,8 @@ export default function App() {
                       : "bg-zinc-900 hover:bg-zinc-800 text-amber-300 border border-amber-400/50"
                   }`}
                 >
-                  <span>🎬</span>
-                  <span>Reprise YouTube & Player</span>
+                  <span>📺</span>
+                  <span>Jogos Ao Vivo GeTV & Player</span>
                 </button>
                 <button
                   type="button"

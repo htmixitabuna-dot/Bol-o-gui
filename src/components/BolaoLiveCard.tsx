@@ -65,6 +65,7 @@ export interface JogoAoVivoGetv {
   campeonato: string;
   canal: string;
   aoVivo: boolean;
+  aoVivoAgora?: boolean;
   youtubeUrl: string;
 }
 
@@ -87,84 +88,73 @@ export interface BolaoLiveCardProps {
 
 export const JOGOS_AO_VIVO_GETV_PADRAO: JogoAoVivoGetv[] = [
   {
-    id: 'oxXjXSwQ40w',
-    titulo: 'AO VIVO: FLAMENGO X CORINTHIANS | BRASILEIRÃO 2026 | ge tv',
-    timeCasa: 'Flamengo',
-    timeFora: 'Corinthians',
-    campeonato: 'Brasileirão Série A • ge tv',
+    id: '6-ebvfwXwVQ',
+    titulo:
+      'AO VIVO: FLAMENGO 1 X 0 FLUMINENSE E PALMEIRAS 4 X 1 CORINTHIANS | TROPA GE TV',
+    timeCasa: 'Flamengo / Palmeiras',
+    timeFora: 'Fluminense / Corinthians',
+    campeonato: '🔴 AO VIVO AGORA • Brasileirão ge tv',
     canal: 'ge tv (@getv)',
     aoVivo: true,
-    youtubeUrl: 'https://www.youtube.com/watch?v=oxXjXSwQ40w',
+    aoVivoAgora: true,
+    youtubeUrl: 'https://www.youtube.com/watch?v=6-ebvfwXwVQ',
   },
   {
-    id: 'MINxnJ3nHK0',
-    titulo: 'AO VIVO: GRÊMIO X PALMEIRAS | BRASILEIRÃO 2026 | ge tv',
-    timeCasa: 'Grêmio',
-    timeFora: 'Palmeiras',
-    campeonato: 'Brasileirão Série A • ge tv',
+    id: 'fthTyif7wFo',
+    titulo:
+      'AO VIVO: SAN FRANCISCO 49ERS X SEATTLE SEAHAWKS | NFL 2026/27 | ge tv',
+    timeCasa: 'San Francisco 49ers',
+    timeFora: 'Seattle Seahawks',
+    campeonato: '🔴 AO VIVO AGORA • ge tv',
     canal: 'ge tv (@getv)',
     aoVivo: true,
-    youtubeUrl: 'https://www.youtube.com/watch?v=MINxnJ3nHK0',
+    aoVivoAgora: true,
+    youtubeUrl: 'https://www.youtube.com/watch?v=fthTyif7wFo',
   },
   {
-    id: 'SLeA4eEgRyo',
-    titulo: 'AO VIVO: FLAMENGO X SÃO PAULO | BRASILEIRÃO 2026 | ge tv',
-    timeCasa: 'Flamengo',
-    timeFora: 'São Paulo',
-    campeonato: 'Brasileirão Série A • ge tv',
-    canal: 'ge tv (@getv)',
-    aoVivo: true,
-    youtubeUrl: 'https://www.youtube.com/watch?v=SLeA4eEgRyo',
-  },
-  {
-    id: 't8cvdQv2njI',
-    titulo: 'AO VIVO: PALMEIRAS X ATLÉTICO-MG | BRASILEIRÃO 2026 | ge tv',
+    id: 'zZuGjqmMunI',
+    titulo: 'AO VIVO: PALMEIRAS X CORINTHIANS | BRASILEIRÃO 2026 | ge tv',
     timeCasa: 'Palmeiras',
-    timeFora: 'Atlético-MG',
-    campeonato: 'Brasileirão Série A • ge tv',
+    timeFora: 'Corinthians',
+    campeonato: 'Transmissão Ao Vivo • Brasileirão ge tv',
     canal: 'ge tv (@getv)',
     aoVivo: true,
-    youtubeUrl: 'https://www.youtube.com/watch?v=t8cvdQv2njI',
+    aoVivoAgora: false,
+    youtubeUrl: 'https://www.youtube.com/watch?v=zZuGjqmMunI',
   },
   {
-    id: 'dFMhqLTQ18c',
-    titulo: 'AO VIVO: ATLÉTICO-MG X VITÓRIA | BRASILEIRÃO 2026 | ge tv',
-    timeCasa: 'Atlético-MG',
-    timeFora: 'Vitória',
-    campeonato: 'Brasileirão Série A • ge tv',
+    id: '4OV-3Nv88F8',
+    titulo:
+      'AO VIVO: JACKSONVILLE JAGUARS X PHILADELPHIA EAGLES | NFL 2026 | ge tv',
+    timeCasa: 'Jacksonville Jaguars',
+    timeFora: 'Philadelphia Eagles',
+    campeonato: 'Transmissão Ao Vivo • ge tv',
     canal: 'ge tv (@getv)',
     aoVivo: true,
-    youtubeUrl: 'https://www.youtube.com/watch?v=dFMhqLTQ18c',
+    aoVivoAgora: false,
+    youtubeUrl: 'https://www.youtube.com/watch?v=4OV-3Nv88F8',
   },
   {
-    id: '7wWzgXlUD9Q',
-    titulo: 'AO VIVO: ATLÉTICO-MG X CHAPECOENSE | BRASILEIRÃO 2026 | ge tv',
-    timeCasa: 'Atlético-MG',
-    timeFora: 'Chapecoense',
-    campeonato: 'Brasileirão Série A • ge tv',
-    canal: 'ge tv (@getv)',
-    aoVivo: true,
-    youtubeUrl: 'https://www.youtube.com/watch?v=7wWzgXlUD9Q',
-  },
-  {
-    id: 'CKPXBY6BEEg',
-    titulo: 'AO VIVO: SÃO PAULO X CORITIBA | BRASILEIRÃO 2026 | ge tv',
+    id: 'uS7cuCJTHqA',
+    titulo: 'AO VIVO: SÃO PAULO X VITÓRIA | BRASILEIRÃO 2026 | ge tv',
     timeCasa: 'São Paulo',
-    timeFora: 'Coritiba',
-    campeonato: 'Brasileirão Série A • ge tv',
+    timeFora: 'Vitória',
+    campeonato: 'Transmissão Ao Vivo • Brasileirão ge tv',
     canal: 'ge tv (@getv)',
     aoVivo: true,
-    youtubeUrl: 'https://www.youtube.com/watch?v=CKPXBY6BEEg',
+    aoVivoAgora: false,
+    youtubeUrl: 'https://www.youtube.com/watch?v=uS7cuCJTHqA',
   },
   {
-    id: 'v-TnCvXG8BQ',
-    titulo: 'AO VIVO: MIRASSOL X VITÓRIA | BRASILEIRÃO 2026 | ge tv',
-    timeCasa: 'Mirassol',
-    timeFora: 'Vitória',
-    campeonato: 'Brasileirão Série A • ge tv',
+    id: 'bj7JvLt1Wss',
+    titulo: 'AO VIVO: BRASIL X ARGENTINA | SELEÇÃO BRASILEIRA | ge tv',
+    timeCasa: 'Brasil',
+    timeFora: 'Argentina',
+    campeonato: 'Transmissão Ao Vivo • ge tv',
     canal: 'ge tv (@getv)',
     aoVivo: true,
-    youtubeUrl: 'https://www.youtube.com/watch?v=v-TnCvXG8BQ',
+    aoVivoAgora: false,
+    youtubeUrl: 'https://www.youtube.com/watch?v=bj7JvLt1Wss',
   },
 ];
 
@@ -177,6 +167,10 @@ const IDS_SEM_EMBED_OU_ENCERRADOS = new Set([
   'L2P-xlllxzo',
   'hNog7bqOalc',
   'jOI-1I9MVEQ',
+  'iuGzXZLUTvM',
+  'WC8eaqcIHsM',
+  'VOACrxTR5-I',
+  'e8d0-d94Qlo',
   'yzCXmmTRypc',
   'cfgoWt6WZ-0',
   'LeLslvxE5MU',
@@ -184,6 +178,16 @@ const IDS_SEM_EMBED_OU_ENCERRADOS = new Set([
   '752W0WKh0ck',
   'QDiNzpZm0Ag',
   'mWns44CvuHk',
+  'lgXb2-pBjKc',
+  '4p_9OPKgcDE',
+  'oxXjXSwQ40w',
+  'MINxnJ3nHK0',
+  'SLeA4eEgRyo',
+  't8cvdQv2njI',
+  'dFMhqLTQ18c',
+  '7wWzgXlUD9Q',
+  'CKPXBY6BEEg',
+  'v-TnCvXG8BQ',
 ]);
 
 export function extrairYoutubeID(url: string): string | null {
@@ -744,7 +748,11 @@ function BolaoLiveCardInner({
           setJogosGetv(lista);
           setJogoGetvAtivo((prev) => {
             const existe = lista.find((x) => x.id === prev.id);
-            return existe || lista[0];
+            if (!existe) return lista[0];
+            if (!existe.aoVivoAgora && lista[0]?.aoVivoAgora) {
+              return lista[0];
+            }
+            return existe;
           });
         }
       }
@@ -759,7 +767,7 @@ function BolaoLiveCardInner({
     buscarJogosAoVivoGetv();
     const timerGetv = window.setInterval(() => {
       buscarJogosAoVivoGetv();
-    }, 30000);
+    }, 20000);
     return () => window.clearInterval(timerGetv);
   }, [buscarJogosAoVivoGetv]);
 
@@ -1571,13 +1579,13 @@ function BolaoLiveCardInner({
         }
         onContextMenu={(e) => e.preventDefault()}
       >
-        {/* IFRAME BLINDADO: autoplay=1&mute=1 garante início imediato em qualquer navegador + escudo Anti-YouTube */}
+        {/* IFRAME BLINDADO: autoplay=1&mute=1 garante início imediato no ponto AO VIVO em qualquer navegador + escudo Anti-YouTube */}
         {playerAtivo && (
           <iframe
             ref={iframePlayerRef}
             key={jogoGetvAtivo.id}
             onLoad={iniciarHandshakePlayer}
-            src={`https://www.youtube.com/embed/${jogoGetvAtivo.id}?autoplay=1&mute=1&controls=0&modestbranding=1&rel=0&playsinline=1&enablejsapi=1&fs=0&iv_load_policy=3&disablekb=1&loop=1&playlist=${jogoGetvAtivo.id}${originQuery}`}
+            src={`https://www.youtube.com/embed/${jogoGetvAtivo.id}?autoplay=1&mute=1&controls=0&modestbranding=1&rel=0&playsinline=1&enablejsapi=1&fs=0&iv_load_policy=3&disablekb=1${originQuery}`}
             title={jogoGetvAtivo.titulo}
             className="w-full h-full border-0 block bg-black pointer-events-none select-none scale-[1.04]"
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
