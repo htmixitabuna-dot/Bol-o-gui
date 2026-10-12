@@ -57,6 +57,9 @@ import {
   MENSAGEM_DATA_FIFA,
   correspondeJogoId,
   obterResultadoOficialJogo,
+  migrarEmailJogadorNoSupabase,
+  PRAZO_RETENCAO_APOSTAS_DIAS,
+  QUINZE_DIAS_APOSTAS_MS,
 } from './supabase';
 
 // ============================================================================
@@ -162,10 +165,23 @@ export interface Palpite {
   escolha: EscolhaResultado;
   pago?: boolean;
   bolaoPagoId?: string;
+  updatedAt?: string;
+  timestamp?: number;
+  dataAposta?: string;
+  casa?: string;
+  fora?: string;
+  escudoCasa?: string;
+  escudoFora?: string;
+  placarCasa?: string | number;
+  placarFora?: string | number;
+  resultadoOficial?: EscolhaResultado;
+  dataJogo?: string;
+  estadio?: string;
+  tituloBolao?: string;
 }
 
 export default function App() {
-  const [page, setPage] = useState<"landing" | "loginJogador" | "adminLogin" | "admin" | "palpites" | "minhasApostas" | "pagamento" | "pagamentoSucesso" | "classificacao">(() => {
+  const [page, setPage] = useState<"landing" | "loginJogador" | "adminLogin" | "admin" | "palpites" | "minhasApostas" | "pagamento" | "pagamentoSucesso" | "classificacao" | "perfil">(() => {
     if (typeof window !== "undefined") {
       const path = window.location.pathname || "";
       const params = new URLSearchParams(window.location.search);
@@ -3131,6 +3147,212 @@ export default function App() {
     );
   };
 
+  // =========================================================================
+  // PERFIL DO JOGADOR (FOTO, NOME, CHAVE PIX, E-MAIL) & HISTÓRICO DE 15 DIAS
+  // =========================================================================
+  const [perfilNomeInput, setPerfilNomeInput] = useState<string>("");
+  const [perfilEmailInput, setPerfilEmailInput] = useState<string>("");
+  const [perfilPixInput, setPerfilPixInput] = useState<string>("");
+  const [perfilFotoPreview, setPerfilFotoPreview] = useState<string>("");
+  const [salvandoPerfilJogador, setSalvandoPerfilJogador] = useState<boolean>(false);
+  const [carregandoFotoPerfil, setCarregandoFotoPerfil] = useState<boolean>(false);
+  const [avisoPerfilJogador, setAvisoPerfilJogador] = useState<string>("");
+  const [erroPerfilJogador, setErroPerfilJogador] = useState<string>("");
+
+  const abrirPerfilJogador = () => {
+    if (!user) {
+      setAbaLoginJogador("entrar");
+      setPage("loginJogador");
+      return;
+    }
+    setPerfilNomeInput(String(user.nome || ""));
+    setPerfilEmailInput(String(user.email || ""));
+    setPerfilPixInput(String(user.pix || user.chavePix || user.telefone || ""));
+    setPerfilFotoPreview(String(user.fotoPerfil || user.avatarUrl || ""));
+    setAvisoPerfilJogador("");
+    setErroPerfilJogador("");
+    setPage("perfil");
+  };
+
+  useEffect(() => {
+    if (page === "perfil" && user) {
+      setPerfilNomeInput((prev) => prev || String(user.nome || ""));
+      setPerfilEmailInput((prev) => prev || String(user.email || ""));
+      setPerfilPixInput((prev) => prev || String(user.pix || user.chavePix || user.telefone || ""));
+      setPerfilFotoPreview((prev) => prev || String(user.fotoPerfil || user.avatarUrl || ""));
+    }
+  }, [page, user]);
+
+  const handleUploadFotoPerfilJogador = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setCarregandoFotoPerfil(true);
+    setErroPerfilJogador("");
+    try {
+      const dataUrl = await compressImageToDataUrl(file, 320, 0.75);
+      setPerfilFotoPreview(dataUrl);
+      setAvisoPerfilJogador("📷 Foto carregada! Clique em 'Salvar Dados do Perfil' para confirmar.");
+    } catch {
+      setErroPerfilJogador("Não foi possível carregar a imagem selecionada. Tente outra foto.");
+    } finally {
+      setCarregandoFotoPerfil(false);
+      e.target.value = "";
+    }
+  };
+
+  const salvarDadosPerfilJogador = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!user) return;
+
+    const novoNome = perfilNomeInput.trim();
+    const novoEmail = perfilEmailInput.trim().toLowerCase();
+    const novoPix = perfilPixInput.trim();
+
+    if (!novoNome) {
+      setErroPerfilJogador("Por favor, preencha o seu nome.");
+      return;
+    }
+    if (!novoEmail || !novoEmail.includes("@")) {
+      setErroPerfilJogador("Por favor, digite um e-mail válido.");
+      return;
+    }
+    if (!novoPix) {
+      setErroPerfilJogador("Por favor, informe sua chave PIX para recebimento de prêmios.");
+      return;
+    }
+
+    const oldEmail = String(user.email || "").trim().toLowerCase();
+    if (novoEmail !== oldEmail) {
+      const conflito = jogadores.find(
+        (jg: any) =>
+          (jg.email || "").trim().toLowerCase() === novoEmail &&
+          (jg.email || "").trim().toLowerCase() !== oldEmail
+      );
+      if (conflito) {
+        setErroPerfilJogador("Este novo e-mail já está cadastrado em outra conta.");
+        return;
+      }
+    }
+
+    setSalvandoPerfilJogador(true);
+    setErroPerfilJogador("");
+    setAvisoPerfilJogador("");
+
+    try {
+      const novoDocId = getJogadorDocId(novoEmail);
+      const usuarioAtualizado = {
+        ...user,
+        id: user.id || novoDocId,
+        _docId: novoDocId,
+        nome: novoNome,
+        email: novoEmail,
+        pix: novoPix,
+        chavePix: novoPix,
+        telefone: novoPix,
+        fotoPerfil: perfilFotoPreview || undefined,
+        updatedAt: new Date().toISOString(),
+      };
+
+      setUser(usuarioAtualizado);
+      localStorage.setItem("elite_user_v11", JSON.stringify(usuarioAtualizado));
+
+      const novaListaJogadores = [
+        ...jogadores.filter((jg: any) => {
+          const em = (jg.email || "").trim().toLowerCase();
+          return em !== oldEmail && em !== novoEmail;
+        }),
+        usuarioAtualizado,
+      ];
+      setJogadores(novaListaJogadores);
+      localStorage.setItem("elite_jogadores_v11", JSON.stringify(novaListaJogadores));
+
+      if (oldEmail && oldEmail !== novoEmail) {
+        const novosPalpites = palpites.map((p) => {
+          if ((p.jogadorEmail || "").trim().toLowerCase() === oldEmail) {
+            return {
+              ...p,
+              id: `${novoEmail}_${p.jogoId}`,
+              jogadorEmail: novoEmail,
+            };
+          }
+          return p;
+        });
+        setPalpites(novosPalpites);
+        localStorage.setItem("elite_palpites_v11", JSON.stringify(novosPalpites));
+
+        const novosDepositos = depositos.map((d: any) => {
+          if ((d.email || "").trim().toLowerCase() === oldEmail) {
+            return { ...d, email: novoEmail, nome: novoNome };
+          }
+          return d;
+        });
+        setDepositos(novosDepositos);
+        localStorage.setItem("elite_depositos_v11", JSON.stringify(novosDepositos));
+      }
+
+      // Atualiza nome, e-mail e PIX também no histórico de rankings
+      const novoHist = historicoRankingBolao.map((h) => {
+        let alterou = false;
+        const rkNovo = (h.ranking || []).map((r) => {
+          const rEm = (r.email || "").trim().toLowerCase();
+          if (rEm === oldEmail || rEm === novoEmail) {
+            alterou = true;
+            return { ...r, nome: novoNome, email: novoEmail, pix: novoPix };
+          }
+          return r;
+        });
+        return alterou ? { ...h, ranking: rkNovo } : h;
+      });
+      setHistoricoRankingBolao(novoHist);
+      localStorage.setItem("elite_historico_ranking_v11", JSON.stringify(novoHist));
+
+      await migrarEmailJogadorNoSupabase(oldEmail, usuarioAtualizado);
+
+      setAvisoPerfilJogador("✅ Dados do perfil (foto, nome, chave PIX e e-mail) salvos com sucesso!");
+    } catch {
+      setErroPerfilJogador("Ocorreu um erro ao salvar no servidor, mas seus dados foram salvos localmente.");
+    } finally {
+      setSalvandoPerfilJogador(false);
+    }
+  };
+
+  // Retenção de 15 dias das apostas: obtém timestamp, calcula dias restantes e limpa expiradas (> 15 dias)
+  const obterTimestampPalpite = (p: Palpite): number => {
+    if (Number(p.timestamp) > 0) return Number(p.timestamp);
+    if (p.updatedAt) {
+      const parsed = Date.parse(String(p.updatedAt));
+      if (!isNaN(parsed) && parsed > 0) return parsed;
+    }
+    return Date.now();
+  };
+
+  const calcularDiasRestantesAposta15Dias = (p: Palpite): number => {
+    const ts = obterTimestampPalpite(p);
+    const decorrido = Math.max(0, Date.now() - ts);
+    const restante = Math.max(0, QUINZE_DIAS_APOSTAS_MS - decorrido);
+    return Math.max(1, Math.ceil(restante / (24 * 60 * 60 * 1000)));
+  };
+
+  useEffect(() => {
+    const limparApostasExpiradas15Dias = () => {
+      if (palpites.length === 0) return;
+      const agora = Date.now();
+      const expiradas = palpites.filter((p) => agora - obterTimestampPalpite(p) > QUINZE_DIAS_APOSTAS_MS);
+      if (expiradas.length === 0) return;
+
+      const validas = palpites.filter((p) => agora - obterTimestampPalpite(p) <= QUINZE_DIAS_APOSTAS_MS);
+      setPalpites(validas);
+      localStorage.setItem("elite_palpites_v11", JSON.stringify(validas));
+      expiradas.forEach((exp) => {
+        deletePalpiteFromDb(exp.jogadorEmail, exp.jogoId).catch(() => {});
+      });
+    };
+
+    limparApostasExpiradas15Dias();
+    const timer = window.setInterval(limparApostasExpiradas15Dias, 60000);
+    return () => window.clearInterval(timer);
+  }, [palpites]);
+
   const enviarComprovantePremiacaoAdm = async () => {
     const nomeGanhadorLimpo = ganhadorPremiacaoNome.trim();
     if (!nomeGanhadorLimpo) {
@@ -4396,6 +4618,11 @@ export default function App() {
       !modoNovaAposta &&
       Boolean(isDepositoConfirmado || isParticipanteDepositanteNoBolaoAtual(user));
 
+    const agoraTs = Date.now();
+    const dataApostaStr = `${new Date(agoraTs).toLocaleDateString("pt-BR")} às ${new Date(
+      agoraTs
+    ).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
+
     const novosPalpitesNaoIniciados: Palpite[] = jogosNaoIniciadosComPalpite.map((j) => ({
       id: `${emailUserNorm}__${j.id}`,
       jogadorEmail: user.email,
@@ -4403,6 +4630,19 @@ export default function App() {
       escolha: getEscolhaDoJogo(j)!,
       pago: jaPago,
       bolaoPagoId: jaPago ? cicloBolaoAtivoId : "",
+      timestamp: agoraTs,
+      updatedAt: new Date(agoraTs).toISOString(),
+      dataAposta: dataApostaStr,
+      casa: j.casa,
+      fora: j.fora,
+      escudoCasa: j.escudoCasa,
+      escudoFora: j.escudoFora,
+      placarCasa: j.placarCasa,
+      placarFora: j.placarFora,
+      resultadoOficial: obterResultadoOficialJogo(j),
+      dataJogo: j.data_jogo ? `${j.data_jogo} • ${j.data}` : j.data,
+      estadio: j.estadio,
+      tituloBolao: j.tituloBolao || "Rodada Oficial Brasileirão",
     }));
 
     const idsAtualizados = new Set(novosPalpitesNaoIniciados.map((x) => x.jogoId));
@@ -5331,6 +5571,13 @@ export default function App() {
                 className="w-full bg-[#FF6B00] hover:bg-[#ff7b1a] text-black font-black py-4 rounded-xl cursor-pointer hover:scale-105 active:scale-95 transition shadow-lg shadow-[#FF6B00]/20 text-sm uppercase tracking-wider"
               >
                 CONTINUAR COMO {user.nome?.split(" ")[0]?.toUpperCase()}
+              </button>
+              <button
+                type="button"
+                onClick={abrirPerfilJogador}
+                className="w-full bg-zinc-900 hover:bg-zinc-800 border border-[#FF6B00]/50 text-[#FF6B00] font-bold py-2.5 rounded-xl cursor-pointer transition text-[10px] uppercase tracking-wider flex items-center justify-center gap-1.5"
+              >
+                <span>👤</span> MEU PERFIL & HISTÓRICO DE APOSTAS (15 DIAS)
               </button>
               <div className="grid grid-cols-2 gap-2">
                 <button
@@ -9227,11 +9474,27 @@ export default function App() {
         {/* TOPO ESTRUTURADO DA ÁREA LOGADA DO JOGADOR */}
         <header className="bg-zinc-900/95 border border-zinc-800 rounded-2xl p-4 space-y-3.5 shadow-xl">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 pb-3">
-            <div className="flex items-center gap-3">
-              <img src={logoBolao} alt="Logo Bolão Elite" className="w-10 h-10 object-contain rounded-xl border border-[#C41E3A]" />
+            <div
+              onClick={abrirPerfilJogador}
+              className="flex items-center gap-3 cursor-pointer group"
+              title="Clique para abrir seu Perfil e Histórico de Apostas (15 dias)"
+            >
+              {user?.fotoPerfil ? (
+                <img
+                  src={user.fotoPerfil}
+                  alt={user.nome || "Foto de Perfil"}
+                  className="w-11 h-11 object-cover rounded-full border-2 border-[#FF6B00] shadow-md group-hover:scale-105 transition"
+                />
+              ) : (
+                <img
+                  src={logoBolao}
+                  alt="Logo Bolão Elite"
+                  className="w-10 h-10 object-contain rounded-xl border border-[#C41E3A]"
+                />
+              )}
               <div>
                 <div className="flex items-center gap-2">
-                  <span className="text-[10px] text-zinc-400 uppercase font-bold tracking-wider">
+                  <span className="text-[10px] text-zinc-400 uppercase font-bold tracking-wider group-hover:text-[#FF6B00] transition">
                     Área Logada • Jogador Conectado
                   </span>
                   <span
@@ -9246,13 +9509,23 @@ export default function App() {
                     {isMinhaApostaAprovada ? "✓ Pago" : isDepositoEmAnalise ? "⏳ Em Análise" : "Aberto"}
                   </span>
                 </div>
-                <h2 className="font-black text-lg sm:text-xl text-white leading-tight">
-                  {user?.nome || "Convidado"}
+                <h2 className="font-black text-lg sm:text-xl text-white leading-tight flex items-center gap-2">
+                  <span>{user?.nome || "Convidado"}</span>
+                  <span className="text-[10px] bg-zinc-800 border border-[#FF6B00]/50 text-[#FF6B00] px-2 py-0.5 rounded-lg font-bold">
+                    ✏️ Editar Perfil
+                  </span>
                 </h2>
               </div>
             </div>
 
             <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={abrirPerfilJogador}
+                className="text-xs bg-zinc-800 hover:bg-zinc-700 border border-[#FF6B00]/60 text-[#FF6B00] font-black px-3 py-2 rounded-xl cursor-pointer transition flex items-center gap-1.5"
+              >
+                <span>👤</span> Meu Perfil
+              </button>
               <PWAInstallButton variant="compact" logoSrc={logoBolao} />
               <button
                 onClick={() => {
@@ -9270,7 +9543,7 @@ export default function App() {
           </div>
 
           {/* Grade Organizada de Ações Principais */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
             <button
               type="button"
               onClick={iniciarNovaAposta}
@@ -9293,6 +9566,14 @@ export default function App() {
             </button>
             <button
               type="button"
+              onClick={abrirPerfilJogador}
+              className="text-[10px] sm:text-[11px] bg-zinc-800 hover:bg-zinc-700 border border-[#FF6B00]/60 text-white px-2.5 py-2.5 rounded-xl cursor-pointer font-bold transition flex items-center justify-center gap-1"
+              title="Abrir Meu Perfil (Foto, Nome, PIX, E-mail e Histórico de 15 dias)"
+            >
+              <span>👤</span> Perfil & Histórico
+            </button>
+            <button
+              type="button"
               onClick={() => setPastaComprovanteAberta(true)}
               className="text-xs bg-black hover:bg-zinc-800 border border-zinc-700 text-zinc-200 hover:text-white px-3 py-2.5 rounded-xl cursor-pointer font-bold transition flex items-center justify-center gap-1.5"
               title="Abrir pasta de comprovantes"
@@ -9302,7 +9583,7 @@ export default function App() {
             <button
               type="button"
               onClick={() => setPage("classificacao")}
-              className="text-xs bg-[#FF6B00]/15 border border-[#FF6B00]/50 text-[#FF6B00] hover:bg-[#FF6B00]/25 px-3 py-2.5 rounded-xl cursor-pointer font-black transition flex items-center justify-center gap-1.5"
+              className="text-xs bg-[#FF6B00]/15 border border-[#FF6B00]/50 text-[#FF6B00] hover:bg-[#FF6B00]/25 px-3 py-2.5 rounded-xl cursor-pointer font-black transition flex items-center justify-center gap-1.5 col-span-2 sm:col-span-1"
             >
               <span>🏆</span> Ranking Geral
             </button>
@@ -10154,6 +10435,12 @@ export default function App() {
           </button>
           <div className="flex items-center gap-2">
             <button
+              onClick={abrirPerfilJogador}
+              className="text-xs bg-zinc-900 border border-[#FF6B00]/50 text-[#FF6B00] px-2.5 py-1.5 rounded-lg cursor-pointer font-bold"
+            >
+              👤 Meu Perfil
+            </button>
+            <button
               onClick={() => setPage("classificacao")}
               className="text-xs bg-zinc-900 border border-zinc-800 text-[#FF6B00] px-2.5 py-1.5 rounded-lg cursor-pointer font-bold"
             >
@@ -10235,7 +10522,17 @@ export default function App() {
           >
             ← Voltar para Apostas
           </button>
-          <span className="text-xs font-black text-[#FF6B00]">TRIAGEM & RANKING</span>
+          <div className="flex items-center gap-2">
+            {user && (
+              <button
+                onClick={abrirPerfilJogador}
+                className="text-xs bg-zinc-900 border border-[#FF6B00]/50 text-[#FF6B00] px-2.5 py-1 rounded-lg cursor-pointer font-bold"
+              >
+                👤 Meu Perfil
+              </button>
+            )}
+            <span className="text-xs font-black text-[#FF6B00]">TRIAGEM & RANKING</span>
+          </div>
         </div>
 
         <div className="bg-gradient-to-b from-[#FF6B00]/15 to-transparent border border-[#FF6B00]/30 p-5 rounded-2xl text-center space-y-1">
@@ -10584,6 +10881,480 @@ export default function App() {
           >
             Ver Bolão
           </button>
+        </div>
+      </div>
+    );
+  }
+
+  // =========================================================================
+  // 6.8 ÁREA DE PERFIL DO JOGADOR & HISTÓRICO DE APOSTAS (RETENÇÃO DE 15 DIAS)
+  // =========================================================================
+  if (page === "perfil") {
+    const emailJogadorLogado = String(user?.email || "").trim().toLowerCase();
+    const agoraMs = Date.now();
+
+    const palpitesJogador15Dias = palpites
+      .filter((p) => {
+        const em = String(p.jogadorEmail || "").trim().toLowerCase();
+        if (!emailJogadorLogado || em !== emailJogadorLogado) return false;
+        const ts = obterTimestampPalpite(p);
+        return agoraMs - ts <= QUINZE_DIAS_APOSTAS_MS;
+      })
+      .sort((a, b) => obterTimestampPalpite(b) - obterTimestampPalpite(a));
+
+    const itensHistorico15Dias = palpitesJogador15Dias.map((p) => {
+      const jogoAtivo = jogos.find((j) => correspondeJogoId(j, p.jogoId));
+      let jogoHist: any = null;
+      let tituloRodada = p.tituloBolao || jogoAtivo?.tituloBolao || "Rodada Oficial Brasileirão";
+
+      if (!jogoAtivo) {
+        for (const h of historicoRankings) {
+          const jH = (h.jogos || []).find((jh) => correspondeJogoId(jh, p.jogoId));
+          if (jH) {
+            jogoHist = jH;
+            tituloRodada = h.tituloBolao || tituloRodada;
+            break;
+          }
+          for (const rk of h.ranking || []) {
+            const pA = (rk.partidasApostadas || []).find((pa) =>
+              correspondeJogoId({ id: pa.jogoId }, p.jogoId)
+            );
+            if (pA) {
+              jogoHist = pA;
+              tituloRodada = h.tituloBolao || tituloRodada;
+              break;
+            }
+          }
+          if (jogoHist) break;
+        }
+      }
+
+      const casa = jogoAtivo?.casa || jogoHist?.casa || p.casa || "Time Mandante";
+      const fora = jogoAtivo?.fora || jogoHist?.fora || p.fora || "Time Visitante";
+      const escudoCasa =
+        jogoAtivo?.escudoCasa || jogoHist?.escudoCasa || p.escudoCasa || getEscudoPadrao(casa);
+      const escudoFora =
+        jogoAtivo?.escudoFora || jogoHist?.escudoFora || p.escudoFora || getEscudoPadrao(fora);
+      const placarCasa = jogoAtivo?.placarCasa ?? jogoHist?.placarCasa ?? p.placarCasa;
+      const placarFora = jogoAtivo?.placarFora ?? jogoHist?.placarFora ?? p.placarFora;
+      const resultadoOficial: EscolhaResultado | undefined =
+        (jogoAtivo ? obterResultadoOficialJogo(jogoAtivo) : undefined) ||
+        (jogoHist ? obterResultadoOficialJogo(jogoHist) : undefined) ||
+        p.resultadoOficial;
+      const dataJogo =
+        (jogoAtivo?.data_jogo ? `${jogoAtivo.data_jogo} • ${jogoAtivo.data}` : jogoAtivo?.data) ||
+        jogoHist?.data_jogo ||
+        jogoHist?.data ||
+        p.dataJogo ||
+        "Horário Oficial";
+      const estadio = jogoAtivo?.estadio || jogoHist?.estadio || p.estadio || "";
+
+      const ts = obterTimestampPalpite(p);
+      const dataApostaFormatada =
+        p.dataAposta ||
+        `${new Date(ts).toLocaleDateString("pt-BR")} às ${new Date(ts).toLocaleTimeString("pt-BR", {
+          hour: "2-digit",
+          minute: "2-digit",
+        })}`;
+      const diasRestantes = calcularDiasRestantesAposta15Dias(p);
+      const acertou = Boolean(resultadoOficial && resultadoOficial === p.escolha);
+      const isPago = Boolean(p.pago || isMinhaApostaAprovada);
+
+      return {
+        palpite: p,
+        casa,
+        fora,
+        escudoCasa,
+        escudoFora,
+        placarCasa,
+        placarFora,
+        resultadoOficial,
+        acertou,
+        dataJogo,
+        estadio,
+        tituloRodada,
+        dataApostaFormatada,
+        diasRestantes,
+        isPago,
+      };
+    });
+
+    const totalAcertos15Dias = itensHistorico15Dias.filter((i) => i.acertou).length;
+    const totalFinalizados15Dias = itensHistorico15Dias.filter((i) => Boolean(i.resultadoOficial)).length;
+    const iniciaisJogador = String(perfilNomeInput || user?.nome || "JG")
+      .trim()
+      .split(/\s+/)
+      .slice(0, 2)
+      .map((s) => s[0]?.toUpperCase() || "")
+      .join("");
+
+    return (
+      <div className="min-h-screen bg-[#0A0A0A] text-white p-4 sm:p-6 pb-28 max-w-3xl mx-auto space-y-5">
+        {/* Topo de Navegação do Perfil */}
+        <header className="flex flex-wrap items-center justify-between gap-3 bg-zinc-900/95 border border-zinc-800 px-4 py-3.5 rounded-2xl shadow-xl">
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setPage("palpites")}
+              className="bg-black hover:bg-zinc-800 border border-zinc-700 text-zinc-200 hover:text-white text-xs font-bold px-3 py-2 rounded-xl cursor-pointer transition flex items-center gap-1"
+            >
+              ← Voltar para Jogos
+            </button>
+            <div>
+              <span className="text-[9px] font-black uppercase tracking-wider text-[#FF6B00] block">
+                Área do Jogador • Conta Oficial
+              </span>
+              <h1 className="text-xs sm:text-sm font-black text-white leading-tight">
+                👤 Meu Perfil & Histórico de Apostas
+              </h1>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setPage("minhasApostas")}
+              className="text-xs bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-200 px-3 py-2 rounded-xl cursor-pointer font-bold transition"
+            >
+              🎫 Bilhetes Ativos
+            </button>
+            <button
+              type="button"
+              onClick={() => setPage("classificacao")}
+              className="text-xs bg-[#FF6B00]/15 border border-[#FF6B00]/50 text-[#FF6B00] px-3 py-2 rounded-xl cursor-pointer font-black transition"
+            >
+              🏆 Ranking
+            </button>
+          </div>
+        </header>
+
+        {/* CARD 1: EDIÇÃO DO PERFIL (FOTO, NOME, CHAVE PIX E E-MAIL) */}
+        <form
+          onSubmit={salvarDadosPerfilJogador}
+          className="bg-zinc-900/95 border border-zinc-800 rounded-2xl p-5 sm:p-6 shadow-2xl space-y-5"
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-zinc-800 pb-4">
+            <div className="flex items-center gap-4">
+              <div className="relative group shrink-0">
+                {perfilFotoPreview ? (
+                  <img
+                    src={perfilFotoPreview}
+                    alt="Foto de Perfil"
+                    className="w-20 h-20 sm:w-24 sm:h-24 rounded-full object-cover border-2 border-[#FF6B00] shadow-lg"
+                  />
+                ) : (
+                  <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-full bg-gradient-to-br from-[#FF6B00] to-[#C41E3A] text-black font-black text-2xl sm:text-3xl flex items-center justify-center border-2 border-[#FF6B00] shadow-lg">
+                    {iniciaisJogador || "👤"}
+                  </div>
+                )}
+                <label
+                  htmlFor="input-upload-foto-perfil"
+                  className="absolute -bottom-1 -right-1 w-8 h-8 rounded-full bg-[#FF6B00] hover:bg-[#ff7b1a] text-black flex items-center justify-center text-sm font-black cursor-pointer shadow-md border-2 border-black transition"
+                  title="Alterar foto de perfil"
+                >
+                  📷
+                </label>
+                <input
+                  id="input-upload-foto-perfil"
+                  type="file"
+                  accept="image/*"
+                  onChange={handleUploadFotoPerfilJogador}
+                  className="hidden"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <span className="text-[10px] font-black uppercase tracking-wider bg-[#FF6B00]/15 text-[#FF6B00] border border-[#FF6B00]/40 px-2.5 py-0.5 rounded-full inline-block">
+                  Personalizar Perfil
+                </span>
+                <h2 className="text-lg sm:text-xl font-black text-white">
+                  {perfilNomeInput || user?.nome || "Jogador"}
+                </h2>
+                <p className="text-xs text-zinc-400">
+                  Envie uma foto (opcional) e atualize seu nome, chave PIX ou e-mail quando precisar.
+                </p>
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <label
+                    htmlFor="input-upload-foto-perfil"
+                    className="text-xs bg-zinc-800 hover:bg-zinc-700 border border-[#FF6B00]/60 text-[#FF6B00] font-black px-3 py-1.5 rounded-xl cursor-pointer transition flex items-center gap-1.5"
+                  >
+                    <span>📷</span>
+                    <span>
+                      {carregandoFotoPerfil
+                        ? "Carregando foto..."
+                        : perfilFotoPreview
+                        ? "Trocar Foto"
+                        : "Subir Foto de Perfil"}
+                    </span>
+                  </label>
+                  {perfilFotoPreview && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPerfilFotoPreview("");
+                        setAvisoPerfilJogador("Foto removida. Clique em 'Salvar Dados do Perfil' para confirmar.");
+                      }}
+                      className="text-xs bg-red-950/70 hover:bg-red-900 border border-red-800 text-red-300 font-bold px-3 py-1.5 rounded-xl cursor-pointer transition"
+                    >
+                      🗑️ Remover Foto
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Campos de Edição: Nome, Chave PIX e E-mail */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="sm:col-span-2">
+              <label className="block text-[11px] text-zinc-400 uppercase font-bold mb-1.5">
+                Seu Nome Completo
+              </label>
+              <input
+                type="text"
+                value={perfilNomeInput}
+                onChange={(e) => {
+                  setPerfilNomeInput(e.target.value);
+                  if (erroPerfilJogador) setErroPerfilJogador("");
+                }}
+                placeholder="Digite seu nome..."
+                required
+                className="w-full bg-black border border-zinc-800 focus:border-[#FF6B00] p-3.5 rounded-xl text-sm text-white outline-none transition"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[11px] text-zinc-400 uppercase font-bold mb-1.5">
+                Chave PIX (Para Receber Prêmios)
+              </label>
+              <input
+                type="text"
+                value={perfilPixInput}
+                onChange={(e) => {
+                  setPerfilPixInput(e.target.value);
+                  if (erroPerfilJogador) setErroPerfilJogador("");
+                }}
+                placeholder="CPF, Celular, E-mail ou Chave Aleatória..."
+                required
+                className="w-full bg-black border border-zinc-800 focus:border-[#FF6B00] p-3.5 rounded-xl text-sm text-[#FF6B00] font-mono font-bold outline-none transition"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[11px] text-zinc-400 uppercase font-bold mb-1.5">
+                Seu E-mail de Acesso
+              </label>
+              <input
+                type="email"
+                value={perfilEmailInput}
+                onChange={(e) => {
+                  setPerfilEmailInput(e.target.value);
+                  if (erroPerfilJogador) setErroPerfilJogador("");
+                }}
+                placeholder="seuemail@exemplo.com"
+                required
+                className="w-full bg-black border border-zinc-800 focus:border-[#FF6B00] p-3.5 rounded-xl text-sm text-white font-mono outline-none transition"
+              />
+            </div>
+          </div>
+
+          {erroPerfilJogador && (
+            <div className="bg-red-950/80 border border-red-600 text-red-200 p-3 rounded-xl text-xs font-bold">
+              ⚠️ {erroPerfilJogador}
+            </div>
+          )}
+
+          {avisoPerfilJogador && (
+            <div className="bg-green-950/90 border border-green-500 text-green-300 p-3 rounded-xl text-xs font-black">
+              {avisoPerfilJogador}
+            </div>
+          )}
+
+          <button
+            type="submit"
+            disabled={salvandoPerfilJogador}
+            className="w-full bg-[#FF6B00] hover:bg-[#ff7b1a] disabled:opacity-50 text-black font-black py-4 rounded-xl cursor-pointer transition text-sm uppercase tracking-wider shadow-lg shadow-[#FF6B00]/25 flex items-center justify-center gap-2"
+          >
+            <span>💾</span>
+            <span>
+              {salvandoPerfilJogador
+                ? "SALVANDO NO BANCO DE DADOS..."
+                : "SALVAR DADOS DO PERFIL (FOTO, NOME, PIX E E-MAIL)"}
+            </span>
+          </button>
+        </form>
+
+        {/* CARD 2: HISTÓRICO DE APOSTAS DO JOGADOR (RETENÇÃO DE 15 DIAS) */}
+        <div className="bg-zinc-900/95 border border-zinc-800 rounded-2xl p-3.5 sm:p-4 shadow-2xl space-y-2.5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-800 pb-2.5">
+            <div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[8px] font-black uppercase tracking-wider bg-amber-400 text-black px-1.5 py-0.5 rounded-full">
+                  ⏱️ Armazenamento de {PRAZO_RETENCAO_APOSTAS_DIAS} Dias
+                </span>
+                <span className="text-[8px] text-zinc-400 font-bold">
+                  • Exclusão automática após 15 dias
+                </span>
+              </div>
+              <h3 className="text-xs sm:text-sm font-black text-white mt-0.5">
+                📜 Histórico de Apostas do Jogador ({itensHistorico15Dias.length})
+              </h3>
+              <p className="text-[10px] text-zinc-400 mt-0.5 leading-snug">
+                Suas apostas ficam salvas por <strong>15 dias</strong> e depois são apagadas automaticamente do banco de dados.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-3 gap-1 bg-black/80 border border-zinc-800 p-1.5 rounded-lg text-center shrink-0">
+              <div className="px-1.5">
+                <div className="text-[11px] font-black text-white">{itensHistorico15Dias.length}</div>
+                <div className="text-[7px] text-zinc-400 uppercase font-bold">Apostas</div>
+              </div>
+              <div className="px-1.5 border-x border-zinc-800">
+                <div className="text-[11px] font-black text-green-400">{totalAcertos15Dias}</div>
+                <div className="text-[7px] text-zinc-400 uppercase font-bold">Acertos</div>
+              </div>
+              <div className="px-1.5">
+                <div className="text-[11px] font-black text-[#FF6B00]">
+                  {totalFinalizados15Dias > 0
+                    ? `${Math.round((totalAcertos15Dias / totalFinalizados15Dias) * 100)}%`
+                    : "—"}
+                </div>
+                <div className="text-[7px] text-zinc-400 uppercase font-bold">Aproveit.</div>
+              </div>
+            </div>
+          </div>
+
+          {itensHistorico15Dias.length === 0 ? (
+            <div className="bg-black/60 border border-dashed border-zinc-800 rounded-xl p-4 text-center space-y-1.5">
+              <div className="text-xl">🎫</div>
+              <div className="text-[11px] font-black text-white">
+                Nenhuma aposta registrada nos últimos 15 dias
+              </div>
+              <p className="text-[10px] text-zinc-400 max-w-md mx-auto">
+                Assim que você selecionar seus palpites nos jogos da rodada, eles ficarão armazenados neste histórico por 15 dias.
+              </p>
+              <button
+                type="button"
+                onClick={() => setPage("palpites")}
+                className="mt-1 bg-[#FF6B00] hover:bg-[#ff7b1a] text-black font-black text-[10px] px-3 py-1.5 rounded-lg cursor-pointer uppercase tracking-wider transition inline-flex items-center gap-1"
+              >
+                <span>⚽</span> Fazer Minha Aposta Agora
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              {itensHistorico15Dias.map((item, idx) => {
+                const textoEscolha =
+                  item.palpite.escolha === "CASA"
+                    ? `Vitória ${item.casa}`
+                    : item.palpite.escolha === "FORA"
+                    ? `Vitória ${item.fora}`
+                    : "Empate";
+
+                return (
+                  <div
+                    key={`${item.palpite.id || item.palpite.jogoId}_${idx}`}
+                    className={`rounded-lg border p-2 space-y-1.5 transition ${
+                      item.resultadoOficial
+                        ? item.acertou
+                          ? "bg-green-950/20 border-green-700/70"
+                          : "bg-red-950/15 border-red-900/50"
+                        : "bg-black/80 border-zinc-800"
+                    }`}
+                  >
+                    {/* Topo do Card da Aposta: Data, Status de Pagamento e Prazo de 15 Dias */}
+                    <div className="flex flex-wrap items-center justify-between gap-1 border-b border-zinc-800/80 pb-1 text-[9px]">
+                      <div className="flex flex-wrap items-center gap-1">
+                        <span className="font-bold text-[#FF6B00] uppercase">
+                          {item.tituloRodada}
+                        </span>
+                        <span className="text-zinc-400">• 📅 {item.dataApostaFormatada}</span>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-1">
+                        <span
+                          className={`text-[8px] font-black px-1.5 py-0.5 rounded-full border uppercase ${
+                            item.isPago
+                              ? "bg-green-950 text-green-400 border-green-600"
+                              : "bg-amber-950 text-amber-300 border-amber-700"
+                          }`}
+                        >
+                          {item.isPago ? "✓ PAGO" : "⏳ PENDENTE"}
+                        </span>
+                        <span
+                          className="text-[8px] bg-zinc-800 border border-zinc-700 text-amber-300 font-bold px-1.5 py-0.5 rounded-full"
+                          title="Esta aposta será excluída automaticamente do banco de dados após completar 15 dias"
+                        >
+                          ⏱️ Expira em {item.diasRestantes}d
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Confronto e Placar */}
+                    <div className="flex items-center justify-between gap-1.5 bg-zinc-950/90 border border-zinc-800/80 px-2 py-1.5 rounded-md">
+                      <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                        <Escudo src={item.escudoCasa} nome={item.casa} size={18} />
+                        <span className="font-bold text-[10px] sm:text-[11px] text-white truncate">
+                          {item.casa}
+                        </span>
+                      </div>
+
+                      <div className="px-1.5 py-0.5 rounded bg-black border border-zinc-800 font-mono text-[10px] font-black text-white shrink-0">
+                        {item.placarCasa !== undefined && item.placarFora !== undefined ? (
+                          <span>
+                            {item.placarCasa} <span className="text-[#FF6B00]">x</span> {item.placarFora}
+                          </span>
+                        ) : (
+                          <span className="text-zinc-400 text-[8px] font-sans uppercase">
+                            {item.dataJogo}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-1.5 flex-1 min-w-0 justify-end text-right">
+                        <span className="font-bold text-[10px] sm:text-[11px] text-white truncate">
+                          {item.fora}
+                        </span>
+                        <Escudo src={item.escudoFora} nome={item.fora} size={18} />
+                      </div>
+                    </div>
+
+                    {/* Escolha do Jogador vs Resultado Oficial */}
+                    <div className="flex flex-wrap items-center justify-between gap-1 text-[9px] sm:text-[10px]">
+                      <div>
+                        <span className="text-zinc-400">Seu Palpite: </span>
+                        <strong className="text-[#FF6B00] font-bold">{textoEscolha}</strong>
+                      </div>
+
+                      <div>
+                        {item.resultadoOficial ? (
+                          item.acertou ? (
+                            <span className="bg-green-500 text-black font-black px-1.5 py-0.5 rounded text-[8px] uppercase">
+                              ✅ ACERTOU (+1 PT)
+                            </span>
+                          ) : (
+                            <span className="bg-red-950 border border-red-700 text-red-200 font-bold px-1.5 py-0.5 rounded text-[8px] uppercase">
+                              ❌ ERROU (Resultado:{" "}
+                              {item.resultadoOficial === "CASA"
+                                ? item.casa
+                                : item.resultadoOficial === "FORA"
+                                ? item.fora
+                                : "Empate"}
+                              )
+                            </span>
+                          )
+                        ) : (
+                          <span className="bg-zinc-800 border border-zinc-700 text-zinc-300 font-bold px-1.5 py-0.5 rounded text-[8px] uppercase">
+                            ⏳ Aguardando Resultado
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
     );

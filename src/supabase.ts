@@ -465,6 +465,7 @@ export function normalizarLinhaUsuarioSupabase(rowProfile: any, rowJogador?: any
     dataEnvioComprovante: extra.dataEnvioComprovante || undefined,
     dataCadastro: extra.dataCadastro || undefined,
     timestampCadastro: extra.timestampCadastro || undefined,
+    fotoPerfil: extra.fotoPerfil || extra.avatarUrl || undefined,
     role: finalEmail === 'inhobahia29@gmail.com' ? 'admin' : extra.role || 'player',
     is_admin: finalEmail === 'inhobahia29@gmail.com' ? true : Boolean(extra.is_admin),
     updatedAt: String(extra.updatedAt || rowProfile?.created_at || rowJogador?.created_at || new Date().toISOString()),
@@ -1609,8 +1610,11 @@ export async function buscarJogosRodadaEspn(
 }
 
 // ============================================================================
-// PALPITES / APOSTAS NO SUPABASE (TABELA REAL: apostas)
+// PALPITES / APOSTAS NO SUPABASE (TABELA REAL: apostas) — RETENÇÃO DE 15 DIAS
 // ============================================================================
+export const PRAZO_RETENCAO_APOSTAS_DIAS = 15;
+export const QUINZE_DIAS_APOSTAS_MS = PRAZO_RETENCAO_APOSTAS_DIAS * 24 * 60 * 60 * 1000;
+
 export async function listarPalpitesDoSupabase(): Promise<any[]> {
   if (!hasValidSupabaseKey()) return [];
 
@@ -1618,6 +1622,8 @@ export async function listarPalpitesDoSupabase(): Promise<any[]> {
   if (!Array.isArray(rows)) return [];
 
   const mapaPalpites = new Map<string, any>();
+  const idsExpiradosParaApagar: string[] = [];
+  const agoraMs = Date.now();
 
   for (const row of rows) {
     const rawPalpite = String(row?.palpite || '').trim();
@@ -1633,13 +1639,31 @@ export async function listarPalpitesDoSupabase(): Promise<any[]> {
           parsed.__type === 'comprovante_pagamento_jogador' ||
           parsed.__type === 'deposito_confirmado' ||
           parsed.__type === 'times_bolao' ||
-          parsed.__type === 'historico_ranking_bolao'
+          parsed.__type === 'historico_ranking_bolao' ||
+          parsed.__type === 'integridade_sistema_bolao'
         ) {
           continue;
         }
         const jogadorEmail = String(parsed.jogadorEmail || '').trim().toLowerCase();
         const jogoId = String(parsed.jogoId || row.jogo_id || '');
         if (!jogadorEmail || !jogoId) continue;
+
+        const updatedAtIso = String(parsed.updatedAt || row.created_at || new Date().toISOString());
+        const tsFromIso = Date.parse(updatedAtIso);
+        const timestampMs =
+          Number(parsed.timestamp) > 0
+            ? Number(parsed.timestamp)
+            : !isNaN(tsFromIso) && tsFromIso > 0
+            ? tsFromIso
+            : agoraMs;
+
+        // Se a aposta já completou mais de 15 dias, apaga automaticamente do banco de dados
+        if (agoraMs - timestampMs > QUINZE_DIAS_APOSTAS_MS) {
+          if (row?.id) {
+            idsExpiradosParaApagar.push(String(row.id));
+          }
+          continue;
+        }
 
         const key = `${jogadorEmail}_${jogoId}`;
         mapaPalpites.set(key, {
@@ -1649,10 +1673,30 @@ export async function listarPalpitesDoSupabase(): Promise<any[]> {
           escolha: parsed.escolha || 'CASA',
           pago: Boolean(parsed.pago),
           bolaoPagoId: parsed.bolaoPagoId ? String(parsed.bolaoPagoId) : undefined,
-          updatedAt: String(parsed.updatedAt || row.created_at || new Date().toISOString()),
+          updatedAt: updatedAtIso,
+          timestamp: timestampMs,
+          dataAposta: parsed.dataAposta ? String(parsed.dataAposta) : undefined,
+          casa: parsed.casa ? String(parsed.casa) : undefined,
+          fora: parsed.fora ? String(parsed.fora) : undefined,
+          escudoCasa: parsed.escudoCasa ? String(parsed.escudoCasa) : undefined,
+          escudoFora: parsed.escudoFora ? String(parsed.escudoFora) : undefined,
+          placarCasa: parsed.placarCasa ?? undefined,
+          placarFora: parsed.placarFora ?? undefined,
+          resultadoOficial: parsed.resultadoOficial || undefined,
+          dataJogo: parsed.dataJogo ? String(parsed.dataJogo) : undefined,
+          estadio: parsed.estadio ? String(parsed.estadio) : undefined,
+          tituloBolao: parsed.tituloBolao ? String(parsed.tituloBolao) : undefined,
         });
       } catch {}
     }
+  }
+
+  if (idsExpiradosParaApagar.length > 0) {
+    supabase
+      .from('apostas')
+      .delete()
+      .in('id', idsExpiradosParaApagar)
+      .then(() => {});
   }
 
   return Array.from(mapaPalpites.values());
@@ -1666,6 +1710,15 @@ export async function upsertPalpiteInDb(p: any): Promise<void> {
   const rawId = String(p.id || `${jogadorEmail}_${jogoId}`);
   const betUuid = stringToUuid(`palpite_${rawId}`);
 
+  const updatedIso = p.updatedAt ? String(p.updatedAt) : new Date().toISOString();
+  const parsedIsoMs = Date.parse(updatedIso);
+  const tsMs =
+    Number(p.timestamp) > 0
+      ? Number(p.timestamp)
+      : !isNaN(parsedIsoMs) && parsedIsoMs > 0
+      ? parsedIsoMs
+      : Date.now();
+
   const payload = {
     __type: 'palpite',
     id: rawId,
@@ -1674,6 +1727,23 @@ export async function upsertPalpiteInDb(p: any): Promise<void> {
     escolha: p.escolha || 'CASA',
     pago: Boolean(p.pago),
     bolaoPagoId: p.pago && p.bolaoPagoId ? String(p.bolaoPagoId) : '',
+    timestamp: tsMs,
+    dataAposta:
+      p.dataAposta ||
+      `${new Date(tsMs).toLocaleDateString('pt-BR')} às ${new Date(tsMs).toLocaleTimeString('pt-BR', {
+        hour: '2-digit',
+        minute: '2-digit',
+      })}`,
+    casa: p.casa || undefined,
+    fora: p.fora || undefined,
+    escudoCasa: p.escudoCasa || undefined,
+    escudoFora: p.escudoFora || undefined,
+    placarCasa: p.placarCasa ?? undefined,
+    placarFora: p.placarFora ?? undefined,
+    resultadoOficial: p.resultadoOficial || undefined,
+    dataJogo: p.dataJogo || undefined,
+    estadio: p.estadio || undefined,
+    tituloBolao: p.tituloBolao || undefined,
     updatedAt: new Date().toISOString(),
   };
 
@@ -1702,6 +1772,83 @@ export async function deletePalpiteFromDb(emailOrId: string, jogoId?: string): P
   } catch {}
 
   triggerListenersForCollection('palpites');
+}
+
+export async function migrarEmailJogadorNoSupabase(
+  oldEmailRaw: string,
+  novoJogador: any
+): Promise<void> {
+  const oldEmail = String(oldEmailRaw || '').trim().toLowerCase();
+  const newEmail = String(novoJogador?.email || '').trim().toLowerCase();
+  if (!newEmail) return;
+
+  await upsertJogadorInDb(novoJogador);
+  if (!oldEmail || oldEmail === newEmail) return;
+
+  try {
+    const { data: rowsApostas } = await supabase.from('apostas').select('*');
+    if (Array.isArray(rowsApostas)) {
+      for (const r of rowsApostas) {
+        const raw = String(r?.palpite || '').trim();
+        if (!raw.startsWith('{')) continue;
+        try {
+          const parsed = JSON.parse(raw);
+          if (parsed.__type === 'palpite' && String(parsed.jogadorEmail || '').trim().toLowerCase() === oldEmail) {
+            await supabase.from('apostas').delete().eq('id', r.id);
+            await upsertPalpiteInDb({
+              ...parsed,
+              id: `${newEmail}_${parsed.jogoId}`,
+              jogadorEmail: newEmail,
+            });
+          } else if (
+            (parsed.__type === 'deposito_confirmado' || parsed.__type === 'comprovante_pagamento_jogador') &&
+            String(parsed.email || '').trim().toLowerCase() === oldEmail
+          ) {
+            parsed.email = newEmail;
+            parsed.nome = novoJogador.nome || parsed.nome;
+            parsed.pix = novoJogador.pix || parsed.pix;
+            parsed.telefone = novoJogador.telefone || novoJogador.pix || parsed.telefone;
+            await supabase
+              .from('apostas')
+              .update({ palpite: JSON.stringify(parsed) })
+              .eq('id', r.id);
+          } else if (parsed.__type === 'historico_ranking_bolao' && Array.isArray(parsed.ranking)) {
+            let changed = false;
+            parsed.ranking = parsed.ranking.map((rk: any) => {
+              if (String(rk?.email || '').trim().toLowerCase() === oldEmail) {
+                changed = true;
+                return {
+                  ...rk,
+                  email: newEmail,
+                  nome: novoJogador.nome || rk.nome,
+                  pix: novoJogador.pix || rk.pix,
+                };
+              }
+              return rk;
+            });
+            if (changed) {
+              await supabase
+                .from('apostas')
+                .update({ palpite: JSON.stringify(parsed) })
+                .eq('id', r.id);
+            }
+          }
+        } catch {}
+      }
+    }
+
+    // Remove registros antigos duplicados em profiles/jogadores se o UUID mudou
+    const oldUuid = stringToUuid(oldEmail);
+    const newUuid = novoJogador.uid || novoJogador.id || stringToUuid(newEmail);
+    if (oldUuid !== newUuid) {
+      await Promise.all([
+        supabase.from('profiles').delete().ilike('email', oldEmail),
+        supabase.from('jogadores').delete().eq('id', oldUuid),
+      ]);
+    }
+  } catch {}
+
+  triggerAllListeners();
 }
 
 // ============================================================================
