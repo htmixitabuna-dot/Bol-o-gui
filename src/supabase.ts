@@ -402,10 +402,10 @@ export function normalizarLinhaUsuarioSupabase(rowProfile: any, rowJogador?: any
     .slice(0, 80);
 
   const telefone = String(
-    rowProfile?.telefone ||
-      extra.telefone ||
-      extra.pix ||
+    extra.pix ||
       extra.chavePix ||
+      rowProfile?.telefone ||
+      extra.telefone ||
       (rowJogador?.whatsapp && !String(rowJogador.whatsapp).includes('@') ? rowJogador.whatsapp : '') ||
       ''
   )
@@ -697,12 +697,27 @@ export async function upsertJogadorInDb(j: any, _isNovo?: boolean): Promise<void
       .limit(1);
     if (existingProf && existingProf[0]?.id) {
       uuid = String(existingProf[0].id);
+    } else {
+      const { data: allJog } = await supabase.from('jogadores').select('id,time_coracao');
+      if (Array.isArray(allJog)) {
+        for (const r of allJog) {
+          if (typeof r?.time_coracao === 'string' && r.time_coracao.includes(email)) {
+            try {
+              const parsed = JSON.parse(r.time_coracao);
+              if (String(parsed?.email || '').trim().toLowerCase() === email && r.id) {
+                uuid = String(r.id);
+                break;
+              }
+            } catch {}
+          }
+        }
+      }
     }
   } catch {}
 
   const nome = String(j.nome || email.split('@')[0] || 'Jogador').trim().slice(0, 80);
   const pix = String(j.pix || j.chavePix || j.telefone || '').trim().slice(0, 120);
-  const telefone = String(j.telefone || pix || '').trim().slice(0, 60);
+  const telefone = String(pix || j.telefone || '').trim().slice(0, 60);
   const isExplicitUnpaid =
     j.pagou === false ||
     j.aprovado === false ||

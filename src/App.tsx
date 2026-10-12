@@ -2944,6 +2944,193 @@ export default function App() {
     mostrarAvisoAdm(`🗑️ Jogador "${nome}" foi excluído do banco de dados! Só voltará se fizer um novo cadastro.`);
   };
 
+  // Controle de Edição e Salvamento da Chave PIX do Jogador pelo ADM
+  const [editandoPixEmail, setEditandoPixEmail] = useState<string | null>(null);
+  const [novoPixJogadorInput, setNovoPixJogadorInput] = useState<string>("");
+  const [salvandoPixEmail, setSalvandoPixEmail] = useState<string | null>(null);
+
+  const iniciarEdicaoPixJogadorAdm = (email: string, pixAtual?: string) => {
+    const emailNorm = (email || "").trim().toLowerCase();
+    if (!emailNorm) return;
+    setEditandoPixEmail(emailNorm);
+    setNovoPixJogadorInput(String(pixAtual || "").trim());
+  };
+
+  const salvarChavePixJogadorAdm = async (email: string, nome: string, pixCustom?: string) => {
+    const emailNorm = (email || "").trim().toLowerCase();
+    const novaChave = String(pixCustom !== undefined ? pixCustom : novoPixJogadorInput).trim();
+    if (!novaChave) {
+      mostrarAvisoAdm("⚠️ Digite uma nova chave PIX válida antes de salvar!");
+      return;
+    }
+
+    setSalvandoPixEmail(emailNorm);
+    try {
+      let jogadorAlvo: any = null;
+      const novaListaJogadores = jogadores.map((jg: any) => {
+        if ((jg.email || "").trim().toLowerCase() === emailNorm) {
+          const atualizado = {
+            ...jg,
+            pix: novaChave,
+            chavePix: novaChave,
+            telefone: novaChave,
+            updatedAt: new Date().toISOString(),
+          };
+          jogadorAlvo = atualizado;
+          return atualizado;
+        }
+        return jg;
+      });
+
+      if (!jogadorAlvo && emailNorm) {
+        jogadorAlvo = {
+          uid: getJogadorDocId(emailNorm),
+          id: getJogadorDocId(emailNorm),
+          _docId: getJogadorDocId(emailNorm),
+          nome: nome || emailNorm.split("@")[0] || "Jogador",
+          email: emailNorm,
+          pix: novaChave,
+          chavePix: novaChave,
+          telefone: novaChave,
+          pagou: false,
+          statusPagamento: "PENDENTE",
+          updatedAt: new Date().toISOString(),
+        };
+        novaListaJogadores.push(jogadorAlvo);
+      }
+
+      setJogadores(novaListaJogadores);
+      localStorage.setItem("elite_jogadores_v11", JSON.stringify(novaListaJogadores));
+
+      if (user && (user.email || "").trim().toLowerCase() === emailNorm) {
+        const userAtualizado = {
+          ...user,
+          pix: novaChave,
+          chavePix: novaChave,
+          telefone: novaChave,
+        };
+        setUser(userAtualizado);
+        localStorage.setItem("elite_user_v11", JSON.stringify(userAtualizado));
+      }
+
+      if (jogadorAlvo) {
+        await upsertJogadorInDb(jogadorAlvo);
+      }
+
+      // Atualiza também nos históricos de ranking salvos para manter consistência
+      const historicosParaAtualizar: HistoricoRankingBolao[] = [];
+      const novoHistorico = historicoRankingBolao.map((h) => {
+        let alterou = false;
+        const novoRank = (h.ranking || []).map((r) => {
+          if ((r.email || "").trim().toLowerCase() === emailNorm) {
+            alterou = true;
+            return { ...r, pix: novaChave };
+          }
+          return r;
+        });
+        if (alterou) {
+          const hAtualizado = { ...h, ranking: novoRank };
+          historicosParaAtualizar.push(hAtualizado);
+          return hAtualizado;
+        }
+        return h;
+      });
+
+      if (historicosParaAtualizar.length > 0) {
+        setHistoricoRankingBolao(novoHistorico);
+        localStorage.setItem("elite_historico_ranking_v11", JSON.stringify(novoHistorico));
+        for (const hUp of historicosParaAtualizar) {
+          await upsertHistoricoRankingBolaoInDb(hUp).catch(() => {});
+        }
+      }
+
+      setEditandoPixEmail(null);
+      setNovoPixJogadorInput("");
+      mostrarAvisoAdm(`💾 Chave PIX de "${nome}" atualizada e salva com sucesso: ${novaChave}`);
+    } finally {
+      setSalvandoPixEmail(null);
+    }
+  };
+
+  const renderEditorChavePixAdm = (jgEmail: string, jgNome: string, pixAtual?: string) => {
+    const emailNorm = (jgEmail || "").trim().toLowerCase();
+    const isEditando = Boolean(emailNorm && editandoPixEmail === emailNorm);
+    const isSalvando = Boolean(emailNorm && salvandoPixEmail === emailNorm);
+
+    if (isEditando) {
+      return (
+        <div className="flex flex-wrap items-center gap-1.5 mt-1 bg-zinc-950 border border-[#FF6B00]/60 p-1.5 rounded-lg">
+          <span className="text-[10px] font-black text-[#FF6B00] uppercase px-1">Nova Chave PIX:</span>
+          <input
+            type="text"
+            value={novoPixJogadorInput}
+            onChange={(e) => setNovoPixJogadorInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                salvarChavePixJogadorAdm(jgEmail, jgNome);
+              } else if (e.key === "Escape") {
+                setEditandoPixEmail(null);
+                setNovoPixJogadorInput("");
+              }
+            }}
+            placeholder="CPF, Celular, E-mail ou Aleatória..."
+            autoFocus
+            className="bg-black border border-zinc-700 focus:border-[#FF6B00] rounded px-2.5 py-1 text-xs text-white font-mono outline-none min-w-[190px] flex-1"
+          />
+          <button
+            type="button"
+            disabled={isSalvando}
+            onClick={() => salvarChavePixJogadorAdm(jgEmail, jgNome)}
+            className="bg-green-600 hover:bg-green-500 disabled:opacity-50 text-black font-black text-[10px] px-3 py-1 rounded-md cursor-pointer transition flex items-center gap-1 shadow"
+          >
+            <span>💾</span> {isSalvando ? "Salvando..." : "Salvar"}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setEditandoPixEmail(null);
+              setNovoPixJogadorInput("");
+            }}
+            className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold text-[10px] px-2.5 py-1 rounded-md cursor-pointer transition"
+          >
+            Cancelar
+          </button>
+        </div>
+      );
+    }
+
+    return (
+      <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
+        <span className="text-[11px] text-zinc-400">
+          Chave PIX:{" "}
+          <strong className="font-mono text-[#FF6B00] select-all">{pixAtual || "Não informado"}</strong>
+        </span>
+        <button
+          type="button"
+          onClick={() => iniciarEdicaoPixJogadorAdm(jgEmail, pixAtual)}
+          className="text-[10px] bg-zinc-800 hover:bg-zinc-700 text-amber-300 border border-amber-500/40 px-2 py-0.5 rounded font-bold cursor-pointer transition flex items-center gap-1"
+          title="Editar e salvar nova chave PIX deste jogador"
+        >
+          <span>✏️</span> Editar PIX
+        </button>
+        {pixAtual && (
+          <button
+            type="button"
+            onClick={() => {
+              navigator.clipboard.writeText(pixAtual);
+              mostrarAvisoAdm(`📋 Chave PIX de ${jgNome} copiada!`);
+            }}
+            className="text-[10px] bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 px-2 py-0.5 rounded font-bold cursor-pointer transition"
+            title="Copiar chave PIX"
+          >
+            📋 Copiar
+          </button>
+        )}
+      </div>
+    );
+  };
+
   const enviarComprovantePremiacaoAdm = async () => {
     const nomeGanhadorLimpo = ganhadorPremiacaoNome.trim();
     if (!nomeGanhadorLimpo) {
@@ -6466,23 +6653,7 @@ export default function App() {
                                           {jg.isPago ? "PAGO" : "PENDENTE"}
                                         </span>
                                       </div>
-                                      <div className="text-[11px] text-zinc-400 mt-0.5 flex flex-wrap items-center gap-2">
-                                        <span>
-                                          PIX: <strong className="font-mono text-zinc-200 select-all">{jg.pix || "Não informado"}</strong>
-                                        </span>
-                                        {jg.pix && (
-                                          <button
-                                            type="button"
-                                            onClick={() => {
-                                              navigator.clipboard.writeText(jg.pix);
-                                              mostrarAvisoAdm(`📋 Chave PIX de ${jg.nome} copiada!`);
-                                            }}
-                                            className="text-[9px] bg-zinc-800 hover:bg-zinc-700 text-[#FF6B00] px-2 py-0.5 rounded font-bold cursor-pointer"
-                                          >
-                                            Copiar PIX
-                                          </button>
-                                        )}
-                                      </div>
+                                      {renderEditorChavePixAdm(jg.email, jg.nome, jg.pix)}
                                     </div>
                                   </div>
 
@@ -7012,9 +7183,7 @@ export default function App() {
                           </div>
 
                           <div className="text-[11px] text-zinc-300 truncate font-mono">{jg.email}</div>
-                          <div className="text-[11px] text-zinc-400">
-                            PIX: <strong className="text-[#FF6B00] font-mono select-all">{jg.pix || "Não informado"}</strong>
-                          </div>
+                          {renderEditorChavePixAdm(jg.email, jg.nome, jg.pix)}
                           <div className="flex flex-wrap items-center gap-2 text-[10px] text-zinc-400">
                             <span>📅 Enviado: {jg.dataEnvioComprovante || "Recente"}</span>
                             <span className="text-[#FF6B00] font-bold">• {palpitesJg.length} palpite(s)</span>
@@ -7162,12 +7331,9 @@ export default function App() {
                             {palpitesJg.length} palpite(s)
                           </span>
                         </div>
-                        <div className="text-[11px] text-zinc-400 flex flex-wrap gap-x-3 gap-y-0.5">
+                        <div className="text-[11px] text-zinc-400 flex flex-wrap items-center gap-x-3 gap-y-1">
                           <span>
                             E-mail: <strong className="text-zinc-200 font-mono select-all">{jg.email}</strong>
-                          </span>
-                          <span>
-                            Chave PIX: <strong className="text-[#FF6B00] font-mono select-all">{jg.pix}</strong>
                           </span>
                           {jg.dataCadastro && (
                             <span className="text-zinc-500">Cadastro: {jg.dataCadastro}</span>
@@ -7183,9 +7349,37 @@ export default function App() {
                             </a>
                           )}
                         </div>
+                        {renderEditorChavePixAdm(jg.email, jg.nome, jg.pix)}
                       </div>
 
                       <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const emailNorm = (jg.email || "").trim().toLowerCase();
+                            if (editandoPixEmail === emailNorm) {
+                              salvarChavePixJogadorAdm(jg.email, jg.nome);
+                            } else {
+                              iniciarEdicaoPixJogadorAdm(jg.email, jg.pix);
+                            }
+                          }}
+                          className={`text-[10px] px-2.5 py-1.5 rounded-lg cursor-pointer font-black transition flex items-center gap-1 ${
+                            editandoPixEmail === (jg.email || "").trim().toLowerCase()
+                              ? "bg-green-600 hover:bg-green-500 text-black shadow"
+                              : "bg-zinc-800 hover:bg-zinc-700 text-amber-300 border border-amber-500/40"
+                          }`}
+                          title="Editar ou salvar a chave PIX do jogador"
+                        >
+                          {editandoPixEmail === (jg.email || "").trim().toLowerCase() ? (
+                            <>
+                              <span>💾</span> Salvar PIX
+                            </>
+                          ) : (
+                            <>
+                              <span>✏️</span> Editar PIX
+                            </>
+                          )}
+                        </button>
                         {jg.comprovante && (
                           <>
                             <button
@@ -7469,9 +7663,7 @@ export default function App() {
                             </span>
                           </div>
 
-                          <div className="text-[11px] text-zinc-400 mt-0.5">
-                            Chave PIX: <span className="font-mono text-zinc-200 select-all font-bold">{jg.pix}</span>
-                          </div>
+                          {renderEditorChavePixAdm(jg.email, jg.nome, jg.pix)}
                         </div>
                       </div>
 
@@ -7864,9 +8056,7 @@ export default function App() {
                             </span>
                           )}
                         </div>
-                        <div className="text-xs text-zinc-400 mt-0.5">
-                          PIX: <strong className="font-mono text-zinc-200 select-all">{jg.pix}</strong>
-                        </div>
+                        {renderEditorChavePixAdm(jg.email, jg.nome, jg.pix)}
                       </div>
 
                       <div className="flex flex-wrap items-center gap-1.5">
@@ -7880,6 +8070,34 @@ export default function App() {
                             <span>⏳</span> AGUARDANDO DEPÓSITO DO BOLÃO ATUAL
                           </span>
                         )}
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const emailNorm = (jg.email || "").trim().toLowerCase();
+                            if (editandoPixEmail === emailNorm) {
+                              salvarChavePixJogadorAdm(jg.email, jg.nome);
+                            } else {
+                              iniciarEdicaoPixJogadorAdm(jg.email, jg.pix);
+                            }
+                          }}
+                          className={`text-xs px-2.5 py-1.5 rounded-lg cursor-pointer font-bold transition flex items-center gap-1 ${
+                            editandoPixEmail === (jg.email || "").trim().toLowerCase()
+                              ? "bg-green-600 hover:bg-green-500 text-black font-black shadow"
+                              : "bg-zinc-800 hover:bg-zinc-700 text-amber-300 border border-amber-500/40"
+                          }`}
+                          title="Editar ou salvar a chave PIX do jogador"
+                        >
+                          {editandoPixEmail === (jg.email || "").trim().toLowerCase() ? (
+                            <>
+                              <span>💾</span> Salvar PIX
+                            </>
+                          ) : (
+                            <>
+                              <span>✏️</span> Editar PIX
+                            </>
+                          )}
+                        </button>
 
                         {jg.comprovante && (
                           <button
