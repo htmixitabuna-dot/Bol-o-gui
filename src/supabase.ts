@@ -983,6 +983,36 @@ function normalizarNomeTimeEspn(nome: string): string {
   return n;
 }
 
+export function correspondeJogoId(jogo: any, targetJogoId?: string): boolean {
+  if (!jogo || !targetJogoId) return false;
+  const target = String(targetJogoId).trim();
+  if (!target) return false;
+  const jId = String(jogo.id || '').trim();
+  const jUuid = String(jogo.gameUuid || '').trim();
+  const jEspnId = String(jogo.espnId || '').trim();
+  if (jId === target || jUuid === target || jEspnId === target) return true;
+  const targetUuid = isUuid(target) ? target : stringToUuid(target);
+  if (jId === targetUuid || jUuid === targetUuid) return true;
+  if (jId && (isUuid(jId) ? jId : stringToUuid(jId)) === targetUuid) return true;
+  if (jEspnId && (isUuid(jEspnId) ? jEspnId : stringToUuid(jEspnId)) === targetUuid) return true;
+  return false;
+}
+
+export function obterResultadoOficialJogo(j: any): 'CASA' | 'FORA' | 'EMPATE' | undefined {
+  if (!j) return undefined;
+  if (j.resultadoOficial === 'CASA' || j.resultadoOficial === 'FORA' || j.resultadoOficial === 'EMPATE') {
+    return j.resultadoOficial;
+  }
+  if (j.encerrado && j.placarCasa !== undefined && j.placarFora !== undefined) {
+    const gc = parseInt(String(j.placarCasa), 10);
+    const gf = parseInt(String(j.placarFora), 10);
+    if (!isNaN(gc) && !isNaN(gf)) {
+      return gc > gf ? 'CASA' : gf > gc ? 'FORA' : 'EMPATE';
+    }
+  }
+  return undefined;
+}
+
 export async function sincronizarJogosDeHojeEspnComSupabase(): Promise<any[]> {
   limparCacheJogosLocal();
   const hojeIso = getHojeBrasilISO();
@@ -996,7 +1026,7 @@ export async function sincronizarJogosDeHojeEspnComSupabase(): Promise<any[]> {
       supabase.from('jogos').select('*'),
       supabase.from('apostas').select('*'),
     ]);
-    let rowsJogos = Array.isArray(resJogos.data) ? resJogos.data : [];
+    const rowsJogos = Array.isArray(resJogos.data) ? resJogos.data : [];
     const rowsApostas = Array.isArray(resApostas.data) ? resApostas.data : [];
     const metaByUuid = new Map<string, any>();
     for (const a of rowsApostas) {
@@ -1004,33 +1034,41 @@ export async function sincronizarJogosDeHojeEspnComSupabase(): Promise<any[]> {
       if (raw.startsWith('{')) {
         try {
           const p = JSON.parse(raw);
-          if (p && p.__type === 'jogo_meta' && a.jogo_id) {
-            metaByUuid.set(String(a.jogo_id), p);
+          if (p && p.__type === 'jogo_meta') {
+            const gUuid = String(a.jogo_id || p.gameUuid || stringToUuid(String(p.id || '')));
+            if (gUuid) {
+              metaByUuid.set(gUuid, p);
+            }
           }
         } catch {}
       }
     }
 
-    // Remove jogos antigos de datas passadas para não exibir confrontos já encerrados de outros dias
-    const jogosPassados = rowsJogos.filter((r) => {
-      const dtRow = String(r.data_jogo || '').slice(0, 10);
-      return /^\d{4}-\d{2}-\d{2}$/.test(dtRow) && dtRow < hojeIso;
-    });
-    if (jogosPassados.length > 0 && jogosPassados.length === rowsJogos.length) {
-      for (const antigo of jogosPassados) {
-        const gUuid = String(antigo.id || '');
-        if (gUuid) {
-          await supabase.from('apostas').delete().eq('id', stringToUuid(`jogo_meta_${gUuid}`));
-          await supabase.from('jogos').delete().eq('id', gUuid);
+    // Busca também os eventos das datas dos jogos já cadastrados no banco para manter placares finais e ranking disponíveis mesmo após virar o dia
+    const datasExtras = Array.from(
+      new Set(
+        rowsJogos
+          .map((r) => String(r.data_jogo || '').slice(0, 10))
+          .filter((dt) => /^\d{4}-\d{2}-\d{2}$/.test(dt) && dt !== hojeIso)
+      )
+    );
+    let catalogoEspnCompleto = [...todosJogosEspn];
+    if (datasExtras.length > 0) {
+      const listasExtras = await Promise.all(
+        datasExtras.map((dt) => buscarJogosRodadaEspn(dt, true).catch(() => []))
+      );
+      for (const l of listasExtras) {
+        if (Array.isArray(l)) {
+          catalogoEspnCompleto = [...catalogoEspnCompleto, ...l];
         }
       }
-      rowsJogos = [];
     }
 
     if (jogosHojeEspn.length > 0 && rowsJogos.length === 0) {
       for (const item of jogosHojeEspn.slice(0, 10)) {
         await upsertJogoInDb({
           id: item.id,
+          espnId: item.id,
           casa: item.time_casa || item.casa,
           fora: item.time_fora || item.fora,
           escudoCasa: item.escudoCasaUrl || buscarEscudoPadrao(item.time_casa || item.casa),
@@ -1050,7 +1088,7 @@ export async function sincronizarJogosDeHojeEspnComSupabase(): Promise<any[]> {
           tituloBolao: 'Próximos Jogos • Brasileirão (ESPN)',
         });
       }
-    } else if (todosJogosEspn.length > 0 && rowsJogos.length > 0) {
+    } else if (catalogoEspnCompleto.length > 0 && rowsJogos.length > 0) {
       const paresNoBanco = new Set<string>();
       // Atualiza placar ao vivo, minuto e encerramento dos jogos correspondentes já presentes no bolão
       for (const r of rowsJogos) {
@@ -1061,15 +1099,23 @@ export async function sincronizarJogosDeHojeEspnComSupabase(): Promise<any[]> {
         if (casaNorm && foraNorm) {
           paresNoBanco.add(`${casaNorm}__${foraNorm}`);
         }
-        const matchEspn = todosJogosEspn.find(
+        const matchEspn = catalogoEspnCompleto.find(
           (ev) =>
             normalizarNomeTimeEspn(ev.time_casa || ev.casa || '') === casaNorm &&
             normalizarNomeTimeEspn(ev.time_fora || ev.fora || '') === foraNorm
         );
         if (matchEspn) {
+          const idPreservado =
+            meta.espnId ||
+            (meta.id && !isUuid(meta.id) ? meta.id : '') ||
+            matchEspn.id ||
+            meta.id ||
+            gId;
           await upsertJogoInDb({
             ...meta,
-            id: meta.id || gId,
+            id: idPreservado,
+            espnId: matchEspn.id || meta.espnId || undefined,
+            gameUuid: gId,
             casa: meta.casa || r.time_casa,
             fora: meta.fora || r.time_fora,
             escudoCasa: meta.escudoCasa || matchEspn.escudoCasaUrl || buscarEscudoPadrao(meta.casa || r.time_casa),
@@ -1102,6 +1148,7 @@ export async function sincronizarJogosDeHojeEspnComSupabase(): Promise<any[]> {
         for (const item of aoVivoFaltando.slice(0, vagas)) {
           await upsertJogoInDb({
             id: item.id,
+            espnId: item.id,
             casa: item.time_casa || item.casa,
             fora: item.time_fora || item.fora,
             escudoCasa: item.escudoCasaUrl || buscarEscudoPadrao(item.time_casa || item.casa),
@@ -1170,14 +1217,25 @@ export async function listarJogosDoSupabase(): Promise<any[]> {
     const fora = String(meta.fora || row.time_fora || '').trim();
     if (!casa || !fora) continue;
 
-    const id = String(meta.id || gUuid);
+    const espnId = String(meta.espnId || (meta.id && !isUuid(meta.id) ? meta.id : '') || '');
+    const id = String(espnId || meta.id || gUuid);
     const escudoCasa = String(meta.escudoCasa || buscarEscudoPadrao(casa));
     const escudoFora = String(meta.escudoFora || buscarEscudoPadrao(fora));
+    const placarCasa = meta.placarCasa ?? meta.placar_casa;
+    const placarFora = meta.placarFora ?? meta.placar_fora;
+    const encerrado = Boolean(meta.encerrado);
+    const resCalculado = obterResultadoOficialJogo({
+      resultadoOficial: meta.resultadoOficial,
+      encerrado,
+      placarCasa,
+      placarFora,
+    });
 
     // Todo jogo salvo na tabela 'jogos' do Supabase fica 100% disponível tanto no ADM quanto na Área do Jogador
-    mapaJogos.set(id, {
+    mapaJogos.set(gUuid, {
       ...meta,
       id,
+      espnId: espnId || undefined,
       gameUuid: gUuid,
       casa,
       fora,
@@ -1186,13 +1244,13 @@ export async function listarJogosDoSupabase(): Promise<any[]> {
       data: String(meta.data || meta.horario || row.data_jogo || '19:30'),
       data_jogo: dataJogoRow || hojeIso,
       estadio: String(meta.estadio || 'Brasileirão Série A'),
-      placarCasa: meta.placarCasa ?? meta.placar_casa,
-      placarFora: meta.placarFora ?? meta.placar_fora,
+      placarCasa,
+      placarFora,
       aoVivo: Boolean(meta.aoVivo),
-      encerrado: Boolean(meta.encerrado),
+      encerrado,
       tempoJogo: String(meta.tempoJogo || ''),
       statusDetalhe: String(meta.statusDetalhe || meta.status || ''),
-      resultadoOficial: meta.resultadoOficial || undefined,
+      resultadoOficial: resCalculado,
       publicado: true,
       iniciadoManualAdm: Boolean(meta.iniciadoManualAdm),
       desbloqueadoManualAdm: Boolean(meta.desbloqueadoManualAdm),
@@ -1207,11 +1265,13 @@ export async function listarJogosDoSupabase(): Promise<any[]> {
 
 export async function upsertJogoInDb(j: any): Promise<void> {
   limparCacheJogosLocal();
-  const id = String(j.id || `jg_${Date.now()}`).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64);
-  if (!id) return;
+  const rawId = String(j.id || `jg_${Date.now()}`).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64);
+  if (!rawId) return;
 
   const hojeIso = getHojeBrasilISO();
-  const gameUuid = isUuid(id) ? id : stringToUuid(id);
+  const gameUuid = j.gameUuid && isUuid(j.gameUuid) ? String(j.gameUuid) : isUuid(rawId) ? rawId : stringToUuid(rawId);
+  const espnId = String(j.espnId || (!isUuid(rawId) ? rawId : '') || '').trim() || undefined;
+  const id = espnId || rawId;
   const casa = String(j.casa || j.time_casa || '').trim().slice(0, 60);
   const fora = String(j.fora || j.time_fora || '').trim().slice(0, 60);
   const escudoCasa = String(j.escudoCasa || buscarEscudoPadrao(casa)).trim();
@@ -1228,7 +1288,12 @@ export async function upsertJogoInDb(j: any): Promise<void> {
   const encerrado = Boolean(j.encerrado);
   const tempoJogo = String(j.tempoJogo || '');
   const statusDetalhe = String(j.statusDetalhe || j.status || '');
-  const resultadoOficial = j.resultadoOficial || undefined;
+  const resultadoOficial = obterResultadoOficialJogo({
+    resultadoOficial: j.resultadoOficial,
+    encerrado,
+    placarCasa,
+    placarFora,
+  });
   const iniciadoManualAdm = Boolean(j.iniciadoManualAdm);
   const desbloqueadoManualAdm = Boolean(j.desbloqueadoManualAdm);
   const updatedAt = new Date().toISOString();
@@ -1236,6 +1301,7 @@ export async function upsertJogoInDb(j: any): Promise<void> {
   const fullJogoMeta = {
     __type: 'jogo_meta',
     id,
+    espnId,
     gameUuid,
     casa,
     fora,

@@ -55,6 +55,8 @@ import {
   toBrasilDateAndTime,
   limparCacheJogosLocal,
   MENSAGEM_DATA_FIFA,
+  correspondeJogoId,
+  obterResultadoOficialJogo,
 } from './supabase';
 
 // ============================================================================
@@ -438,12 +440,24 @@ export default function App() {
 
   const getEscolhaDoJogo = (j: Jogo): EscolhaResultado | undefined => {
     const gUuid = (j as any)?.gameUuid;
+    const espnId = (j as any)?.espnId;
     const chaveTime = `${(j.casa || "").trim().toLowerCase()}_x_${(j.fora || "").trim().toLowerCase()}`;
-    return (
+    const tempHit =
       escolhasTemp[j.id] ||
       (gUuid ? escolhasTemp[gUuid] : undefined) ||
-      escolhasTemp[chaveTime]
-    );
+      (espnId ? escolhasTemp[espnId] : undefined) ||
+      escolhasTemp[chaveTime];
+    if (tempHit) return tempHit;
+    if (!modoNovaAposta && user?.email) {
+      const emailLogado = (user.email || "").trim().toLowerCase();
+      const pSalvo = palpites.find(
+        (p) =>
+          (p.jogadorEmail || "").trim().toLowerCase() === emailLogado &&
+          correspondeJogoId(j, p.jogoId)
+      );
+      if (pSalvo?.escolha) return pSalvo.escolha;
+    }
+    return undefined;
   };
 
   const selecionarOpcaoJogo = (j: Jogo, escolha: EscolhaResultado) => {
@@ -453,6 +467,7 @@ export default function App() {
       return;
     }
     const gUuid = (j as any)?.gameUuid;
+    const espnId = (j as any)?.espnId;
     const chaveTime = `${(j.casa || "").trim().toLowerCase()}_x_${(j.fora || "").trim().toLowerCase()}`;
     setEscolhasTemp((prev) => {
       const next: Record<string, EscolhaResultado> = {
@@ -462,6 +477,9 @@ export default function App() {
       };
       if (gUuid) {
         next[gUuid] = escolha;
+      }
+      if (espnId) {
+        next[espnId] = escolha;
       }
       try {
         localStorage.setItem("elite_escolhas_temp_v11", JSON.stringify(next));
@@ -1220,6 +1238,23 @@ export default function App() {
             next[p.jogoId] = p.escolha;
             alterou = true;
           }
+          const matchJogo = jogos.find((jg) => correspondeJogoId(jg, p.jogoId));
+          if (matchJogo) {
+            if (matchJogo.id && !next[matchJogo.id]) {
+              next[matchJogo.id] = p.escolha;
+              alterou = true;
+            }
+            const gUuid = (matchJogo as any)?.gameUuid;
+            if (gUuid && !next[gUuid]) {
+              next[gUuid] = p.escolha;
+              alterou = true;
+            }
+            const chaveTime = `${(matchJogo.casa || "").trim().toLowerCase()}_x_${(matchJogo.fora || "").trim().toLowerCase()}`;
+            if (chaveTime && !next[chaveTime]) {
+              next[chaveTime] = p.escolha;
+              alterou = true;
+            }
+          }
         });
         if (alterou) {
           try {
@@ -1230,7 +1265,7 @@ export default function App() {
         return prev;
       });
     }
-  }, [user?.email, palpites, modoNovaAposta]);
+  }, [user?.email, palpites, jogos, modoNovaAposta]);
 
   useEffect(() => {
     if (user) {
@@ -3141,10 +3176,10 @@ export default function App() {
     await resetarPagamentosDaRodadaNoSupabase(novoCicloId, idsParaEncerrar).catch(() => {});
   };
 
-  // Define resultado oficial de um jogo pelo ADM e salva automaticamente os 3 primeiros + zera o saldo e lista de depositantes quando todos os jogos da rodada finalizam
+  // Define resultado oficial de um jogo pelo ADM e salva automaticamente o ranking com os dados das partidas quando todos os jogos da rodada finalizam
   const definirResultadoJogo = async (jogoId: string, res: EscolhaResultado) => {
     const atualizados = jogos.map((j) => {
-      if (j.id === jogoId) {
+      if (correspondeJogoId(j, jogoId)) {
         const novoRes = j.resultadoOficial === res ? undefined : res;
         return {
           ...j,
@@ -3159,14 +3194,12 @@ export default function App() {
     const publicadosAtualizados = atualizados.filter((j) => j.publicado !== false);
     const todosDefinidos =
       publicadosAtualizados.length > 0 &&
-      publicadosAtualizados.every((j) => Boolean(j.resultadoOficial));
+      publicadosAtualizados.every((j) => Boolean(obterResultadoOficialJogo(j)));
 
     if (todosDefinidos) {
-      const bolaoIdFim = publicadosAtualizados.find((j) => j.bolaoId)?.bolaoId || cicloBolaoAtivoId;
       await salvarRankingBolaoNoHistorico(true, false, publicadosAtualizados).catch(() => {});
-      await zerarSaldoEDepositantesAposRodada(bolaoIdFim).catch(() => {});
       mostrarAvisoAdm(
-        "🏆 Rodada finalizada! Top 3 salvo no Histórico, saldo zerado e lista de depositantes limpa para o próximo bolão!"
+        "🏆 Rodada finalizada! Ranking de jogadores, maior pontuador e dados das partidas atualizados e salvos no Histórico!"
       );
     }
   };
@@ -3174,16 +3207,7 @@ export default function App() {
   const confirmarResultadosETriagem = async () => {
     const jogosFinalizados = jogos.map((j) => {
       if (j.publicado === false) return j;
-      let resOficial = j.resultadoOficial;
-      if (!resOficial && j.placarCasa !== undefined && j.placarFora !== undefined) {
-        const numC = Number(j.placarCasa);
-        const numF = Number(j.placarFora);
-        if (!isNaN(numC) && !isNaN(numF)) {
-          if (numC > numF) resOficial = "CASA";
-          else if (numF > numC) resOficial = "FORA";
-          else resOficial = "EMPATE";
-        }
-      }
+      const resOficial = obterResultadoOficialJogo(j) || j.resultadoOficial;
       return {
         ...j,
         resultadoOficial: resOficial,
@@ -3194,11 +3218,9 @@ export default function App() {
     setTriagemSalvaAviso(true);
     setTimeout(() => setTriagemSalvaAviso(false), 5000);
     const publicadosFinalizados = jogosFinalizados.filter((j) => j.publicado !== false);
-    const bolaoIdFim = publicadosFinalizados.find((j) => j.bolaoId)?.bolaoId || cicloBolaoAtivoId;
     await salvarRankingBolaoNoHistorico(true, false, publicadosFinalizados).catch(() => {});
-    await zerarSaldoEDepositantesAposRodada(bolaoIdFim).catch(() => {});
     mostrarAvisoAdm(
-      "🏆 Rodada finalizada! Top 3 salvo no Histórico, saldo zerado e participantes removidos da lista de depositantes!"
+      "🏆 Resultados confirmados! Ranking da rodada, maior pontuador e histórico atualizados com sucesso!"
     );
   };
 
@@ -3251,45 +3273,89 @@ export default function App() {
   // TRIAGEM AUTOMÁTICA DE APOSTAS & RANKING DE GANHADORES
   // =========================================================================
   const calcularTriagem = () => {
-    const jogosEncerrados = jogosPublicados.filter((j) => j.resultadoOficial);
+    const jogosEncerrados = jogosPublicados.filter((j) => Boolean(obterResultadoOficialJogo(j) || j.encerrado));
+    const bolaoIdAtualTriagem =
+      jogosPublicados.find((j) => j.bolaoId)?.bolaoId || "bolao_1";
+    const histRodadaAtual = historicoRankings.find(
+      (h) => h.bolaoId === bolaoIdAtualTriagem || h.id === `rank_${bolaoIdAtualTriagem}`
+    );
 
     const ranking = jogadores.map((jg) => {
       const emailJgNorm = (jg.email || "").trim().toLowerCase();
       const apostasJogador = palpites.filter(
         (p) => (p.jogadorEmail || "").trim().toLowerCase() === emailJgNorm
       );
-      const isPago = isParticipanteDepositanteNoBolaoAtual(jg);
+      const prevHistItem = histRodadaAtual?.ranking?.find(
+        (r) => (r.email || "").trim().toLowerCase() === emailJgNorm
+      );
 
       let pontos = 0;
-      let totalApostas = apostasJogador.length;
+      let apostasNaRodadaCount = 0;
+      const partidasApostadas: HistoricoRankingPartidaApostada[] = [];
 
-      apostasJogador.forEach((p) => {
-        const jgCorrespondente = jogosPublicados.find((j) => j.id === p.jogoId);
-        if (jgCorrespondente && jgCorrespondente.resultadoOficial) {
-          if (p.escolha === jgCorrespondente.resultadoOficial) {
-            pontos += 1;
-          }
+      jogosPublicados.forEach((match) => {
+        const palpiteMatch = apostasJogador.find((ap) => correspondeJogoId(match, ap.jogoId));
+        if (!palpiteMatch) return;
+        apostasNaRodadaCount += 1;
+        const resOficial = obterResultadoOficialJogo(match);
+        const acertou = Boolean(resOficial && palpiteMatch.escolha === resOficial);
+        if (acertou) {
+          pontos += 1;
         }
+        partidasApostadas.push({
+          jogoId: String(match.id),
+          casa: match.casa,
+          fora: match.fora,
+          escudoCasa: match.escudoCasa,
+          escudoFora: match.escudoFora,
+          placarCasa: match.placarCasa ?? 0,
+          placarFora: match.placarFora ?? 0,
+          escolha: palpiteMatch.escolha,
+          resultadoOficial: resOficial,
+          acertou,
+          data: match.data,
+          estadio: match.estadio,
+        });
       });
+
+      if (apostasNaRodadaCount === 0 && prevHistItem && (prevHistItem.pontos > 0 || (prevHistItem.partidasApostadas?.length || 0) > 0)) {
+        pontos = prevHistItem.pontos;
+        apostasNaRodadaCount = prevHistItem.totalApostas || prevHistItem.partidasApostadas?.length || 0;
+        if (Array.isArray(prevHistItem.partidasApostadas)) {
+          partidasApostadas.push(...prevHistItem.partidasApostadas);
+        }
+      }
+
+      const isPago =
+        isParticipanteDepositanteNoBolaoAtual(jg) ||
+        Boolean(prevHistItem?.isPago) ||
+        Boolean(apostasNaRodadaCount > 0 && jg.timestampDeposito && jg.comprovante);
+
+      const totalApostas = apostasNaRodadaCount > 0 ? apostasNaRodadaCount : apostasJogador.length;
 
       return {
         ...jg,
         pontos,
         totalApostas,
+        apostasNaRodadaCount,
         isPago,
         apostas: apostasJogador,
+        partidasApostadas,
       };
     });
 
-    // Ordenação: 1º por pontos (maior para menor), depois quem tem comprovante em análise/anexo ou pago
+    // Ordenação: 1º por pontos na rodada (maior para menor), 2º quem apostou nos jogos da rodada, 3º quem está pago ou com comprovante
     ranking.sort((a, b) => {
       if (b.pontos !== a.pontos) return b.pontos - a.pontos;
+      if ((b.apostasNaRodadaCount || 0) !== (a.apostasNaRodadaCount || 0)) {
+        return (b.apostasNaRodadaCount || 0) - (a.apostasNaRodadaCount || 0);
+      }
+      if (a.isPago && !b.isPago) return -1;
+      if (!a.isPago && b.isPago) return 1;
       const aComp = Boolean(a.comprovante && !a.isPago);
       const bComp = Boolean(b.comprovante && !b.isPago);
       if (aComp && !bComp) return -1;
       if (!aComp && bComp) return 1;
-      if (a.isPago && !b.isPago) return -1;
-      if (!a.isPago && b.isPago) return 1;
       return (a.nome || "").localeCompare(b.nome || "");
     });
 
@@ -3382,7 +3448,27 @@ export default function App() {
   const premio2 = 0;
   const premio3 = 0;
 
-  // Salva automaticamente no Histórico Permanente SOMENTE os 3 primeiros colocados (1º, 2º e 3º) com os dados das partidas ao término da rodada
+  // Dados preservados da rodada atual/última rodada para exibição permanente no Ranking
+  const bolaoIdRodadaExibida =
+    jogosPublicados.find((j) => j.bolaoId)?.bolaoId || "bolao_1";
+  const historicoRodadaExibida =
+    historicoRankings.find(
+      (h) => h.bolaoId === bolaoIdRodadaExibida || h.id === `rank_${bolaoIdRodadaExibida}`
+    ) || historicoRankings[0];
+  const premio80RankingExibido =
+    premio80 > 0
+      ? premio80
+      : Number(historicoRodadaExibida?.premioTotal80 || historicoRodadaExibida?.premio1 || 0);
+  const maiorPontuacaoRodada = rankingGanhadores.reduce(
+    (max, jg) => (jg.pontos > max ? jg.pontos : max),
+    0
+  );
+  const campeoesMaiorPontuacao =
+    maiorPontuacaoRodada > 0
+      ? rankingGanhadores.filter((jg) => jg.pontos === maiorPontuacaoRodada)
+      : [];
+
+  // Salva automaticamente no Histórico Permanente os colocados da rodada com os dados das partidas ao término da rodada
   const salvarRankingBolaoNoHistorico = async (
     modoAuto = false,
     criarNovoSnapshot = false,
@@ -3405,44 +3491,9 @@ export default function App() {
 
       if (jogosBase.length === 0) return;
 
-      const jogosEncerradosCount = jogosBase.filter((j) => Boolean(j.resultadoOficial || j.encerrado)).length;
-
-      // Calcula pontuação atualizada contra jogosBase para garantir precisão imediata ao finalizar a rodada
-      const rankingCalculado = jogadores
-        .map((jg) => {
-          const apostasJogador = palpites.filter((p) => p.jogadorEmail === jg.email);
-          const isPago =
-            jg.status_pagamento === "pago" ||
-            jg.aprovado === true ||
-            jg.statusPagamento === "APROVADO" ||
-            apostasJogador.some((p) => p.pago);
-
-          let pontos = 0;
-          const totalApostas = apostasJogador.length;
-
-          apostasJogador.forEach((p) => {
-            const jgCorrespondente = jogosBase.find((j) => j.id === p.jogoId);
-            if (jgCorrespondente && jgCorrespondente.resultadoOficial) {
-              if (p.escolha === jgCorrespondente.resultadoOficial) {
-                pontos += 1;
-              }
-            }
-          });
-
-          return {
-            ...jg,
-            pontos,
-            totalApostas,
-            isPago,
-            apostas: apostasJogador,
-          };
-        })
-        .sort((a, b) => {
-          if (b.pontos !== a.pontos) return b.pontos - a.pontos;
-          if (a.isPago && !b.isPago) return -1;
-          if (!a.isPago && b.isPago) return 1;
-          return (a.nome || "").localeCompare(b.nome || "");
-        });
+      const jogosEncerradosCount = jogosBase.filter((j) =>
+        Boolean(obterResultadoOficialJogo(j) || j.encerrado)
+      ).length;
 
       const bolaoIdBase =
         jogosBase.find((j) => j.bolaoId)?.bolaoId ||
@@ -3454,6 +3505,88 @@ export default function App() {
         : `rank_${bolaoIdBase}`;
 
       const registroExistente = historicoRankings.find((h) => h.id === idRegistro);
+
+      // Calcula pontuação atualizada contra jogosBase usando correspondeJogoId para garantir 100% de precisão entre IDs ESPN e UUIDs
+      const rankingCalculado = jogadores
+        .map((jg) => {
+          const emailJgNorm = (jg.email || "").trim().toLowerCase();
+          const apostasJogador = palpites.filter(
+            (p) => (p.jogadorEmail || "").trim().toLowerCase() === emailJgNorm
+          );
+          const prevRankItem = registroExistente?.ranking?.find(
+            (r) => (r.email || "").trim().toLowerCase() === emailJgNorm
+          );
+
+          let pontos = 0;
+          let apostasNaRodadaCount = 0;
+          const partidasApostadas: HistoricoRankingPartidaApostada[] = [];
+
+          jogosBase.forEach((match) => {
+            const palpiteMatch = apostasJogador.find((ap) => correspondeJogoId(match, ap.jogoId));
+            if (!palpiteMatch) return;
+            apostasNaRodadaCount += 1;
+            const resOficial = obterResultadoOficialJogo(match);
+            const acertou = Boolean(resOficial && palpiteMatch.escolha === resOficial);
+            if (acertou) {
+              pontos += 1;
+            }
+            partidasApostadas.push({
+              jogoId: String(match.id),
+              casa: match.casa,
+              fora: match.fora,
+              escudoCasa: match.escudoCasa,
+              escudoFora: match.escudoFora,
+              placarCasa: match.placarCasa ?? 0,
+              placarFora: match.placarFora ?? 0,
+              escolha: palpiteMatch.escolha,
+              resultadoOficial: resOficial,
+              acertou,
+              data: match.data,
+              estadio: match.estadio,
+            });
+          });
+
+          if (
+            apostasNaRodadaCount === 0 &&
+            prevRankItem &&
+            (prevRankItem.pontos > 0 || (prevRankItem.partidasApostadas?.length || 0) > 0)
+          ) {
+            pontos = prevRankItem.pontos;
+            apostasNaRodadaCount = prevRankItem.totalApostas || prevRankItem.partidasApostadas?.length || 0;
+            if (Array.isArray(prevRankItem.partidasApostadas)) {
+              partidasApostadas.push(...prevRankItem.partidasApostadas);
+            }
+          }
+
+          const isPago =
+            jg.pagou === true ||
+            jg.status_pagamento === "pago" ||
+            jg.aprovado === true ||
+            jg.statusPagamento === "APROVADO" ||
+            Boolean(prevRankItem?.isPago) ||
+            Boolean(apostasNaRodadaCount > 0 && jg.timestampDeposito && jg.comprovante) ||
+            apostasJogador.some((p) => p.pago);
+
+          return {
+            ...jg,
+            pontos,
+            totalApostas: apostasNaRodadaCount,
+            apostasNaRodadaCount,
+            isPago,
+            apostas: apostasJogador,
+            partidasApostadas,
+          };
+        })
+        .sort((a, b) => {
+          if (b.pontos !== a.pontos) return b.pontos - a.pontos;
+          if ((b.apostasNaRodadaCount || 0) !== (a.apostasNaRodadaCount || 0)) {
+            return (b.apostasNaRodadaCount || 0) - (a.apostasNaRodadaCount || 0);
+          }
+          if (a.isPago && !b.isPago) return -1;
+          if (!a.isPago && b.isPago) return 1;
+          return (a.nome || "").localeCompare(b.nome || "");
+        });
+
       const numeroRodadaSequencial = registroExistente
         ? undefined
         : historicoRankings.length + 1;
@@ -3465,93 +3598,104 @@ export default function App() {
         `Bolão #${numeroRodadaSequencial || historicoRankings.length + 1} • Rodada ${new Date().toLocaleDateString("pt-BR")}`;
 
       // Preserva valores financeiros caso o saldo da rodada já tenha sido zerado após finalizar
-      const totalHist = total > 0 ? total : Number(registroExistente?.totalArrecadado) || 0;
-      const premio80Hist = premio80 > 0 ? premio80 : Number(registroExistente?.premioTotal80) || 0;
+      const pagosCalculadosNaRodada = rankingCalculado.filter(
+        (jg) => jg.isPago && (jg.apostasNaRodadaCount > 0 || jg.pontos > 0)
+      ).length;
+      const pagosHist =
+        pagos > 0
+          ? pagos
+          : Number(registroExistente?.totalPagos) || pagosCalculadosNaRodada || 0;
+      const totalHist =
+        total > 0
+          ? total
+          : Number(registroExistente?.totalArrecadado) || pagosHist * valorCotaNumerico || 0;
+      const premio80Hist =
+        premio80 > 0
+          ? premio80
+          : Number(registroExistente?.premioTotal80) || totalHist * 0.8 || 0;
       const premio1Hist =
         premio1 > 0
           ? premio1
-          : Number(registroExistente?.premioTotal80 || registroExistente?.premio1) || 0;
+          : Number(registroExistente?.premioTotal80 || registroExistente?.premio1) || premio80Hist || 0;
       const premio2Hist = 0;
       const premio3Hist = 0;
-      const pagosHist = pagos > 0 ? pagos : Number(registroExistente?.totalPagos) || 0;
 
-      // SOMENTE OS 3 PRIMEIROS COLOCADOS (1º, 2º e 3º lugar) + DADOS DAS PARTIDAS
-      const top3Ganhadores = rankingCalculado.slice(0, 3);
+      // Participantes que efetivamente apostaram ou pontuaram na rodada (evita salvar contas sem apostas com 0 pts)
+      const participantesAtivosNaRodada = rankingCalculado.filter(
+        (jg) => jg.pontos > 0 || (jg.apostasNaRodadaCount || 0) > 0
+      );
+      const baseParaSalvar =
+        participantesAtivosNaRodada.length > 0
+          ? participantesAtivosNaRodada
+          : rankingCalculado.slice(0, 3);
 
-      const rankingSnapshot: HistoricoRankingJogadorItem[] = top3Ganhadores.map((jg, index) => {
-        const isPrimeiro = index === 0 && jg.pontos > 0;
-        const prevRankItem = registroExistente?.ranking?.find(
-          (r) => (r.email || "").toLowerCase() === (jg.email || "").toLowerCase()
-        );
-        const foiPagoNaRodada = Boolean(jg.isPago || prevRankItem?.isPago);
-        let premioEstimado = 0;
-        if (foiPagoNaRodada && isPrimeiro) {
-          premioEstimado = premio1Hist;
-        }
+      const maxPtsNovo = baseParaSalvar.reduce((m, x) => (x.pontos > m ? x.pontos : m), 0);
+      const maxPtsAntigo = (registroExistente?.ranking || []).reduce(
+        (m, x) => ((x.pontos || 0) > m ? x.pontos || 0 : m),
+        0
+      );
 
-        const partidasApostadas: HistoricoRankingPartidaApostada[] = jogosBase
-          .map((match) => {
-            const palpiteMatch = (jg.apostas || []).find((ap: Palpite) => ap.jogoId === match.id);
-            if (!palpiteMatch) return null;
-            const resOficial = match.resultadoOficial;
-            return {
-              jogoId: String(match.id),
-              casa: match.casa,
-              fora: match.fora,
-              escudoCasa: match.escudoCasa,
-              escudoFora: match.escudoFora,
-              placarCasa: match.placarCasa ?? 0,
-              placarFora: match.placarFora ?? 0,
-              escolha: palpiteMatch.escolha,
-              resultadoOficial: resOficial,
-              acertou: Boolean(resOficial && palpiteMatch.escolha === resOficial),
-              data: match.data,
-              estadio: match.estadio,
-            };
-          })
-          .filter(Boolean) as HistoricoRankingPartidaApostada[];
+      // Se já existia um histórico com pontos > 0 e por algum motivo a leitura atual vier zerada, preserva o ranking com pontos
+      let rankingSnapshot: HistoricoRankingJogadorItem[];
+      if (maxPtsAntigo > 0 && maxPtsNovo === 0 && registroExistente?.ranking?.length) {
+        rankingSnapshot = registroExistente.ranking;
+      } else {
+        const qtdEmpatadosNoTopo =
+          maxPtsNovo > 0
+            ? baseParaSalvar.filter((jg) => jg.pontos === maxPtsNovo && jg.isPago).length || 1
+            : 1;
+        rankingSnapshot = baseParaSalvar.map((jg, index) => {
+          const isPrimeiro = jg.pontos > 0 && jg.pontos === maxPtsNovo;
+          let premioEstimado = 0;
+          if (jg.isPago && isPrimeiro) {
+            premioEstimado = premio1Hist / qtdEmpatadosNoTopo;
+          }
 
+          return {
+            posicao: index + 1,
+            nome: jg.nome || "Jogador",
+            email: jg.email || "",
+            pix: jg.pix || "",
+            pontos: jg.pontos || 0,
+            totalApostas: jg.totalApostas || 0,
+            isPago: Boolean(jg.isPago),
+            premioEstimado: Number(premioEstimado.toFixed(2)),
+            partidasApostadas: jg.partidasApostadas || [],
+          };
+        });
+      }
+
+      const jogosSnapshot: HistoricoRankingJogoItem[] = jogosBase.map((j) => {
+        const resOficial = obterResultadoOficialJogo(j);
         return {
-          posicao: index + 1,
-          nome: jg.nome || "Jogador",
-          email: jg.email || "",
-          pix: jg.pix || "",
-          pontos: jg.pontos || 0,
-          totalApostas: jg.totalApostas || 0,
-          isPago: foiPagoNaRodada,
-          premioEstimado: Number(premioEstimado.toFixed(2)),
-          partidasApostadas,
+          id: String(j.id),
+          casa: j.casa,
+          fora: j.fora,
+          escudoCasa: j.escudoCasa,
+          escudoFora: j.escudoFora,
+          placarCasa: j.placarCasa ?? 0,
+          placarFora: j.placarFora ?? 0,
+          resultadoOficial: resOficial,
+          data: j.data,
+          data_jogo: j.data_jogo,
+          estadio: j.estadio,
+          encerrado: Boolean(j.encerrado || resOficial),
         };
       });
-
-      const jogosSnapshot: HistoricoRankingJogoItem[] = jogosBase.map((j) => ({
-        id: String(j.id),
-        casa: j.casa,
-        fora: j.fora,
-        escudoCasa: j.escudoCasa,
-        escudoFora: j.escudoFora,
-        placarCasa: j.placarCasa ?? 0,
-        placarFora: j.placarFora ?? 0,
-        resultadoOficial: j.resultadoOficial,
-        data: j.data,
-        data_jogo: j.data_jogo,
-        estadio: j.estadio,
-        encerrado: Boolean(j.encerrado || j.resultadoOficial),
-      }));
 
       const novoItemHistorico: HistoricoRankingBolaoItem = {
         id: idRegistro,
         bolaoId: bolaoIdBase,
         tituloBolao: tituloFinal,
-        dataRodada: dataFormatada,
-        timestamp: agora,
+        dataRodada: registroExistente?.dataRodada || dataFormatada,
+        timestamp: registroExistente?.timestamp || agora,
         valorCota: Number(valorCotaNumerico.toFixed(2)),
         totalArrecadado: Number(totalHist.toFixed(2)),
         premioTotal80: Number(premio80Hist.toFixed(2)),
         premio1: Number(premio1Hist.toFixed(2)),
         premio2: Number(premio2Hist.toFixed(2)),
         premio3: Number(premio3Hist.toFixed(2)),
-        totalParticipantes: rankingCalculado.length,
+        totalParticipantes: participantesAtivosNaRodada.length || rankingCalculado.length,
         totalPagos: pagosHist,
         totalJogos: jogosBase.length,
         totalJogosEncerrados: jogosEncerradosCount,
@@ -3576,7 +3720,7 @@ export default function App() {
 
       if (!modoAuto) {
         mostrarAvisoAdm(
-          `🏆 Top 3 de "${tituloFinal}" e dados das partidas salvos com sucesso no Histórico!`
+          `🏆 Ranking de "${tituloFinal}" e dados das partidas salvos com sucesso no Histórico!`
         );
       }
     } finally {
@@ -3584,11 +3728,11 @@ export default function App() {
     }
   };
 
-  // Monitoramento 100% automático: assim que a rodada do bolão termina (todos os jogos publicados com resultado definido ou encerrados), salva automaticamente os 3 primeiros colocados + dados das partidas no histórico e zera o saldo e lista de depositantes
+  // Monitoramento 100% automático: assim que as partidas da rodada terminam, atualiza e salva automaticamente o ranking e os dados das partidas no histórico (mantendo os dados disponíveis na tela)
   useEffect(() => {
     if (jogosPublicados.length === 0) return;
     const todosJogosFinalizados = jogosPublicados.every((j) =>
-      Boolean(j.resultadoOficial || j.encerrado)
+      Boolean(obterResultadoOficialJogo(j) || j.encerrado)
     );
     if (!todosJogosFinalizados) return;
 
@@ -3600,23 +3744,16 @@ export default function App() {
       .map((jg, idx) => `${idx + 1}:${jg.email}:${jg.pontos}:${jg.isPago ? 1 : 0}`)
       .join("|");
     const jogosAssinatura = jogosPublicados
-      .map((j) => `${j.id}:${j.placarCasa ?? 0}x${j.placarFora ?? 0}:${j.resultadoOficial || ""}`)
+      .map((j) => `${j.id}:${j.placarCasa ?? 0}x${j.placarFora ?? 0}:${obterResultadoOficialJogo(j) || ""}`)
       .join("|");
 
     const assinaturaCompleta = `${bolaoIdAtual}__${jogosAssinatura}__${top3Assinatura}`;
     if (ultimaAssinaturaRodadaSalvaRef.current === assinaturaCompleta) return;
 
     ultimaAssinaturaRodadaSalvaRef.current = assinaturaCompleta;
-    const chaveRodadaJogos = `${bolaoIdAtual}__${jogosPublicados.map((j) => j.id).join("_")}`;
 
     (async () => {
       await salvarRankingBolaoNoHistorico(true, false, jogosPublicados).catch(() => {});
-      if (ultimaRodadaZeradaRef.current !== chaveRodadaJogos) {
-        ultimaRodadaZeradaRef.current = chaveRodadaJogos;
-        if (total > 0 || pagos > 0) {
-          await zerarSaldoEDepositantesAposRodada(bolaoIdAtual).catch(() => {});
-        }
-      }
     })();
   }, [jogosPublicados, rankingGanhadores, total, pagos]);
 
@@ -4602,10 +4739,15 @@ export default function App() {
     </>
   );
 
-  // Dados das apostas salvas do jogador conectado
-  const meusPalpitesSalvos = user
+  // Dados das apostas salvas do jogador conectado (priorizando confrontos da rodada ativa)
+  const meusPalpitesTodos = user
     ? palpites.filter((p) => (p.jogadorEmail || "").toLowerCase() === (user.email || "").toLowerCase())
     : [];
+  const meusPalpitesDaRodada = meusPalpitesTodos.filter((ap) =>
+    jogos.some((j) => correspondeJogoId(j, ap.jogoId))
+  );
+  const meusPalpitesSalvos =
+    meusPalpitesDaRodada.length > 0 ? meusPalpitesDaRodada : meusPalpitesTodos;
   const isMinhaApostaAprovada = Boolean(
     isDepositoConfirmado || (user && isParticipanteDepositanteNoBolaoAtual(user))
   );
@@ -4619,23 +4761,25 @@ export default function App() {
         .toUpperCase()}-${String(meusPalpitesSalvos.length).padStart(2, "0")}`
     : "ELITE-0000";
 
-  const meusPontosAtuais = meusPalpitesSalvos.reduce((acc, ap) => {
-    const jgMatch = jogos.find((j) => j.id === ap.jogoId);
-    if (jgMatch?.resultadoOficial && jgMatch.resultadoOficial === ap.escolha) {
+  const meusPontosAtuais = jogos.reduce((acc, jgMatch) => {
+    const ap = meusPalpitesSalvos.find((p) => correspondeJogoId(jgMatch, p.jogoId));
+    const resOf = obterResultadoOficialJogo(jgMatch);
+    if (ap && resOf && resOf === ap.escolha) {
       return acc + 1;
     }
     return acc;
   }, 0);
 
-  const minhasApostasGanhas = meusPalpitesSalvos.filter((ap) => {
-    const jgMatch = jogos.find((j) => j.id === ap.jogoId);
-    return Boolean(jgMatch?.resultadoOficial && jgMatch.resultadoOficial === ap.escolha);
-  }).length;
+  const minhasApostasGanhas = meusPontosAtuais;
 
-  const minhasApostasPerdidas = meusPalpitesSalvos.filter((ap) => {
-    const jgMatch = jogos.find((j) => j.id === ap.jogoId);
-    return Boolean(jgMatch?.resultadoOficial && jgMatch.resultadoOficial !== ap.escolha);
-  }).length;
+  const minhasApostasPerdidas = jogos.reduce((acc, jgMatch) => {
+    const ap = meusPalpitesSalvos.find((p) => correspondeJogoId(jgMatch, p.jogoId));
+    const resOf = obterResultadoOficialJogo(jgMatch);
+    if (ap && resOf && resOf !== ap.escolha) {
+      return acc + 1;
+    }
+    return acc;
+  }, 0);
 
   const AreaMinhasApostas = ({ modoCompacto = false }: { modoCompacto?: boolean }) => {
     if (!user) return null;
@@ -4758,8 +4902,9 @@ export default function App() {
             </div>
 
             {meusPalpitesSalvos.map((ap, idx) => {
-              const match = jogos.find((j) => j.id === ap.jogoId);
+              const match = jogos.find((j) => correspondeJogoId(j, ap.jogoId));
               if (!match) return null;
+              const resOficialMatch = obterResultadoOficialJogo(match);
 
               const timeSelecionadoNome =
                 ap.escolha === "CASA"
@@ -4774,12 +4919,12 @@ export default function App() {
                   ? match.escudoFora
                   : undefined;
 
-              const acertou = Boolean(match.resultadoOficial && match.resultadoOficial === ap.escolha);
-              const errou = Boolean(match.resultadoOficial && match.resultadoOficial !== ap.escolha);
-              const textoResultadoOficial = match.resultadoOficial
-                ? match.resultadoOficial === "CASA"
+              const acertou = Boolean(resOficialMatch && resOficialMatch === ap.escolha);
+              const errou = Boolean(resOficialMatch && resOficialMatch !== ap.escolha);
+              const textoResultadoOficial = resOficialMatch
+                ? resOficialMatch === "CASA"
                   ? `Vitória do ${match.casa}`
-                  : match.resultadoOficial === "FORA"
+                  : resOficialMatch === "FORA"
                   ? `Vitória do ${match.fora}`
                   : "Empate"
                 : null;
@@ -7229,6 +7374,34 @@ export default function App() {
             </div>
           </div>
 
+          {/* DESTAQUE DE QUEM FEZ MAIS PONTOS NA RODADA (ADM) */}
+          {campeoesMaiorPontuacao.length > 0 && (
+            <div className="bg-gradient-to-r from-amber-500/20 via-amber-950/30 to-black border-2 border-amber-400/80 rounded-2xl p-4 space-y-2.5 shadow-xl">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-2xl">🏆</span>
+                  <div>
+                    <div className="text-[10px] font-black uppercase tracking-wider bg-amber-400 text-black px-2 py-0.5 rounded inline-block">
+                      {campeoesMaiorPontuacao.length > 1
+                        ? `EMPATE NO 1º LUGAR • ${campeoesMaiorPontuacao.length} MAIORES PONTUADORES`
+                        : "MAIOR PONTUADOR DA RODADA • 1º LUGAR"}
+                    </div>
+                    <h4 className="text-base sm:text-lg font-black text-white mt-0.5">
+                      {campeoesMaiorPontuacao.map((c) => c.nome).join(" & ")} — {maiorPontuacaoRodada}{" "}
+                      {maiorPontuacaoRodada === 1 ? "ponto" : "pontos"} (em {jogosPublicados.length} jogos)
+                    </h4>
+                  </div>
+                </div>
+                <div className="bg-black/80 border border-amber-400/50 px-3.5 py-2 rounded-xl text-right">
+                  <div className="text-[9px] text-amber-300 uppercase font-bold">Prêmio 1º Lugar (80%)</div>
+                  <div className="text-base font-black text-green-400">
+                    R$ {premio80RankingExibido.toFixed(2)}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {rankingGanhadores.length === 0 ? (
             <p className="text-zinc-500 text-xs py-3 text-center border border-dashed border-zinc-800 rounded-lg">
               Nenhuma aposta enviada ainda. As apostas dos jogadores aparecerão aqui automaticamente.
@@ -7236,21 +7409,24 @@ export default function App() {
           ) : (
             <div className="space-y-3">
               {rankingGanhadores.map((jg, index) => {
-                const isPrimeiro = index === 0 && jg.pontos > 0;
-                const isSegundo = index === 1 && jg.pontos > 0;
-                const isTerceiro = index === 2 && jg.pontos > 0;
+                const isMaiorPontuador = maiorPontuacaoRodada > 0 && jg.pontos === maiorPontuacaoRodada;
+                const isPrimeiro = (index === 0 && jg.pontos > 0) || isMaiorPontuador;
+                const isSegundo = index === 1 && jg.pontos > 0 && !isMaiorPontuador;
+                const isTerceiro = index === 2 && jg.pontos > 0 && !isMaiorPontuador;
 
+                const qtdPagosNoTopo =
+                  campeoesMaiorPontuacao.filter((c) => c.isPago).length || 1;
                 let premioEstimado = 0;
-                if (jg.isPago && isPrimeiro) {
-                  premioEstimado = premio1;
+                if (jg.isPago && isMaiorPontuador) {
+                  premioEstimado = premio80RankingExibido / qtdPagosNoTopo;
                 }
 
                 return (
                   <div
                     key={jg.email}
-                    className={`p-3.5 rounded-xl border transition ${
+                    className={`p-3.5 rounded-xl border transition space-y-2.5 ${
                       isPrimeiro
-                        ? "bg-gradient-to-r from-amber-500/10 via-black to-black border-amber-500/50 shadow-lg"
+                        ? "bg-gradient-to-r from-amber-500/15 via-black to-black border-amber-500/60 shadow-lg"
                         : isSegundo
                         ? "bg-zinc-900 border-zinc-700"
                         : isTerceiro
@@ -7262,7 +7438,7 @@ export default function App() {
                       <div className="flex items-center gap-3">
                         <div
                           className={`w-8 h-8 rounded-full flex items-center justify-center font-black text-xs shrink-0 ${
-                            index === 0
+                            isPrimeiro
                               ? "bg-amber-400 text-black shadow-md shadow-amber-400/30"
                               : index === 1
                               ? "bg-zinc-300 text-black"
@@ -7275,11 +7451,11 @@ export default function App() {
                         </div>
 
                         <div>
-                          <div className="flex items-center gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
                             <span className="font-black text-sm text-white">{jg.nome}</span>
-                            {isPrimeiro && (
+                            {isMaiorPontuador && (
                               <span className="text-[10px] bg-amber-400 text-black font-black px-2 py-0.5 rounded-full uppercase">
-                                Líder da Rodada
+                                🏆 Mais Pontos na Rodada
                               </span>
                             )}
                             <span
@@ -7305,11 +7481,11 @@ export default function App() {
                           <div className="text-xl font-black text-[#FF6B00]">
                             {jg.pontos}{" "}
                             <span className="text-xs font-normal text-zinc-400">
-                              / {totalJogosEncerrados > 0 ? totalJogosEncerrados : jogos.length} pts
+                              / {totalJogosEncerrados > 0 ? totalJogosEncerrados : jogosPublicados.length} pts
                             </span>
                           </div>
                           <div className="text-[9px] text-zinc-500 uppercase font-bold">
-                            {jg.totalApostas} confrontos apostados
+                            {jg.apostasNaRodadaCount ?? jg.totalApostas} confrontos na rodada
                           </div>
                         </div>
 
@@ -7332,6 +7508,48 @@ export default function App() {
                         </button>
                       </div>
                     </div>
+
+                    {/* Partidas apostadas na rodada */}
+                    {Array.isArray((jg as any).partidasApostadas) && (jg as any).partidasApostadas.length > 0 && (
+                      <div className="pt-2 border-t border-zinc-800/80 grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                        {(jg as any).partidasApostadas.map((part: HistoricoRankingPartidaApostada, pIdx: number) => (
+                          <div
+                            key={`${jg.email}_adm_rank_part_${part.jogoId || pIdx}`}
+                            className={`px-2.5 py-1.5 rounded-lg border text-[11px] flex items-center justify-between gap-2 ${
+                              part.acertou
+                                ? "bg-green-950/30 border-green-700/70 text-green-200"
+                                : part.resultadoOficial
+                                ? "bg-red-950/20 border-red-900/60 text-zinc-300"
+                                : "bg-zinc-900/70 border-zinc-800 text-zinc-300"
+                            }`}
+                          >
+                            <span className="font-bold text-white truncate">
+                              {part.casa} {part.placarCasa ?? 0}x{part.placarFora ?? 0} {part.fora}
+                            </span>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <span className="text-[10px] bg-black px-1.5 py-0.5 rounded text-[#FF6B00] font-bold">
+                                {part.escolha === "CASA"
+                                  ? part.casa
+                                  : part.escolha === "FORA"
+                                  ? part.fora
+                                  : "Empate"}
+                              </span>
+                              {part.resultadoOficial && (
+                                <span
+                                  className={`text-[9px] font-black px-1.5 py-0.5 rounded ${
+                                    part.acertou
+                                      ? "bg-green-500 text-black"
+                                      : "bg-red-900/80 text-red-200"
+                                  }`}
+                                >
+                                  {part.acertou ? "✓ ACERTOU" : "✗ ERROU"}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -7773,12 +7991,13 @@ export default function App() {
                       ) : (
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                           {jg.apostas.map((ap: Palpite) => {
-                            const match = jogos.find((j) => j.id === ap.jogoId);
+                            const match = jogos.find((j) => correspondeJogoId(j, ap.jogoId));
                             if (!match) return null;
+                            const resOficial = obterResultadoOficialJogo(match);
 
-                            const acertou = match.resultadoOficial && match.resultadoOficial === ap.escolha;
-                            const errou = match.resultadoOficial && match.resultadoOficial !== ap.escolha;
-                            const pendente = !match.resultadoOficial;
+                            const acertou = Boolean(resOficial && resOficial === ap.escolha);
+                            const errou = Boolean(resOficial && resOficial !== ap.escolha);
+                            const pendente = !resOficial;
 
                             let textoEscolha = "";
                             if (ap.escolha === "CASA") textoEscolha = `Vitória: ${match.casa}`;
@@ -9044,6 +9263,60 @@ export default function App() {
 
           {/* COLUNA DIREITA (7 COLUNAS): CONFRONTOS DA RODADA, MINHAS APOSTAS & PAGAMENTO */}
           <div className="lg:col-span-7 space-y-4">
+            {/* Resumo Rápido do Ranking & Maior Pontuador da Rodada quando há jogos encerrados */}
+            {totalJogosEncerrados > 0 && campeoesMaiorPontuacao.length > 0 && (
+              <div className="bg-gradient-to-r from-amber-500/20 via-zinc-900 to-black border-2 border-amber-400/80 rounded-2xl p-4 space-y-3 shadow-xl">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-2xl">🏆</span>
+                    <div>
+                      <span className="text-[10px] font-black uppercase tracking-wider bg-amber-400 text-black px-2 py-0.5 rounded">
+                        {totalJogosEncerrados >= jogosPublicados.length
+                          ? "RODADA ENCERRADA • MAIOR PONTUADOR"
+                          : "PARCIAL DA RODADA • LÍDER EM PONTOS"}
+                      </span>
+                      <h3 className="text-sm sm:text-base font-black text-white mt-0.5">
+                        1º Lugar: {campeoesMaiorPontuacao.map((c) => c.nome).join(" & ")} —{" "}
+                        <span className="text-amber-400">{maiorPontuacaoRodada} pts</span> (em{" "}
+                        {jogosPublicados.length} jogos)
+                      </h3>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setPage("classificacao")}
+                    className="bg-[#FF6B00] hover:bg-[#ff7b1a] text-black font-black text-xs px-3.5 py-2 rounded-xl cursor-pointer transition uppercase tracking-wider shadow"
+                  >
+                    🏆 Ver Ranking Completo
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                  {rankingGanhadores
+                    .filter((jg) => jg.pontos > 0 || (jg.apostasNaRodadaCount || 0) > 0)
+                    .slice(0, 4)
+                    .map((jg, idx) => (
+                      <div
+                        key={`resumo_rank_${jg.email}`}
+                        className={`px-3 py-2 rounded-xl border flex items-center justify-between text-xs ${
+                          idx === 0 && jg.pontos > 0
+                            ? "bg-amber-500/15 border-amber-500/50 text-white"
+                            : "bg-black/70 border-zinc-800 text-zinc-200"
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 truncate">
+                          <span className="font-black">
+                            {idx === 0 ? "🥇 1º" : idx === 1 ? "🥈 2º" : idx === 2 ? "🥉 3º" : `${idx + 1}º`}
+                          </span>
+                          <span className="font-bold truncate">{jg.nome}</span>
+                        </div>
+                        <span className="font-black text-[#FF6B00] shrink-0 ml-2">{jg.pontos} pts</span>
+                      </div>
+                    ))}
+                </div>
+              </div>
+            )}
+
             {/* Área Minhas Apostas (exibida automaticamente quando o jogador já selecionou seus times / ADM aprovou) */}
             {meusPalpitesSalvos.length > 0 && !modoNovaAposta && AreaMinhasApostas({ modoCompacto: true })}
 
@@ -9754,9 +10027,59 @@ export default function App() {
             Ganha quem mais pontuar nos confrontos da rodada (vitórias e empates).
           </p>
           <div className="pt-2 text-xs font-bold text-[#FF6B00]">
-            Prêmio Total em Disputa: R$ {premio80.toFixed(2)} (80%)
+            Prêmio Total em Disputa: R$ {premio80RankingExibido.toFixed(2)} (80%)
           </div>
+          {totalJogosEncerrados > 0 && (
+            <div className="pt-1 text-[11px] font-bold text-emerald-400">
+              ✅ {totalJogosEncerrados} de {jogosPublicados.length} partidas encerradas e apuradas
+            </div>
+          )}
         </div>
+
+        {/* CARD DE DESTAQUE: QUEM FEZ MAIS PONTOS NA RODADA */}
+        {campeoesMaiorPontuacao.length > 0 && (
+          <div className="bg-gradient-to-br from-amber-500/20 via-zinc-900 to-black border-2 border-amber-400 rounded-2xl p-4 space-y-3 shadow-xl shadow-amber-500/10">
+            <div className="flex items-center justify-between gap-2 border-b border-amber-500/30 pb-2.5">
+              <div className="flex items-center gap-2.5">
+                <span className="text-3xl">👑</span>
+                <div>
+                  <span className="text-[10px] font-black uppercase tracking-wider bg-amber-400 text-black px-2 py-0.5 rounded">
+                    {campeoesMaiorPontuacao.length > 1
+                      ? "EMPATE NA LIDERANÇA • MAIS PONTOS"
+                      : "CAMPEÃO DA RODADA • QUEM FEZ MAIS PONTOS"}
+                  </span>
+                  <h3 className="text-lg font-black text-white leading-tight mt-0.5">
+                    {campeoesMaiorPontuacao.map((c) => c.nome).join(" & ")}
+                  </h3>
+                </div>
+              </div>
+              <div className="text-right bg-black/80 border border-amber-400/50 px-3 py-1.5 rounded-xl shrink-0">
+                <div className="text-xl font-black text-amber-400 leading-none">
+                  {maiorPontuacaoRodada} pts
+                </div>
+                <div className="text-[9px] text-zinc-400 font-bold uppercase mt-0.5">
+                  de {jogosPublicados.length} jogos
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+              <span className="text-zinc-300 font-bold">
+                ✅ Status:{" "}
+                <strong className="text-green-400">
+                  {campeoesMaiorPontuacao.some((c) => c.isPago)
+                    ? "Aposta Confirmada (Pago)"
+                    : "Participante da Rodada"}
+                </strong>
+              </span>
+              {premio80RankingExibido > 0 && (
+                <span className="bg-green-950 border border-green-600 text-green-300 font-black px-2.5 py-1 rounded-lg">
+                  💰 Prêmio 1º Lugar (80%): R$ {premio80RankingExibido.toFixed(2)}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Contabilizador de Depósito também visível no Ranking */}
         <ContabilizadorDepositosJogador mostrarBotaoDepositar={true} />
@@ -9765,27 +10088,46 @@ export default function App() {
         <PainelTransparenciaJogadores />
 
         <div className="space-y-2.5">
+          <div className="flex items-center justify-between px-1">
+            <span className="text-xs font-black uppercase text-white tracking-wider">
+              📊 Ranking Geral de Jogadores ({rankingGanhadores.length})
+            </span>
+            <span className="text-[10px] text-[#FF6B00] font-bold">
+              Ordenado por maior pontuação
+            </span>
+          </div>
+
           {rankingGanhadores.length === 0 ? (
             <p className="text-zinc-500 text-xs py-8 text-center bg-zinc-900/60 rounded-xl border border-zinc-800">
               Nenhuma aposta cadastrada ainda nesta rodada.
             </p>
           ) : (
             rankingGanhadores.map((jg, index) => {
-              const isPrimeiro = index === 0 && jg.pontos > 0;
-              const isSegundo = index === 1 && jg.pontos > 0;
-              const isTerceiro = index === 2 && jg.pontos > 0;
+              const isMaiorPontuador =
+                maiorPontuacaoRodada > 0 && jg.pontos === maiorPontuacaoRodada;
+              const isPrimeiro = (index === 0 && jg.pontos > 0) || isMaiorPontuador;
+              const isSegundo = index === 1 && jg.pontos > 0 && !isMaiorPontuador;
+              const isTerceiro = index === 2 && jg.pontos > 0 && !isMaiorPontuador;
 
+              const qtdPagosNoTopo =
+                campeoesMaiorPontuacao.filter((c) => c.isPago).length || 1;
               let premioEstimado = 0;
-              if (jg.isPago && isPrimeiro) {
-                premioEstimado = premio1;
+              if (jg.isPago && isMaiorPontuador) {
+                premioEstimado = premio80RankingExibido / qtdPagosNoTopo;
               }
+
+              const partidasDoJogador: HistoricoRankingPartidaApostada[] = Array.isArray(
+                (jg as any).partidasApostadas
+              )
+                ? (jg as any).partidasApostadas
+                : [];
 
               return (
                 <div
                   key={jg.email}
-                  className={`p-3.5 rounded-xl border flex items-center justify-between gap-3 ${
+                  className={`p-3.5 rounded-xl border space-y-2.5 ${
                     isPrimeiro
-                      ? "bg-amber-500/10 border-amber-500/50"
+                      ? "bg-amber-500/10 border-amber-500/60 shadow-lg"
                       : isSegundo
                       ? "bg-zinc-900 border-zinc-700"
                       : isTerceiro
@@ -9793,49 +10135,176 @@ export default function App() {
                       : "bg-black/60 border-zinc-900"
                   }`}
                 >
-                  <div className="flex items-center gap-3">
-                    <div
-                      className={`w-7 h-7 rounded-full flex items-center justify-center font-black text-xs shrink-0 ${
-                        index === 0
-                          ? "bg-amber-400 text-black"
-                          : index === 1
-                          ? "bg-zinc-300 text-black"
-                          : index === 2
-                          ? "bg-amber-700 text-white"
-                          : "bg-zinc-800 text-zinc-400"
-                      }`}
-                    >
-                      {index + 1}º
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div
+                        className={`w-7 h-7 rounded-full flex items-center justify-center font-black text-xs shrink-0 ${
+                          isPrimeiro
+                            ? "bg-amber-400 text-black"
+                            : index === 1
+                            ? "bg-zinc-300 text-black"
+                            : index === 2
+                            ? "bg-amber-700 text-white"
+                            : "bg-zinc-800 text-zinc-400"
+                        }`}
+                      >
+                        {index + 1}º
+                      </div>
+
+                      <div>
+                        <div className="font-bold text-sm text-white flex flex-wrap items-center gap-1.5">
+                          <span>{jg.nome}</span>
+                          {jg.email === user?.email && (
+                            <span className="text-[9px] bg-[#FF6B00] text-black font-black px-1.5 py-0.5 rounded">
+                              VOCÊ
+                            </span>
+                          )}
+                          {isMaiorPontuador && (
+                            <span className="text-[9px] bg-amber-400 text-black font-black px-1.5 py-0.5 rounded uppercase">
+                              🏆 Mais Pontos
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-zinc-400">
+                          {jg.isPago ? "✅ Aposta Confirmada (Pago)" : "⏳ Aguardando Pagamento"}
+                          {partidasDoJogador.length > 0 && ` • ${partidasDoJogador.length} jogos apostados`}
+                        </div>
+                      </div>
                     </div>
 
-                    <div>
-                      <div className="font-bold text-sm text-white flex items-center gap-1.5">
-                        {jg.nome}
-                        {jg.email === user?.email && (
-                          <span className="text-[9px] bg-[#FF6B00] text-black font-black px-1.5 py-0.5 rounded">
-                            VOCÊ
+                    <div className="text-right shrink-0">
+                      <div className="text-lg font-black text-[#FF6B00]">{jg.pontos} pts</div>
+                      {premioEstimado > 0 && (
+                        <div className="text-[11px] font-black text-green-400">
+                          R$ {premioEstimado.toFixed(2)}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Detalhamento dos acertos das partidas apostadas na rodada */}
+                  {partidasDoJogador.length > 0 && (
+                    <div className="pt-2 border-t border-zinc-800/80 grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                      {partidasDoJogador.map((part, pIdx) => (
+                        <div
+                          key={`${jg.email}_rank_part_${part.jogoId || pIdx}`}
+                          className={`px-2.5 py-1.5 rounded-lg border text-[10px] flex items-center justify-between gap-1.5 ${
+                            part.acertou
+                              ? "bg-green-950/30 border-green-700/70 text-green-200"
+                              : part.resultadoOficial
+                              ? "bg-red-950/20 border-red-900/50 text-zinc-300"
+                              : "bg-zinc-900/70 border-zinc-800 text-zinc-300"
+                          }`}
+                        >
+                          <span className="font-bold text-white truncate">
+                            {part.casa} {part.placarCasa ?? 0}x{part.placarFora ?? 0} {part.fora}
                           </span>
-                        )}
-                      </div>
-                      <div className="text-[10px] text-zinc-500">
-                        {jg.isPago ? "✅ Aposta Confirmada (Pago)" : "⏳ Aguardando Pagamento"}
-                      </div>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <span className="bg-black px-1.5 py-0.5 rounded text-[#FF6B00] font-bold">
+                              {part.escolha === "CASA"
+                                ? part.casa
+                                : part.escolha === "FORA"
+                                ? part.fora
+                                : "Empate"}
+                            </span>
+                            {part.resultadoOficial && (
+                              <span
+                                className={`font-black px-1.5 py-0.5 rounded ${
+                                  part.acertou
+                                    ? "bg-green-500 text-black"
+                                    : "bg-red-900/80 text-red-200"
+                                }`}
+                              >
+                                {part.acertou ? "✓" : "✗"}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                  </div>
-
-                  <div className="text-right">
-                    <div className="text-lg font-black text-[#FF6B00]">{jg.pontos} pts</div>
-                    {premioEstimado > 0 && (
-                      <div className="text-[11px] font-black text-green-400">
-                        R$ {premioEstimado.toFixed(2)}
-                      </div>
-                    )}
-                  </div>
+                  )}
                 </div>
               );
             })
           )}
         </div>
+
+        {/* DADOS RECUPERADOS / HISTÓRICO DAS ÚLTIMAS RODADAS ENCERRADAS */}
+        {historicoRankings.length > 0 && (
+          <div className="bg-zinc-900/90 border border-[#FF6B00]/40 rounded-2xl p-4 space-y-3 mt-4">
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-2.5">
+              <div>
+                <span className="text-[10px] font-black uppercase bg-[#FF6B00] text-black px-2 py-0.5 rounded">
+                  HISTÓRICO OFICIAL DE RODADAS
+                </span>
+                <h3 className="text-sm font-black text-white mt-1">
+                  🏆 Resultados e Campeões das Últimas Rodadas
+                </h3>
+              </div>
+              <span className="text-[10px] text-zinc-400 font-bold">
+                {historicoRankings.length} rodada(s)
+              </span>
+            </div>
+
+            <div className="space-y-3">
+              {historicoRankings.map((hist) => (
+                <div
+                  key={hist.id}
+                  className="bg-black/70 border border-zinc-800 rounded-xl p-3 space-y-2.5"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800/80 pb-2">
+                    <div>
+                      <div className="text-xs font-black text-[#FF6B00]">{hist.tituloBolao}</div>
+                      <div className="text-[10px] text-zinc-400">📅 {hist.dataRodada}</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-[10px] text-zinc-400 uppercase font-bold">Prêmio 80%</div>
+                      <div className="text-xs font-black text-green-400">
+                        R$ {Number(hist.premioTotal80 || hist.premio1 || 0).toFixed(2)}
+                      </div>
+                    </div>
+                  </div>
+
+                  {Array.isArray(hist.ranking) && hist.ranking.length > 0 && (
+                    <div className="space-y-1.5">
+                      {hist.ranking.map((r, rIdx) => (
+                        <div
+                          key={`${hist.id}_player_hist_${r.email || rIdx}`}
+                          className={`px-2.5 py-2 rounded-lg border flex items-center justify-between text-xs ${
+                            rIdx === 0 && r.pontos > 0
+                              ? "bg-amber-500/15 border-amber-500/50 text-white"
+                              : "bg-zinc-900/80 border-zinc-800 text-zinc-200"
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="font-black">
+                              {rIdx === 0 ? "🥇 1º" : rIdx === 1 ? "🥈 2º" : rIdx === 2 ? "🥉 3º" : `${rIdx + 1}º`}
+                            </span>
+                            <span className="font-bold">{r.nome}</span>
+                            {rIdx === 0 && r.pontos > 0 && (
+                              <span className="text-[9px] bg-amber-400 text-black font-black px-1.5 py-0.5 rounded uppercase">
+                                Mais Pontos
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-black text-[#FF6B00]">{r.pontos} pts</span>
+                            {r.premioEstimado > 0 && (
+                              <span className="text-[10px] font-black text-green-400">
+                                R$ {Number(r.premioEstimado).toFixed(2)}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {inputComprovantePersistenteEl}
         <ModalPixDireto />
         <ModalAreaTransparencia />

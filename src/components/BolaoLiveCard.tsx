@@ -1647,7 +1647,7 @@ function BolaoLiveCardInner({
             </div>
           </div>
 
-          {/* CENTRO DO PLAYER: BOTÃO PLAY / ATIVAR SOM OU TELA DE PAUSA QUE COBRE SUGESTÕES DO YOUTUBE */}
+          {/* CENTRO DO PLAYER: TELA DE PAUSA QUE COBRE SUGESTÕES DO YOUTUBE (SEM TARJA DE ATIVAR SOM) */}
           <div className="my-auto flex flex-col items-center justify-center px-4 pointer-events-none">
             {playerPausado ? (
               <div
@@ -1665,18 +1665,6 @@ function BolaoLiveCardInner({
                   🔒 Reprodução direta no aplicativo
                 </span>
               </div>
-            ) : somMutado ? (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleToggleSom();
-                }}
-                className="pointer-events-auto bg-[#C41E3A]/95 hover:bg-[#C41E3A] border-2 border-white/80 text-white font-black px-4 py-2.5 rounded-2xl text-xs uppercase tracking-wider shadow-[0_0_30px_rgba(0,0,0,0.9)] flex items-center gap-2 cursor-pointer transition transform hover:scale-105"
-              >
-                <span className="text-base">🔊</span>
-                <span>Ativar Som • Jogo Ao Vivo Rolando</span>
-              </button>
             ) : null}
 
             {avisoBloqueioYoutube && (
@@ -1704,14 +1692,11 @@ function BolaoLiveCardInner({
               <button
                 type="button"
                 onClick={handleToggleSom}
-                className={`font-black text-[10px] uppercase px-2.5 py-1.5 rounded-lg cursor-pointer transition flex items-center gap-1 border ${
-                  somMutado
-                    ? 'bg-amber-400 text-black border-amber-300'
-                    : 'bg-[#111111] hover:bg-zinc-800 text-white border-zinc-700'
-                }`}
+                className="bg-[#111111] hover:bg-zinc-800 text-white border border-zinc-700 font-black text-[10px] uppercase px-2.5 py-1.5 rounded-lg cursor-pointer transition flex items-center gap-1"
+                title={somMutado ? 'Ligar áudio' : 'Silenciar áudio'}
               >
                 <span>{somMutado ? '🔇' : '🔊'}</span>
-                <span>{somMutado ? 'Ativar Som' : 'Som Ativo'}</span>
+                <span>Som</span>
               </button>
 
               <button
